@@ -14,14 +14,47 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Build APK
-        id: buildozer
-        uses: ArtemSBulgakov/buildozer-action@v1
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          buildozer_version: stable
+          python-version: "3.10"
 
+      # 🛠️ સ્ટેપ ૧: ઑફિશિયલ એન્ડ્રોઇડ SDK ઇન્સ્ટોલ કરવું
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # 🛠️ સ્ટેપ ૨: બિલ્ડ માટે જરૂરી પ્લેટફોર્મ ટૂલ્સ
+      - name: Install Android Build Tools
+        run: |
+          sdkmanager --install "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+          yes | sdkmanager --licenses
+
+      # 🛠️ સ્ટેપ ૩: સિસ્ટમ ડિપેન્ડન્સીઝ અને મોડ્યુલ્સ ઇન્સ્ટોલ કરવા
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libssl-dev libffi-dev cmake python3-dev
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade buildozer cython virtualenv setuptools wheel
+
+      # 🛠️ સ્ટેપ ૪: તમારા એકદમ સાચા અને બુલેટપ્રૂફ એક્સપોર્ટ કમાન્ડ્સ સાથે બિલ્ડ સ્ટેપ
+      - name: Build Android APK
+        env:
+          ACCEPT_SDK_LICENSE: "y"
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+        run: |
+          export ANDROID_HOME=$ANDROID_SDK_ROOT
+          export PATH=$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
+          
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          
+          buildozer -v android debug
+
+      # 🛠️ સ્ટેપ ૫: ફાઇનલ APK આર્ટિફેક્ટ અપલોડ કરવું
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ATS-Remote-APK
-          path: ${{ steps.buildozer.outputs.filename }}
+          path: "**/*.apk"
+          
