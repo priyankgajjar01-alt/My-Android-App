@@ -13,15 +13,11 @@ fullscreen = 0
 
 android.permissions = INTERNET, FOREGROUND_SERVICE, WAKE_LOCK
 
-android.ndk = 25b
 android.api = 33
 android.minapi = 21
-android.cmdline_tools = True
-
-# --- AA 2 LINE NAVI ADD KARI ---
+android.ndk = 25b
 android.cmdline_tools = True
 android.accept_sdk_license = True
-# -------------------------------
 
 [buildozer]
 log_level = 2
