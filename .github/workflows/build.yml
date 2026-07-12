@@ -11,7 +11,7 @@ jobs:
         with: { distribution: 'zulu', java-version: '17' }
 
       - run: sudo apt update && sudo apt install -y git zip unzip openjdk-17-jdk python3-pip
-      - run: pip3 install buildozer cython
+      - run: pip3 install buildozer==1.5.0 cython
 
       - run: rm -rf ~/.buildozer
 
@@ -19,8 +19,8 @@ jobs:
         run: |
           mkdir -p ~/.buildozer/android/platform/android-sdk/cmdline-tools
           cd ~/.buildozer/android/platform/android-sdk/cmdline-tools
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          unzip -q commandlinetools-linux-11076708_latest.zip && mv cmdline-tools latest
+          wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip commandlinetools-linux-11076708_latest.zip && mv cmdline-tools latest
           export PATH=$PATH:~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin
           yes | sdkmanager --licenses
           sdkmanager "platforms;android-33" "build-tools;33.0.2" "ndk;25.1.8937393"
