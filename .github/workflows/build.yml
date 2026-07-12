@@ -19,17 +19,7 @@ jobs:
         with:
           python-version: "3.10"
 
-      # 🛠️ સ્ટેપ ૧: ઑફિશિયલ એન્ડ્રોઇડ SDK ઇન્સ્ટોલ કરવું
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      # 🛠️ સ્ટેપ ૨: બિલ્ડ માટે જરૂરી પ્લેટફોર્મ ટૂલ્સ
-      - name: Install Android Build Tools
-        run: |
-          sdkmanager --install "platform-tools" "platforms;android-33" "build-tools;33.0.2"
-          yes | sdkmanager --licenses
-
-      # 🛠️ સ્ટેપ ૩: સિસ્ટમ ડિપેન્ડન્સીઝ અને મોડ્યુલ્સ ઇન્સ્ટોલ કરવા
+      # 🛠️ સ્ટેપ ૧: ગીટહબ રનર પર લેટેસ્ટ સિસ્ટમ ડિપેન્ડન્સીઝ ઇન્સ્ટોલ કરવી
       - name: Install System Dependencies
         run: |
           sudo apt-get update
@@ -37,25 +27,27 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --upgrade buildozer cython virtualenv setuptools wheel
 
-      # 🛠️ સ્ટેપ ૪: AIDL ફોર્સ-કોપી ટ્રીક સાથે બિલ્ડોઝર રન
+      # 🛠️ સ્ટેપ ૨: જાદુઈ સિમલિંક ટ્રીક સાથે બિલ્ડોઝર રન
       - name: Build Android APK
         env:
           ACCEPT_SDK_LICENSE: "y"
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
         run: |
-          export ANDROID_HOME=$ANDROID_SDK_ROOT
-          export PATH=$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
+          # ૧. Buildozer નું લોકલ પ્લેટફોર્મ ફોલ્ડર એડવાન્સમાં ક્રિએટ કર્યું
+          mkdir -p ~/.buildozer/android/platform
           
+          # ૨. 🚀 સૌથી મહત્વનો સ્ટેપ: ગીટહબના ઑફિશિયલ એન્ડ્રોઇડ SDK ($ANDROID_HOME) ની 
+          # સીધી લિંક Buildozer ના ફોલ્ડર સાથે જોડી દીધી!
+          ln -s $ANDROID_HOME ~/.buildozer/android/platform/android-sdk
+          
+          # ૩. એન્ડ્રોઇડ રિપોઝીટરી ફાઇલ સેટઅપ
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
           
-          # 🚀 જાદુઈ ટ્રીક: બિલ્ડોઝરનું હોમ ફોલ્ડર એડવાન્સમાં બનાવીને, ઓફિશિયલ AIDL ત્યાં ફોર્સ-કોપી કરી દીધું!
-          mkdir -p ~/.buildozer/android/platform/android-sdk/build-tools/33.0.2/
-          cp $ANDROID_SDK_ROOT/build-tools/33.0.2/aidl ~/.buildozer/android/platform/android-sdk/build-tools/33.0.2/ 2>/dev/null || true
-          
+          # ૪. બિલ્ડ સ્ટાર્ટ
           buildozer -v android debug
 
-      # 🛠️ સ્ટેપ ૫: ફાઇનલ APK આર્ટિફેક્ટ અપલોડ કરવું
+      # 🛠️ સ્ટેપ ૩: ફાઇનલ APK આર્ટિફેક્ટ અપલોડ કરવું
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
