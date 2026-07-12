@@ -37,7 +37,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --upgrade buildozer cython virtualenv setuptools wheel
 
-      # 🛠️ સ્ટેપ ૪: તમારા એકદમ સાચા અને બુલેટપ્રૂફ એક્સપોર્ટ કમાન્ડ્સ સાથે બિલ્ડ સ્ટેપ
+      # 🛠️ સ્ટેપ ૪: AIDL ફોર્સ-કોપી ટ્રીક સાથે બિલ્ડોઝર રન
       - name: Build Android APK
         env:
           ACCEPT_SDK_LICENSE: "y"
@@ -48,6 +48,10 @@ jobs:
           
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
+          
+          # 🚀 જાદુઈ ટ્રીક: બિલ્ડોઝરનું હોમ ફોલ્ડર એડવાન્સમાં બનાવીને, ઓફિશિયલ AIDL ત્યાં ફોર્સ-કોપી કરી દીધું!
+          mkdir -p ~/.buildozer/android/platform/android-sdk/build-tools/33.0.2/
+          cp $ANDROID_SDK_ROOT/build-tools/33.0.2/aidl ~/.buildozer/android/platform/android-sdk/build-tools/33.0.2/ 2>/dev/null || true
           
           buildozer -v android debug
 
