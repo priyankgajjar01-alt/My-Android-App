@@ -37,7 +37,6 @@ jobs:
 
           yes | sdkmanager --licenses
 
-      # 🔍 આ સ્ટેપ કન્ફર્મ કરશે કે સિસ્ટમમાં કઈ જગ્યાએ aidl પડ્યું છે
       - name: Verify AIDL
         run: |
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
@@ -46,39 +45,36 @@ jobs:
           which aidl
           aidl --version || true
 
+      # 🛠️ સુધારો: libncurses5 ની જગ્યાએ નવી સિસ્ટમ માટે libncurses6 અને libncurses-dev સેટ કર્યું
       - name: Install Buildozer
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             git zip unzip autoconf automake libtool \
-            pkg-config zlib1g-dev libncurses5 \
+            pkg-config zlib1g-dev libncurses6 libncurses-dev \
             libffi-dev libssl-dev cmake python3-dev
 
           python -m pip install --upgrade pip
           pip install buildozer cython virtualenv setuptools wheel
 
-      # 🚀 આ આપણો સંપૂર્ણ સુધારેલો અને કમ્પ્લીટ બિલ્ડ સ્ટેપ છે
       - name: Build APK
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
           ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
         run: |
-          # 1. પાથ સેટઅપ
           export PATH=$ANDROID_SDK_ROOT/build-tools/33.0.2:$ANDROID_SDK_ROOT/platform-tools:$PATH
 
-          # 2. બિલ્ડોઝરને ફક્ત એન્ડ્રોઇડ પ્લેટફોર્મનું બેઝિક સ્ટ્રક્ચર લોકલી ક્રિએટ કરવા મજબૂર કર્યું
+          # બિલ્ડોઝરને બેઝિક ફોલ્ડર બનાવવાની ફરજ પાડી
           buildozer android pgenવ્યુ || true
 
-          # 3. ફોલ્ડર બનતાની સાથે જ ઑફિશિયલ AIDL ની સોફ્ટ-લિંક ત્યાં જોડી દીધી
+          # AIDL ને તેના સાચા સ્થાને લિંક કર્યું
           mkdir -p ~/.buildozer/android/platform/android-sdk/build-tools/33.0.2/
           ln -sf $ANDROID_SDK_ROOT/build-tools/33.0.2/aidl ~/.buildozer/android/platform/android-sdk/build-tools/33.0.2/aidl
           
-          # 4. વેરિફિકેશન ફાઈલ્સ ક્રિએટ કરવી
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
 
-          # 5. ફાઇનલ કમ્પાઈલેશન રન
           buildozer -v android debug
 
       - name: Upload APK
