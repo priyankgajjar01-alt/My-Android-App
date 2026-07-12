@@ -3,28 +3,23 @@ title = ATS Remote Connector
 package.name = atsremoteconnector
 package.domain = org.ats.remote
 source.dir =.
-source.include_exts = py,png,jpg,kv,atlas,json
+source.include_exts = py,png,jpg,kv,atlas
 version = 1.0.0
 
-requirements = python3,kivy,plyer,pyjnius,android
+requirements = python3,kivy,android
 
 orientation = portrait
-fullscreen = 0
 
-android.permissions = INTERNET, FOREGROUND_SERVICE, WAKE_LOCK
+android.permissions = INTERNET
 android.api = 33
 android.minapi = 21
 android.ndk = 25.1.8937393
-android.sdk = 33
 android.build_tools = 33.0.2
 android.archs = arm64-v8a
-android.cmdline_tools = True
 android.accept_sdk_license = True
 
-# python-for-android fix for 10% error
-android.p4a.branch = master
-p4a.source_dir =
+# 404 no fix - stable link
+android.p4a.url = https://github.com/kivy/python-for-android/archive/refs/tags/v2023.10.25.zip
 
 [buildozer]
-log_level = 2
-warn_on_root = 1
+log_level = 1
