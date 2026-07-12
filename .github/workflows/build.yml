@@ -44,4 +44,11 @@ jobs:
         with:
           name: ATS-Remote-APK
           path: bin/*.apk
+
+                # છેલ્લો ભાગ આ રીતે અપડેટ કરો
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ATS-Remote-APK
+          path: "**/*.apk"  # 🛠️ આ ફેરફાર આખા પ્રોજેક્ટમાંથી ગમે ત્યાંથી apk શોધી લેશે
           
