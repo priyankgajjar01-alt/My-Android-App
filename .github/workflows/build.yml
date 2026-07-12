@@ -1,85 +1,56 @@
-name: Build Android APK
+name: Build Kivy APK
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
+    - name: Setup Java 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu'
+        java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+    - name: Install System Dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
 
-      - name: Install Android SDK packages
-        run: |
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-33" \
-            "build-tools;33.0.2"
+    - name: Install Buildozer
+      run: pip3 install buildozer
 
-          yes | sdkmanager --licenses
+    # --- AA STEP SDkMANAGER ERROR FIX KARE CHE ---
+    - name: Setup Android SDK cmdline-tools
+      run: |
+        mkdir -p ~/.buildozer/android/platform/android-sdk/cmdline-tools
+        cd ~/.buildozer/android/platform/android-sdk/cmdline-tools
+        wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O tools.zip
+        unzip -q tools.zip
+        mv cmdline-tools latest
+        export PATH=$PATH:~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin
+        yes | sdkmanager --licenses
+        sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2" "ndk;25b"
 
-      - name: Verify AIDL
-        run: |
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          find "$ANDROID_SDK_ROOT" -name aidl
-          export PATH=$ANDROID_SDK_ROOT/build-tools/33.0.2:$PATH
-          which aidl
-          aidl --version || true
+    - name: Build APK with Buildozer
+      run: buildozer android debug
+      env:
+        ANDROID_SDK_ROOT: ~/.buildozer/android/platform/android-sdk
 
-      # 🛠️ સુધારો: libncurses5 ની જગ્યાએ નવી સિસ્ટમ માટે libncurses6 અને libncurses-dev સેટ કર્યું
-      - name: Install Buildozer
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            git zip unzip autoconf automake libtool \
-            pkg-config zlib1g-dev libncurses6 libncurses-dev \
-            libffi-dev libssl-dev cmake python3-dev
-
-          python -m pip install --upgrade pip
-          pip install buildozer cython virtualenv setuptools wheel
-
-      - name: Build APK
-        env:
-          JAVA_HOME: ${{ env.JAVA_HOME }}
-          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
-        run: |
-          export PATH=$ANDROID_SDK_ROOT/build-tools/33.0.2:$ANDROID_SDK_ROOT/platform-tools:$PATH
-
-          # બિલ્ડોઝરને બેઝિક ફોલ્ડર બનાવવાની ફરજ પાડી
-          buildozer android pgenવ્યુ || true
-
-          # AIDL ને તેના સાચા સ્થાને લિંક કર્યું
-          mkdir -p ~/.buildozer/android/platform/android-sdk/build-tools/33.0.2/
-          ln -sf $ANDROID_SDK_ROOT/build-tools/33.0.2/aidl ~/.buildozer/android/platform/android-sdk/build-tools/33.0.2/aidl
-          
-          mkdir -p ~/.android
-          touch ~/.android/repositories.cfg
-
-          buildozer -v android debug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: APK
-          path: bin/*.apk
-          
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-debug-apk
+        path: bin/*.apk
