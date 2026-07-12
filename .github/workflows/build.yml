@@ -8,6 +8,8 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
+    env:
+      ANDROID_SDK_ROOT: /home/runner/android/sdk # <-- env fix
 
     steps:
     - uses: actions/checkout@v4
@@ -28,25 +30,20 @@ jobs:
         pip install kivy[base]
         pip install python-for-android==2024.1.21
 
-    - name: Setup Android SDK
+    - name: Setup Android SDK and NDK
       run: |
-        mkdir -p $HOME/android/sdk/cmdline-tools
-        cd $HOME/android/sdk/cmdline-tools
+        mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
+        cd $ANDROID_SDK_ROOT/cmdline-tools
         wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
         unzip -q commandlinetools-linux-11076708_latest.zip && mv cmdline-tools latest
-
-    - name: Accept licenses and install SDK
-      run: |
-        export ANDROID_SDK_ROOT=$HOME/android/sdk
         export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
         yes | sdkmanager --licenses
-        sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393" # <-- 33 ne 34 karyu
+        sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393" # <-- NDK 25 FORCE
 
-    - name: Build APK with python-for-android
+    - name: Build APK
       run: |
-        export ANDROID_SDK_ROOT=$HOME/android/sdk
         export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools
-        python -m pythonforandroid.toolchain create --debug --package=org.ats.remote --name="ATS Remote" --version=1.0 --bootstrap=sdl2 --requirements=python3,kivy,android --arch=arm64-v8a --android-api=34 # <-- aa pan 34 karyu
+        python -m pythonforandroid.toolchain create --debug --package=org.ats.remote --name="ATS Remote" --version=1.0 --bootstrap=sdl2 --requirements=python3,kivy,android --arch=arm64-v8a --android-api=34 --ndk-dir=$ANDROID_SDK_ROOT/ndk/25.1.8937393 # <-- NDK dir force
 
     - uses: actions/upload-artifact@v4
       with: { name: ATS-APK, path: bin/*.apk }
