@@ -18,8 +18,9 @@ android.build_tools = 33.0.2
 android.archs = arm64-v8a
 android.accept_sdk_license = True
 
-# 404 no fix - stable link
+# 404 NO FIX - BOTH URL
 android.p4a.url = https://github.com/kivy/python-for-android/archive/refs/tags/v2023.10.25.zip
+p4a.recipes_url = https://github.com/kivy/python-for-android-recipes/archive/refs/tags/v2023.10.25.zip
 
 [buildozer]
 log_level = 1
