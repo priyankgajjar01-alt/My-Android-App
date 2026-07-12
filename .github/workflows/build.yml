@@ -1,5 +1,5 @@
 name: Build APK
-on: [workflow_dispatch, push]
+on: [workflow_dispatch]
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -13,11 +13,7 @@ jobs:
       - run: sudo apt update && sudo apt install -y git zip unzip openjdk-17-jdk python3-pip
       - run: pip3 install buildozer cython
 
-      - name: Cache Buildozer
-        uses: actions/cache@v4
-        with:
-          path: ~/.buildozer
-          key: buildozer-${{ runner.os }}-ndk25.1.8937393
+      - run: rm -rf ~/.buildozer
 
       - name: Setup SDK
         run: |
