@@ -1,3 +1,63 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;33.0.2"
+
+          yes | sdkmanager --licenses
+
+      # 🔍 આ સ્ટેપ કન્ફર્મ કરશે કે સિસ્ટમમાં કઈ જગ્યાએ aidl પડ્યું છે
+      - name: Verify AIDL
+        run: |
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          find "$ANDROID_SDK_ROOT" -name aidl
+          export PATH=$ANDROID_SDK_ROOT/build-tools/33.0.2:$PATH
+          which aidl
+          aidl --version || true
+
+      - name: Install Buildozer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git zip unzip autoconf automake libtool \
+            pkg-config zlib1g-dev libncurses5 \
+            libffi-dev libssl-dev cmake python3-dev
+
+          python -m pip install --upgrade pip
+          pip install buildozer cython virtualenv setuptools wheel
+
+      # 🚀 આ આપણો સંપૂર્ણ સુધારેલો અને કમ્પ્લીટ બિલ્ડ સ્ટેપ છે
       - name: Build APK
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
@@ -7,17 +67,23 @@
           # 1. પાથ સેટઅપ
           export PATH=$ANDROID_SDK_ROOT/build-tools/33.0.2:$ANDROID_SDK_ROOT/platform-tools:$PATH
 
-          # 2. બિલ્ડોઝરને ફક્ત એન્ડ્રોઇડ પ્લેટફોર્મ સેટઅપ કરવા કહ્યું (આનાથી એ ફોલ્ડર બનાવી દેશે પણ બિલ્ડ નહીં કરે)
+          # 2. બિલ્ડોઝરને ફક્ત એન્ડ્રોઇડ પ્લેટફોર્મનું બેઝિક સ્ટ્રક્ચર લોકલી ક્રિએટ કરવા મજબૂર કર્યું
           buildozer android pgenવ્યુ || true
 
-          # 3. 🚀 હવે જ્યારે બિલ્ડોઝરે ફોલ્ડર બનાવી દીધું છે, ત્યારે જ આપણે એના ટાર્ગેટ પાથ પર ઓફિશિયલ SDK ની સોફ્ટ-લિંક ભરાવી દઈએ!
+          # 3. ફોલ્ડર બનતાની સાથે જ ઑફિશિયલ AIDL ની સોફ્ટ-લિંક ત્યાં જોડી દીધી
           mkdir -p ~/.buildozer/android/platform/android-sdk/build-tools/33.0.2/
           ln -sf $ANDROID_SDK_ROOT/build-tools/33.0.2/aidl ~/.buildozer/android/platform/android-sdk/build-tools/33.0.2/aidl
           
-          # 4. વેરિફિકેશન માટે ટચ કરી લેવું
+          # 4. વેરિફિકેશન ફાઈલ્સ ક્રિએટ કરવી
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
 
-          # 5. હવે અસલી બિલ્ડ રન કરો, બિલ્ડોઝર છેતરાઈ જશે કારણ કે એને અંદર aidl પહેલેથી જ મળશે!
+          # 5. ફાઇનલ કમ્પાઈલેશન રન
           buildozer -v android debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: APK
+          path: bin/*.apk
           
