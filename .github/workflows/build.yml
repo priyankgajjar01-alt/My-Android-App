@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.10"
 
-      # 🛠️ સ્ટેપ ૧: ગીટહબ રનર પર લેટેસ્ટ સિસ્ટમ ડિપેન્ડન્સીઝ ઇન્સ્ટોલ કરવી
+      # 🛠️ સ્ટેપ ૧: સિસ્ટમ ડિપેન્ડન્સીઝ ઇન્સ્ટોલ કરવી
       - name: Install System Dependencies
         run: |
           sudo apt-get update
@@ -27,7 +27,27 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --upgrade buildozer cython virtualenv setuptools wheel
 
-      # 🛠️ સ્ટેપ ૨: ડાયરેક્ટ ગ્લોબલ પાથ કન્ફિગરેશન સાથે બિલ્ડ
+      # 🛠️ સ્ટેપ ૨: AIDL ને ગ્લોબલી ફોર્સ-ઇન્સ્ટોલ કરવાની માસ્ટર ટ્રીક
+      - name: Force Fix AIDL Globally
+        run: |
+          # ગીટહબના ડિફોલ્ટ SDK માંથી aidl ક્યાં પડ્યું છે તે શોધવું
+          AIDL_PATH=$(find /usr/local/lib/android/sdk/build-tools/ -name "aidl" | sort -V | tail -n 1)
+          echo "Found AIDL at: $AIDL_PATH"
+          
+          # જો મળ્યું હોય, તો તેને સીધું ગ્લોબલ /usr/local/bin માં કોપી કરી દેવું
+          if [ ! -z "$AIDL_PATH" ]; then
+            sudo cp "$AIDL_PATH" /usr/local/bin/
+            sudo chmod +x /usr/local/bin/aidl
+            echo "AIDL successfully linked to global path!"
+          else
+            echo "AIDL not found in SDK, installing via apt..."
+            sudo apt-get install -y aidl
+          fi
+          
+          # વેરિફિકેશન
+          aidl --version || true
+
+      # 🛠️ સ્ટેપ ૩: ક્લીન એન્વાયર્નમેન્ટ સાથે બિલ્ડોઝર રન
       - name: Build Android APK
         env:
           ACCEPT_SDK_LICENSE: "y"
@@ -37,14 +57,9 @@ jobs:
         run: |
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
-          
-          # ગીટહબના ઑફિશિયલ SDK માંથી ડાયરેક્ટ બિલ્ડ ટૂલ્સ ઇન્સ્ટોલ કર્યા
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platform-tools" "platforms;android-33" "build-tools;33.0.2"
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
-          
           buildozer -v android debug
 
-      # 🛠️ સ્ટેપ ૩: ફાઇનલ APK આર્ટિફેક્ટ અપલોડ કરવું
+      # 🛠️ સ્ટેપ ૪: ફાઇનલ APK આર્ટિફેક્ટ અપલોડ કરવું
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
