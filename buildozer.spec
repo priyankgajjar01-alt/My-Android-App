@@ -7,21 +7,23 @@ source.include_exts = py,png,jpg,kv,atlas,json
 version = 1.0.0
 
 requirements = python3,kivy,plyer,pyjnius,android
+
 orientation = portrait
 fullscreen = 0
 
 android.permissions = INTERNET, FOREGROUND_SERVICE, WAKE_LOCK
 android.api = 33
 android.minapi = 21
-android.ndk = 25b
+android.ndk = 25.1.8937393
+android.sdk = 33
+android.build_tools = 33.0.2
 android.archs = arm64-v8a
 android.cmdline_tools = True
 android.accept_sdk_license = True
 
-# --- AA 2 LINE NAVI ---
+# python-for-android fix for 10% error
 android.p4a.branch = master
 p4a.source_dir =
-# ----------------------
 
 [buildozer]
 log_level = 2
