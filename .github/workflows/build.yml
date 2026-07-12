@@ -12,15 +12,15 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5  # 🛠️ Node 24 સુસંગત વર્ઝન
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6  # 🛠️ Node 24 સુસંગત વર્ઝન
         with:
           python-version: '3.10'
 
       - name: Cache Buildozer Global Directory
-        uses: actions/cache@v4
+        uses: actions/cache@v5  # 🛠️ Node 24 સુસંગત વર્ઝન
         with:
           path: .buildozer
           key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
@@ -34,7 +34,10 @@ jobs:
 
       - name: Build Android APK
         run: |
-          yes | buildozer android debug
+          # 🛠️ ગીટહબ રનર પર ઓટો-લાયસન્સ એક્સેપ્ટ કરવાનો સૌથી બેસ્ટ રસ્તો
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          buildozer android debug
         env:
           ACCEPT_SDK_LICENSE: "y"
 
