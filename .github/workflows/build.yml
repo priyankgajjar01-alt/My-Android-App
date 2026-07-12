@@ -12,17 +12,17 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v5  # 🛠️ Node 24 સુસંગત વર્ઝન
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v6  # 🛠️ Node 24 સુસંગત વર્ઝન
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
       - name: Cache Buildozer Global Directory
-        uses: actions/cache@v5  # 🛠️ Node 24 સુસંગત વર્ઝન
+        uses: actions/cache@v5
         with:
-          path: .buildozer
+          path: ~/.buildozer
           key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
 
       - name: Install System Dependencies
@@ -32,9 +32,13 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython virtualenv
 
+      - name: Check Buildozer & Python Version
+        run: |
+          buildozer --version
+          python3 --version
+
       - name: Build Android APK
         run: |
-          # 🛠️ ગીટહબ રનર પર ઓટો-લાયસન્સ એક્સેપ્ટ કરવાનો સૌથી બેસ્ટ રસ્તો
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
           buildozer android debug
