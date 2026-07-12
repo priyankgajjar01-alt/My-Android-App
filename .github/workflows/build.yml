@@ -8,38 +8,46 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
-    env:
-      ANDROID_SDK_ROOT: /home/runner/android/sdk
+    permissions:
+      contents: write # <-- repo ma file push karva mate
 
     steps:
     - uses: actions/checkout@v4
+      with: { fetch-depth: 0 }
+
     - uses: actions/setup-python@v5
       with: { python-version: '3.10' }
     - uses: actions/setup-java@v4
       with: { distribution: 'temurin', java-version: '17' }
 
-    - run: sudo apt-get update && sudo apt-get install -y git zip unzip
-    - run: pip install --upgrade pip && pip install cython==0.29.33 kivy[base] python-for-android==2024.1.21
-
-    - name: Setup SDK
+    - name: Install deps
       run: |
-        mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
-        cd $ANDROID_SDK_ROOT/cmdline-tools
+        sudo apt-get update
+        sudo apt-get install -y git zip unzip
+        pip install --upgrade pip cython==0.29.33 kivy[base] python-for-android==2024.1.21
+
+    - name: Setup Android SDK
+      run: |
+        mkdir -p $HOME/android/sdk/cmdline-tools
+        cd $HOME/android/sdk/cmdline-tools
         wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
         unzip -q commandlinetools-linux-11076708_latest.zip && mv cmdline-tools latest
-        export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
+        export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin
         yes | sdkmanager --licenses
         sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
     - name: Build APK
       run: |
-        export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools
-        python -m pythonforandroid.toolchain create --debug --package=org.ats.remote --name="ATS Remote" --version=1.0 --bootstrap=sdl2 --requirements=python3,kivy,android --arch=arm64-v8a --android-api=34 --ndk-dir=$ANDROID_SDK_ROOT/ndk/25.1.8937393
-        find. -name "*.apk" # <-- aa thi apk kya banu e shodhis
+        export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools
+        python -m pythonforandroid.toolchain create --debug --package=org.ats.remote --name="ATS Remote" --version=1.0 --bootstrap=sdl2 --requirements=python3,kivy,android --arch=arm64-v8a --android-api=34
+        find. -name "*.apk" -exec cp {} ATS-Remote.apk \;
 
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: ATS-APK
-        path:./**/bin/*.apk # <-- AA PATH CHANGE KARYU
-        if-no-files-found: error
+    - name: Save APK to Repo Folder
+      run: |
+        mkdir -p APK
+        mv ATS-Remote.apk APK/ATS-Remote-$(date +%Y%m%d-%H%M).apk
+        git config user.name "github-actions"
+        git config user.email "actions@github.com"
+        git add APK/
+        git commit -m "Update APK [$(date +%Y%m%d-%H%M)]" || echo "No changes to commit"
+        git push
