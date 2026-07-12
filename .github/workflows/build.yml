@@ -40,10 +40,11 @@ jobs:
         export ANDROIDNDK=$HOME/android/sdk/ndk/25.1.8937393
         python -m pythonforandroid.toolchain create --debug --package=org.ats.remote --name="ATS Remote" --version=1.0 --bootstrap=sdl2 --requirements=python3,kivy,android --arch=arm64-v8a --android-api=34
 
+    # 🛠️ અહીં મેં મોટો સુધારો કર્યો છે
     - name: Copy APK
       run: |
         mkdir -p APK
-        cp. /buildozer/android/app/*/bin/*.apk APK/ATS-Remote-$(date +%Y%m%d-%H%M).apk || cp./bin/*.apk APK/ATS-Remote-$(date +%Y%m%d-%H%M).apk || echo "APK not found yet"
+        cp *.apk APK/ATS-Remote-$(date +%Y%m%d-%H%M).apk || cp ./*.apk APK/ATS-Remote-$(date +%Y%m%d-%H%M).apk || echo "APK not found yet"
 
     - name: Push to Repo
       run: |
@@ -52,3 +53,4 @@ jobs:
         git add APK/
         git commit -m "Add APK" || true
         git push
+        
