@@ -1,68 +1,23 @@
-name: Build Android APK with Buildozer
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      # 🛠️ સ્ટેપ ૧: સિસ્ટમ ડિપેન્ડન્સીઝ ઇન્સ્ટોલ કરવી
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libssl-dev libffi-dev cmake python3-dev
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade buildozer cython virtualenv setuptools wheel
-
-      # 🛠️ સ્ટેપ ૨: AIDL ને ગ્લોબલી ફોર્સ-ઇન્સ્ટોલ કરવાની માસ્ટર ટ્રીક
-      - name: Force Fix AIDL Globally
-        run: |
-          # ગીટહબના ડિફોલ્ટ SDK માંથી aidl ક્યાં પડ્યું છે તે શોધવું
-          AIDL_PATH=$(find /usr/local/lib/android/sdk/build-tools/ -name "aidl" | sort -V | tail -n 1)
-          echo "Found AIDL at: $AIDL_PATH"
-          
-          # જો મળ્યું હોય, તો તેને સીધું ગ્લોબલ /usr/local/bin માં કોપી કરી દેવું
-          if [ ! -z "$AIDL_PATH" ]; then
-            sudo cp "$AIDL_PATH" /usr/local/bin/
-            sudo chmod +x /usr/local/bin/aidl
-            echo "AIDL successfully linked to global path!"
-          else
-            echo "AIDL not found in SDK, installing via apt..."
-            sudo apt-get install -y aidl
-          fi
-          
-          # વેરિફિકેશન
-          aidl --version || true
-
-      # 🛠️ સ્ટેપ ૩: ક્લીન એન્વાયર્નમેન્ટ સાથે બિલ્ડોઝર રન
-      - name: Build Android APK
+      - name: Build APK
         env:
-          ACCEPT_SDK_LICENSE: "y"
-          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
-          ANDROID_HOME: /usr/local/lib/android/sdk
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
         run: |
+          # 1. પાથ સેટઅપ
+          export PATH=$ANDROID_SDK_ROOT/build-tools/33.0.2:$ANDROID_SDK_ROOT/platform-tools:$PATH
+
+          # 2. બિલ્ડોઝરને ફક્ત એન્ડ્રોઇડ પ્લેટફોર્મ સેટઅપ કરવા કહ્યું (આનાથી એ ફોલ્ડર બનાવી દેશે પણ બિલ્ડ નહીં કરે)
+          buildozer android pgenવ્યુ || true
+
+          # 3. 🚀 હવે જ્યારે બિલ્ડોઝરે ફોલ્ડર બનાવી દીધું છે, ત્યારે જ આપણે એના ટાર્ગેટ પાથ પર ઓફિશિયલ SDK ની સોફ્ટ-લિંક ભરાવી દઈએ!
+          mkdir -p ~/.buildozer/android/platform/android-sdk/build-tools/33.0.2/
+          ln -sf $ANDROID_SDK_ROOT/build-tools/33.0.2/aidl ~/.buildozer/android/platform/android-sdk/build-tools/33.0.2/aidl
+          
+          # 4. વેરિફિકેશન માટે ટચ કરી લેવું
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
-          buildozer -v android debug
 
-      # 🛠️ સ્ટેપ ૪: ફાઇનલ APK આર્ટિફેક્ટ અપલોડ કરવું
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ATS-Remote-APK
-          path: "**/*.apk"
+          # 5. હવે અસલી બિલ્ડ રન કરો, બિલ્ડોઝર છેતરાઈ જશે કારણ કે એને અંદર aidl પહેલેથી જ મળશે!
+          buildozer -v android debug
           
