@@ -1,4 +1,4 @@
-import random
+Import random
 import string
 import time
 import subprocess
@@ -419,9 +419,3 @@ class RemoteAndroidApp(App):
 
 if __name__ == '__main__':
     RemoteAndroidApp().run()
-
-
-
-
-
-
