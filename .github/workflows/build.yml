@@ -1,78 +1,112 @@
-name: Build Kivy APK
+name: Build APK with Python for Android
+
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 180
+
     permissions:
       contents: write
+      actions: read
 
     steps:
-    - uses: actions/checkout@v4
-      with: { fetch-depth: 0 }
-      
-    - uses: actions/setup-python@v5
-      with: { python-version: '3.10' }
-    - uses: actions/setup-java@v4
-      with: { distribution: 'temurin', java-version: '17' }
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-    - run: |
-        sudo apt-get update
-        sudo apt-get install -y git zip unzip autoconf automake libtool pkg-config zlib1g-dev libffi-dev libssl-dev cmake python3-dev
+    - name: ☕ Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
 
-    - run: pip install --upgrade pip cython==0.29.33 kivy[base] python-for-android==2024.1.21
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
 
-    - name: Setup Android SDK
+    - name: 📦 Install system dependencies
       run: |
-        mkdir -p $HOME/android/sdk/cmdline-tools
-        cd $HOME/android/sdk/cmdline-tools
+        sudo apt-get update
+        sudo apt-get install -y \
+          git zip unzip autoconf automake libtool pkg-config \
+          zlib1g-dev libffi-dev libssl-dev cmake build-essential
+
+    - name: 🤖 Setup Android SDK
+      run: |
+        mkdir -p ~/android/sdk/cmdline-tools
+        cd ~/android/sdk/cmdline-tools
         wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-        unzip -q commandlinetools-linux-11076708_latest.zip && mv cmdline-tools latest
-        export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin
+        unzip -q commandlinetools-linux-11076708_latest.zip
+        mv cmdline-tools latest
+        export PATH=$PATH:~/android/sdk/cmdline-tools/latest/bin
         yes | sdkmanager --licenses
         sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
-    - name: Build APK
+    - name: 🔧 Setup environment
       run: |
-        export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools
-        export ANDROIDSDK=$HOME/android/sdk
-        export ANDROIDNDK=$HOME/android/sdk/ndk/25.1.8937393
-        
-        p4a apk --debug --private . \
+        echo "ANDROID_SDK_ROOT=$HOME/android/sdk" >> $GITHUB_ENV
+        echo "ANDROID_NDK_ROOT=$HOME/android/sdk/ndk/25.1.8937393" >> $GITHUB_ENV
+        echo "PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools" >> $GITHUB_ENV
+
+    - name: 📚 Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install cython==0.29.33 kivy[base] python-for-android==2024.1.21
+
+    - name: 🏗️ Build APK
+      run: |
+        echo "🚀 Building APK..."
+        p4a apk \
+          --debug \
+          --private . \
           --package=org.ats.remote \
           --name="ATS Remote" \
           --version=1.0 \
           --bootstrap=sdl2 \
           --requirements=hostpython3,python3,kivy,openssl \
-          --permission INTERNET \
-          --permission READ_EXTERNAL_STORAGE \
-          --permission WRITE_EXTERNAL_STORAGE \
+          --permission=INTERNET \
+          --permission=READ_EXTERNAL_STORAGE \
+          --permission=WRITE_EXTERNAL_STORAGE \
+          --permission=ACCESS_NETWORK_STATE \
           --arch=arm64-v8a \
           --android-api=34
 
-    - name: Copy APK
+    - name: 📦 Organize artifacts
       run: |
-        mkdir -p APK
-        APK_PATH=$(find . -maxdepth 2 -name "*.apk" 2>/dev/null | head -n 1)
-        
-        if [ ! -z "$APK_PATH" ]; then
-          echo "✅ APK found: $APK_PATH"
-          cp "$APK_PATH" APK/ATS-Remote-$(date +%Y%m%d-%H%M).apk
-          echo "✅ APK copied successfully!"
-        else
-          echo "❌ APK not found. Check logs above."
-          ls -la
+        mkdir -p dist
+        APK=$(find . -maxdepth 3 -name "*.apk" -type f | head -n 1)
+        if [ -z "$APK" ]; then
+          echo "❌ APK not found!"
           exit 1
         fi
+        BUILD_DATE=$(date +%Y%m%d-%H%M%S)
+        cp "$APK" "dist/ATS-Remote-${BUILD_DATE}.apk"
+        ls -lh dist/
 
-    - name: Push to Repo
+    - name: 📤 Upload artifact
+      uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: ATS-Remote-APK
+        path: dist/*.apk
+        retention-days: 30
+
+    - name: 💾 Push to repo
+      if: success() && github.event_name == 'push'
       run: |
-        git config user.name "github-actions"
-        git config user.email "actions@github.com"
-        git add APK/
-        git commit -m "Add APK $(date +%Y%m%d-%H%M)" || true
-        git push
+        mkdir -p releases
+        cp dist/ATS-Remote-*.apk releases/
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add releases/ || true
+        git commit -m "🔨 Add APK: $(date +%Y-%m-%d-%H:%M:%S)" || true
+        git push || true
