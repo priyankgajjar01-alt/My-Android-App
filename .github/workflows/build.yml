@@ -20,7 +20,11 @@ jobs:
     - uses: actions/setup-java@v4
       with: { distribution: 'temurin', java-version: '17' }
 
-    - run: sudo apt-get update && sudo apt-get install -y git zip unzip
+    # 🛠️ એન્ડ્રોઇડ બિલ્ડ માટે જરૂરી અત્યંત મહત્વના બેઝિક ટૂલ્સ
+    - run: |
+        sudo apt-get update
+        sudo apt-get install -y git zip unzip autoconf automake libtool pkg-config zlib1g-dev libffi-dev libssl-dev cmake python3-dev
+    
     - run: pip install --upgrade pip cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
     - name: Setup SDK
@@ -33,14 +37,22 @@ jobs:
         yes | sdkmanager --licenses
         sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
-    # 🛠️ અપડેટ: requirements માં openssl એડ કર્યું જેથી કનેક્શન સિક્યોરિટી ઇસ્યુ ન આવે
+    # 🛠️ મોટો સુધારો: --permission INTERNET અને hostpython3,openssl કમ્પાઈલર એડ કર્યા
     - name: Build APK
       run: |
         export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools
         export ANDROIDSDK=$HOME/android/sdk
         export ANDROIDNDK=$HOME/android/sdk/ndk/25.1.8937393
         
-        p4a apk --debug --private . --package=org.ats.remote --name="ATS Remote" --version=1.0 --bootstrap=sdl2 --requirements=python3,kivy,android,openssl --arch=arm64-v8a --android-api=34
+        p4a apk --debug --private . \
+          --package=org.ats.remote \
+          --name="ATS Remote" \
+          --version=1.0 \
+          --bootstrap=sdl2 \
+          --requirements=hostpython3,python3,kivy,openssl \
+          --permission INTERNET \
+          --arch=arm64-v8a \
+          --android-api=34
 
     - name: Copy APK
       run: |
