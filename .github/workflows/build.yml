@@ -40,69 +40,98 @@ jobs:
           git zip unzip autoconf automake libtool pkg-config \
           zlib1g-dev libffi-dev libssl-dev cmake build-essential
 
-    - name: 🤖 Remove old NDK and setup Android SDK with NDK 25.1
+    - name: 🔥 Deep clean - remove all Android stuff
       run: |
-        # Remove any existing NDK
-        rm -rf ~/android/sdk/ndk/
-        
-        mkdir -p ~/android/sdk/cmdline-tools
-        cd ~/android/sdk/cmdline-tools
-        
-        echo "📥 Downloading Android Command Line Tools..."
-        wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-        unzip -q commandlinetools-linux-11076708_latest.zip
-        mv cmdline-tools latest
-        
-        export PATH=$PATH:~/android/sdk/cmdline-tools/latest/bin
-        
-        echo "📋 Accepting licenses..."
-        yes | sdkmanager --licenses > /dev/null 2>&1
-        
-        echo "📥 Installing SDK packages..."
-        sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" > /dev/null 2>&1
-        
-        echo "📥 Installing ONLY NDK 25.1..."
-        sdkmanager "ndk;25.1.8937393" > /dev/null 2>&1
-        
-        echo "✅ Removing NDK 27.3 if exists..."
-        rm -rf ~/android/sdk/ndk/27.*
-        
-        echo "✅ Setup complete"
-        echo "Available NDKs:"
-        ls -la ~/android/sdk/ndk/
-
-    - name: 🔧 Setup environment variables
-      run: |
-        echo "ANDROID_SDK_ROOT=$HOME/android/sdk" >> $GITHUB_ENV
-        echo "ANDROID_NDK_ROOT=$HOME/android/sdk/ndk/25.1.8937393" >> $GITHUB_ENV
-        echo "ANDROID_NDK=$HOME/android/sdk/ndk/25.1.8937393" >> $GITHUB_ENV
-        echo "PATH=$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools:$PATH" >> $GITHUB_ENV
-
-    - name: 📚 Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip wheel setuptools
-        pip install cython==0.29.33
-        pip install kivy==2.2.1
-        pip install python-for-android==2024.1.21
-
-    - name: 🧹 Clean all caches
-      run: |
+        echo "🔥 Removing all cached Android files..."
+        rm -rf ~/android/
+        rm -rf ~/.android/
+        rm -rf ~/.gradle/
         rm -rf ~/.local/share/python-for-android/
         rm -rf ~/.buildozer/
         rm -rf ./build/
         rm -rf ./bin/
+        echo "✅ Cleaned!"
 
-    - name: 🏗️ Build APK with explicit NDK 25.1
+    - name: 🤖 Fresh Android SDK setup with NDK 25.1 ONLY
       run: |
+        mkdir -p $HOME/android/sdk/cmdline-tools
+        cd $HOME/android/sdk/cmdline-tools
+        
+        echo "📥 Downloading Command Line Tools..."
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+        unzip -q commandlinetools-linux-11076708_latest.zip
+        
+        if [ -d "cmdline-tools" ]; then
+          mv cmdline-tools latest
+        else
+          mkdir -p latest
+          mv bin latest/
+          mv lib latest/
+        fi
+        
+        export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin
+        
+        echo "📋 Accepting licenses..."
+        yes | sdkmanager --licenses 2>/dev/null || true
+        
+        echo "📥 Installing platform-tools..."
+        sdkmanager --install "platform-tools" 2>/dev/null || true
+        
+        echo "📥 Installing Android 34..."
+        sdkmanager --install "platforms;android-34" 2>/dev/null || true
+        
+        echo "📥 Installing build-tools 34.0.0..."
+        sdkmanager --install "build-tools;34.0.0" 2>/dev/null || true
+        
+        echo "📥 Installing NDK 25.1 ONLY..."
+        sdkmanager --install "ndk;25.1.8937393" 2>/dev/null || true
+        
+        echo "✅ Setup complete"
+        echo "NDK version:"
+        ls -la $HOME/android/sdk/ndk/
+        
+        # Make absolutely sure 27.x doesn't exist
+        rm -rf $HOME/android/sdk/ndk/27.*
+        echo "Remaining NDK:"
+        ls -la $HOME/android/sdk/ndk/
+
+    - name: 🔧 Set environment variables
+      run: |
+        echo "ANDROID_SDK_ROOT=$HOME/android/sdk" >> $GITHUB_ENV
+        echo "ANDROID_NDK_ROOT=$HOME/android/sdk/ndk/25.1.8937393" >> $GITHUB_ENV
+        echo "ANDROID_NDK=$HOME/android/sdk/ndk/25.1.8937393" >> $GITHUB_ENV
+        echo "ANDROID_NDK_VERSION=25.1.8937393" >> $GITHUB_ENV
+        echo "PATH=$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools:$PATH" >> $GITHUB_ENV
+
+    - name: 📚 Install Python packages
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        pip install --upgrade cython==0.29.33
+        pip install --upgrade kivy==2.2.1
+        pip install --upgrade python-for-android==2024.1.21
+
+    - name: 🧹 Final clean before build
+      run: |
+        rm -rf ~/.local/share/python-for-android/
+        rm -rf ~/.buildozer/
+        rm -rf ./build/
+        echo "✅ Ready to build!"
+
+    - name: 🏗️ Build APK
+      run: |
+        # Set variables explicitly
         export ANDROID_SDK_ROOT=$HOME/android/sdk
         export ANDROID_NDK_ROOT=$HOME/android/sdk/ndk/25.1.8937393
         export ANDROID_NDK=$HOME/android/sdk/ndk/25.1.8937393
         export PATH=$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools:$PATH
         
-        echo "🔍 Verifying NDK..."
-        ls -la $ANDROID_NDK_ROOT
+        echo "🔍 Verifying environment..."
+        echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
+        echo "ANDROID_NDK_ROOT: $ANDROID_NDK_ROOT"
+        ls -la $ANDROID_NDK_ROOT/
         
-        echo "🚀 Starting APK build with NDK 25.1..."
+        echo ""
+        echo "🚀 Building APK..."
         
         p4a apk \
           --debug \
@@ -120,23 +149,29 @@ jobs:
           --android-api=34 \
           --ndk-version=25.1.8937393 \
           --ndk-path=$ANDROID_NDK_ROOT
+        
+        echo "✅ Build complete!"
 
-    - name: 📦 Organize artifacts
+    - name: 📦 Find and copy APK
       run: |
         mkdir -p dist
-        APK=$(find . -maxdepth 5 -name "*.apk" -type f 2>/dev/null | head -n 1)
+        echo "🔍 Searching for APK..."
+        APK=$(find . -maxdepth 10 -name "*.apk" -type f 2>/dev/null | head -n 1)
         
         if [ -z "$APK" ]; then
           echo "❌ APK not found!"
-          echo "📁 Searching for files..."
-          find . -name "*.apk" -o -name "*apk*" 2>/dev/null | head -20
+          echo ""
+          echo "Directory contents:"
           ls -la
+          echo ""
+          echo "Search results:"
+          find . -name "*.apk" 2>/dev/null || echo "No APK files found"
           exit 1
         fi
         
+        echo "✅ Found APK: $APK"
         BUILD_DATE=$(date +%Y%m%d-%H%M%S)
         cp "$APK" "dist/ATS-Remote-${BUILD_DATE}.apk"
-        echo "✅ APK copied to dist/"
         ls -lh "dist/ATS-Remote-${BUILD_DATE}.apk"
 
     - name: 📤 Upload artifact
@@ -147,35 +182,28 @@ jobs:
         path: dist/*.apk
         retention-days: 30
 
-    - name: 💾 Push to repo
+    - name: 💾 Commit APK to repo
       if: success() && github.event_name == 'push'
       run: |
         mkdir -p releases
         cp dist/ATS-Remote-*.apk releases/ 2>/dev/null || true
-        
-        if [ -f releases/ATS-Remote-*.apk ]; then
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add releases/
-          git commit -m "🔨 Add APK: $(date +%Y-%m-%d-%H:%M:%S)" || true
-          git push || true
-          echo "✅ APK pushed to repository"
-        fi
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add releases/ || true
+        git commit -m "Add APK build $(date +%Y-%m-%d)" || true
+        git push || true
 
-    - name: ✅ Build successful!
+    - name: ✅ Success!
       if: success()
-      run: |
-        echo "🎉 Build completed successfully!"
-        echo "APK ready in artifacts section"
+      run: echo "🎉 APK built successfully!"
 
-    - name: ❌ Build failed
+    - name: ❌ Debug on failure
       if: failure()
       run: |
-        echo "❌ Build failed!"
+        echo "Checking what went wrong..."
         echo ""
-        echo "Checking NDK versions:"
-        ls -la ~/android/sdk/ndk/ 2>/dev/null || echo "No NDK found"
-        
+        echo "NDK location:"
+        ls -la ~/android/sdk/ndk/ 2>/dev/null || echo "NDK not found"
         echo ""
-        echo "Last log entries:"
-        find ~/.local/share/python-for-android -name "*.log" -exec tail -20 {} \; 2>/dev/null || echo "No logs"
+        echo "Build logs:"
+        tail -100 ~/.local/share/python-for-android/build/other_builds/SDL2-*/build/release/SDL2/src/sensor/android/SDL_androidsensor.c 2>/dev/null || echo "Log not found"
