@@ -69,7 +69,7 @@ jobs:
           mv lib latest/
         fi
         
-        export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin
+        export PATH=$HOME/android/sdk/cmdline-tools/latest/bin:$PATH
         
         echo "📋 Accepting licenses..."
         yes | sdkmanager --licenses 2>/dev/null || true
@@ -87,21 +87,6 @@ jobs:
         sdkmanager --install "ndk;25.1.8937393" 2>/dev/null || true
         
         echo "✅ Setup complete"
-        echo "NDK version:"
-        ls -la $HOME/android/sdk/ndk/
-        
-        # Make absolutely sure 27.x doesn't exist
-        rm -rf $HOME/android/sdk/ndk/27.*
-        echo "Remaining NDK:"
-        ls -la $HOME/android/sdk/ndk/
-
-    - name: 🔧 Set environment variables
-      run: |
-        echo "ANDROID_SDK_ROOT=$HOME/android/sdk" >> $GITHUB_ENV
-        echo "ANDROID_NDK_ROOT=$HOME/android/sdk/ndk/25.1.8937393" >> $GITHUB_ENV
-        echo "ANDROID_NDK=$HOME/android/sdk/ndk/25.1.8937393" >> $GITHUB_ENV
-        echo "ANDROID_NDK_VERSION=25.1.8937393" >> $GITHUB_ENV
-        echo "PATH=$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools:$PATH" >> $GITHUB_ENV
 
     - name: 📚 Install Python packages
       run: |
@@ -110,28 +95,13 @@ jobs:
         pip install --upgrade kivy==2.2.1
         pip install --upgrade python-for-android==2024.1.21
 
-    - name: 🧹 Final clean before build
-      run: |
-        rm -rf ~/.local/share/python-for-android/
-        rm -rf ~/.buildozer/
-        rm -rf ./build/
-        echo "✅ Ready to build!"
-
+    # 🛠️ મોટો સુધારો: --sdk-dir અને --ndk-dir આર્ગ્યુમેન્ટ્સનો ઉપયોગ કરીને નવું NDK 27 કાયમ માટે બ્લોક કર્યું
     - name: 🏗️ Build APK
       run: |
-        # Set variables explicitly
         export ANDROID_SDK_ROOT=$HOME/android/sdk
         export ANDROID_NDK_ROOT=$HOME/android/sdk/ndk/25.1.8937393
-        export ANDROID_NDK=$HOME/android/sdk/ndk/25.1.8937393
-        export PATH=$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools:$PATH
         
-        echo "🔍 Verifying environment..."
-        echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
-        echo "ANDROID_NDK_ROOT: $ANDROID_NDK_ROOT"
-        ls -la $ANDROID_NDK_ROOT/
-        
-        echo ""
-        echo "🚀 Building APK..."
+        echo "🚀 Building APK using NDK 25.1 explicitly..."
         
         p4a apk \
           --debug \
@@ -147,8 +117,8 @@ jobs:
           --permission=ACCESS_NETWORK_STATE \
           --arch=arm64-v8a \
           --android-api=34 \
-          --ndk-version=25.1.8937393 \
-          --ndk-path=$ANDROID_NDK_ROOT
+          --sdk-dir=$ANDROID_SDK_ROOT \
+          --ndk-dir=$ANDROID_NDK_ROOT
         
         echo "✅ Build complete!"
 
@@ -160,19 +130,12 @@ jobs:
         
         if [ -z "$APK" ]; then
           echo "❌ APK not found!"
-          echo ""
-          echo "Directory contents:"
-          ls -la
-          echo ""
-          echo "Search results:"
-          find . -name "*.apk" 2>/dev/null || echo "No APK files found"
           exit 1
         fi
         
         echo "✅ Found APK: $APK"
         BUILD_DATE=$(date +%Y%m%d-%H%M%S)
         cp "$APK" "dist/ATS-Remote-${BUILD_DATE}.apk"
-        ls -lh "dist/ATS-Remote-${BUILD_DATE}.apk"
 
     - name: 📤 Upload artifact
       uses: actions/upload-artifact@v4
@@ -192,18 +155,4 @@ jobs:
         git add releases/ || true
         git commit -m "Add APK build $(date +%Y-%m-%d)" || true
         git push || true
-
-    - name: ✅ Success!
-      if: success()
-      run: echo "🎉 APK built successfully!"
-
-    - name: ❌ Debug on failure
-      if: failure()
-      run: |
-        echo "Checking what went wrong..."
-        echo ""
-        echo "NDK location:"
-        ls -la ~/android/sdk/ndk/ 2>/dev/null || echo "NDK not found"
-        echo ""
-        echo "Build logs:"
-        tail -100 ~/.local/share/python-for-android/build/other_builds/SDL2-*/build/release/SDL2/src/sensor/android/SDL_androidsensor.c 2>/dev/null || echo "Log not found"
+        
