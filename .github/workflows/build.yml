@@ -60,7 +60,7 @@ jobs:
         python3 -m pythonforandroid.toolchain clean_all || true
         echo "✅ Clean done!"
 
-    # 🛠️ બિલ્ડ પ્રોસેસ: નવેસરથી ક્લીન બિલ્ડ થશે
+    # 🛠️ બિલ્ડ પ્રોસેસ: નવેસરથી ક્લીન બિલ્ડ થશે (Paramiko સપોર્ટ સાથે)
     - name: Build APK
       run: |
         export ANDROLLER_SDK_ROOT=$HOME/android/sdk
@@ -71,7 +71,7 @@ jobs:
           --name="Internet Storage Access" \
           --version=1.0 \
           --bootstrap=sdl2 \
-          --requirements=hostpython3,python3,kivy,openssl,android \
+          --requirements=hostpython3,python3,kivy,openssl,android,paramiko,cryptography \
           --permission INTERNET \
           --permission READ_EXTERNAL_STORAGE \
           --permission WRITE_EXTERNAL_STORAGE \
