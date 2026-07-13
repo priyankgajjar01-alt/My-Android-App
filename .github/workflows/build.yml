@@ -40,8 +40,11 @@ jobs:
           git zip unzip autoconf automake libtool pkg-config \
           zlib1g-dev libffi-dev libssl-dev cmake build-essential
 
-    - name: 🤖 Setup Android SDK with NDK 25.1
+    - name: 🤖 Remove old NDK and setup Android SDK with NDK 25.1
       run: |
+        # Remove any existing NDK
+        rm -rf ~/android/sdk/ndk/
+        
         mkdir -p ~/android/sdk/cmdline-tools
         cd ~/android/sdk/cmdline-tools
         
@@ -58,17 +61,22 @@ jobs:
         echo "📥 Installing SDK packages..."
         sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" > /dev/null 2>&1
         
-        echo "📥 Installing NDK 25.1..."
+        echo "📥 Installing ONLY NDK 25.1..."
         sdkmanager "ndk;25.1.8937393" > /dev/null 2>&1
         
+        echo "✅ Removing NDK 27.3 if exists..."
+        rm -rf ~/android/sdk/ndk/27.*
+        
         echo "✅ Setup complete"
+        echo "Available NDKs:"
+        ls -la ~/android/sdk/ndk/
 
     - name: 🔧 Setup environment variables
       run: |
         echo "ANDROID_SDK_ROOT=$HOME/android/sdk" >> $GITHUB_ENV
         echo "ANDROID_NDK_ROOT=$HOME/android/sdk/ndk/25.1.8937393" >> $GITHUB_ENV
         echo "ANDROID_NDK=$HOME/android/sdk/ndk/25.1.8937393" >> $GITHUB_ENV
-        echo "PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools" >> $GITHUB_ENV
+        echo "PATH=$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools:$PATH" >> $GITHUB_ENV
 
     - name: 📚 Install Python dependencies
       run: |
@@ -77,17 +85,24 @@ jobs:
         pip install kivy==2.2.1
         pip install python-for-android==2024.1.21
 
-    - name: 🧹 Clean cache
+    - name: 🧹 Clean all caches
       run: |
         rm -rf ~/.local/share/python-for-android/
+        rm -rf ~/.buildozer/
         rm -rf ./build/
+        rm -rf ./bin/
 
-    - name: 🏗️ Build APK
+    - name: 🏗️ Build APK with explicit NDK 25.1
       run: |
         export ANDROID_SDK_ROOT=$HOME/android/sdk
         export ANDROID_NDK_ROOT=$HOME/android/sdk/ndk/25.1.8937393
         export ANDROID_NDK=$HOME/android/sdk/ndk/25.1.8937393
-        export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools
+        export PATH=$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools:$PATH
+        
+        echo "🔍 Verifying NDK..."
+        ls -la $ANDROID_NDK_ROOT
+        
+        echo "🚀 Starting APK build with NDK 25.1..."
         
         p4a apk \
           --debug \
@@ -103,7 +118,8 @@ jobs:
           --permission=ACCESS_NETWORK_STATE \
           --arch=arm64-v8a \
           --android-api=34 \
-          --ndk-version=25.1.8937393
+          --ndk-version=25.1.8937393 \
+          --ndk-path=$ANDROID_NDK_ROOT
 
     - name: 📦 Organize artifacts
       run: |
@@ -112,6 +128,8 @@ jobs:
         
         if [ -z "$APK" ]; then
           echo "❌ APK not found!"
+          echo "📁 Searching for files..."
+          find . -name "*.apk" -o -name "*apk*" 2>/dev/null | head -20
           ls -la
           exit 1
         fi
@@ -149,3 +167,15 @@ jobs:
       run: |
         echo "🎉 Build completed successfully!"
         echo "APK ready in artifacts section"
+
+    - name: ❌ Build failed
+      if: failure()
+      run: |
+        echo "❌ Build failed!"
+        echo ""
+        echo "Checking NDK versions:"
+        ls -la ~/android/sdk/ndk/ 2>/dev/null || echo "No NDK found"
+        
+        echo ""
+        echo "Last log entries:"
+        find ~/.local/share/python-for-android -name "*.log" -exec tail -20 {} \; 2>/dev/null || echo "No logs"
