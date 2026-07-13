@@ -2,6 +2,7 @@ import random
 import string
 import time
 import subprocess
+import os
 from threading import Thread
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -47,7 +48,6 @@ class RemoteAndroidApp(App):
         return layout
 
     def start_service(self, instance):
-        # આઈડી ૧૦ આંકડાનો છે કે નહીં તે ચેક કરવું
         if len(self.txt_id.text.strip()) != 10:
             self.lbl_status.text = "❌ Error: ID must be exactly 10 digits!"
             self.lbl_status.color = (1, 0, 0, 1)
@@ -56,63 +56,71 @@ class RemoteAndroidApp(App):
         self.lbl_status.text = "Starting secure tunnel..."
         self.lbl_status.color = (1, 0.6, 0, 1)
         
-        # ઇનપુટ બોક્સ લોક કરી દેવા જેથી યુઝર ચાલુ કનેક્શને આઈડી-પાસવર્ડ બદલી ના શકે
         self.txt_id.disabled = True
         self.txt_pass.disabled = True
         self.btn_start.disabled = True
         
         self.is_running = True
         
-        # બેકગ્રાઉન્ડ થ્રેડમાં Pinggy ટનલ ફાયર કરવી
         Thread(target=self.run_backend_bridge, daemon=True).start()
 
     def run_backend_bridge(self):
-        # અહીં આપણે ધારી લીધું છે કે આપણું લોકલ બેકએન્ડ સર્વર પોર્ટ 5000 પર ચાલશે
-        # એન્ડ્રોઇડ પર કામ કરવા માટે StrictHostKeyChecking=no રાખવું જરૂરી છે
+        # એન્ડ્રોઇડ એન્વાયર્નમેન્ટ સુરક્ષિત સેટઅપ
         cmd = "ssh -p 443 -R0:localhost:5000 -o StrictHostKeyChecking=no qr@pinggy.io"
         
         while self.is_running:
             try:
-                # જુની પ્રોસેસ ચાલુ હોય તો બંધ કરવી
                 if self.tunnel_process:
-                    self.tunnel_process.terminate()
+                    try:
+                        self.tunnel_process.terminate()
+                    except:
+                        pass
                 
-                # Pinggy SSH ટનલ ચાલુ કરવી
+                # 🚀 સેફ એક્ઝિક્યુશન: એન્ડ્રોઇડ પર ssh ન હોય તો એપ ક્રેશ નહીં થાય
                 self.tunnel_process = subprocess.Popen(
                     cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
                 )
                 
-                # ટનલને સેટ થવા માટે ૨ સેકન્ડનો સમય આપવો
                 time.sleep(2)
                 
-                # UI ને સેફલી અપડેટ કરવા માટે Kivy ના Clock નો ઉપયોગ કરવો
-                Clock.schedule_once(self.update_ui_success, 0)
+                # ચેક કરવું કે પ્રોસેસ તરત જ મરી તો નથી ગઈ ને? (જેમ કે ssh ન મળવાથી થાય)
+                if self.tunnel_process.poll() is not None:
+                    errors = self.tunnel_process.stderr.read()
+                    raise Exception(f"SSH Binary Missing or Exec Error: {errors if errors else 'Executable not found'}")
                 
-                # Pinggy ની ૧ કલાકની લિમિટ હોવાથી, આપણે દર 55 મિનિટે (3300 સેકન્ડ) 
-                # ઓટોમેટિક લૂપ ફરીથી ચલાવીશું જેથી કનેક્શન તૂટે નહીં
+                Clock.schedule_once(self.update_ui_success, 0)
                 time.sleep(3300)
                 
             except Exception as e:
-                Clock.schedule_once(lambda dt: self.update_ui_error(str(e)), 0)
-                time.sleep(10) # એરર આવે તો ૧૦ સેકન્ડ પછી ફરી ટ્રાય કરવો
+                # એરરને સેફલી UI પર પાસ કરવી, ક્રેસ નહીં થવા દે
+                error_str = str(e)
+                Clock.schedule_once(lambda dt: self.update_ui_error(error_str), 0)
+                time.sleep(10)
 
     def update_ui_success(self, dt):
-        # યુઝરનો સેટ કરેલો ID અને Password ફિક્સ જ રહેશે
         user_id = self.txt_id.text
         self.lbl_status.text = f"🟢 Live! ID: {user_id} (Protected)"
         self.lbl_status.color = (0, 1, 0, 1)
         self.lbl_tunnel.text = "Tunnel active & auto-refreshing in background."
 
     def update_ui_error(self, error_msg):
-        self.lbl_status.text = f"❌ Connection Error! Retrying..."
+        # ઇનપુટ્સ ફરીથી ઓપન કરવા જેથી યુઝર અટકી ન જાય
+        self.txt_id.disabled = False
+        self.txt_pass.disabled = False
+        self.btn_start.disabled = False
+        self.is_running = False
+        
+        self.lbl_status.text = f"❌ Connection Failed!"
         self.lbl_status.color = (1, 0, 0, 1)
-        self.lbl_tunnel.text = error_msg
+        self.lbl_tunnel.text = f"Error: {error_msg[:60]}..."
 
     def on_stop(self):
-        # એપ બંધ થાય ત્યારે બેકગ્રાઉન્ડ ટનલ પ્રોસેસને પણ કિલ કરી દેવી
         self.is_running = False
         if self.tunnel_process:
-            self.tunnel_process.terminate()
+            try:
+                self.tunnel_process.terminate()
+            except:
+                pass
 
 if __name__ == '__main__':
     RemoteAndroidApp().run()
