@@ -40,53 +40,21 @@ jobs:
           git zip unzip autoconf automake libtool pkg-config \
           zlib1g-dev libffi-dev libssl-dev cmake build-essential
 
-    - name: 🔥 Deep clean - remove all Android stuff
+    - name: 🤖 Setup Android Environment from Runner
       run: |
-        echo "🔥 Removing all cached Android files..."
-        rm -rf ~/android/
-        rm -rf ~/.android/
-        rm -rf ~/.gradle/
-        rm -rf ~/.local/share/python-for-android/
-        rm -rf ~/.buildozer/
-        rm -rf ./build/
-        rm -rf ./bin/
-        echo "✅ Cleaned!"
-
-    - name: 🤖 Fresh Android SDK setup with NDK 25.1 ONLY
-      run: |
-        mkdir -p $HOME/android/sdk/cmdline-tools
-        cd $HOME/android/sdk/cmdline-tools
+        # ગીટહબ રનરમાં પહેલેથી ઇન્સ્ટોલ કરેલા SDK માંથી NDK 25 કેમ શોધવું તે સેટ કર્યું
+        echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> $GITHUB_ENV
         
-        echo "📥 Downloading Command Line Tools..."
-        wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-        unzip -q commandlinetools-linux-11076708_latest.zip
-        
-        if [ -d "cmdline-tools" ]; then
-          mv cmdline-tools latest
-        else
-          mkdir -p latest
-          mv bin latest/
-          mv lib latest/
+        # રનરની અંદર કયા NDK વર્ઝન અવેલેબલ છે તે લિસ્ટ કરીને ઓટો-ડિટેક્ટ કરવું
+        AVAILABLE_NDK=$(ls -1 /usr/local/lib/android/sdk/ndk/ | sort -V | grep -v "^27" | tail -n 1)
+        if [ -z "$AVAILABLE_NDK" ]; then
+          # જો કોઈ જૂનું વર્ઝન ન હોય, તો ડિફોલ્ટ સેટઅપ
+          AVAILABLE_NDK="25.2.9519653"
         fi
         
-        export PATH=$HOME/android/sdk/cmdline-tools/latest/bin:$PATH
-        
-        echo "📋 Accepting licenses..."
-        yes | sdkmanager --licenses 2>/dev/null || true
-        
-        echo "📥 Installing platform-tools..."
-        sdkmanager --install "platform-tools" 2>/dev/null || true
-        
-        echo "📥 Installing Android 34..."
-        sdkmanager --install "platforms;android-34" 2>/dev/null || true
-        
-        echo "📥 Installing build-tools 34.0.0..."
-        sdkmanager --install "build-tools;34.0.0" 2>/dev/null || true
-        
-        echo "📥 Installing NDK 25.1 ONLY..."
-        sdkmanager --install "ndk;25.1.8937393" 2>/dev/null || true
-        
-        echo "✅ Setup complete"
+        echo "🎯 Selected Safe NDK Version: $AVAILABLE_NDK"
+        echo "ANDROID_NDK_ROOT=/usr/local/lib/android/sdk/ndk/$AVAILABLE_NDK" >> $GITHUB_ENV
+        echo "ANDROID_NDK_VERSION=$AVAILABLE_NDK" >> $GITHUB_ENV
 
     - name: 📚 Install Python packages
       run: |
@@ -95,13 +63,9 @@ jobs:
         pip install --upgrade kivy==2.2.1
         pip install --upgrade python-for-android==2024.1.21
 
-    # 🛠️ મોટો સુધારો: --sdk-dir અને --ndk-dir આર્ગ્યુમેન્ટ્સનો ઉપયોગ કરીને નવું NDK 27 કાયમ માટે બ્લોક કર્યું
     - name: 🏗️ Build APK
       run: |
-        export ANDROID_SDK_ROOT=$HOME/android/sdk
-        export ANDROID_NDK_ROOT=$HOME/android/sdk/ndk/25.1.8937393
-        
-        echo "🚀 Building APK using NDK 25.1 explicitly..."
+        echo "🚀 Building APK using NDK from: $ANDROID_NDK_ROOT"
         
         p4a apk \
           --debug \
@@ -118,7 +82,8 @@ jobs:
           --arch=arm64-v8a \
           --android-api=34 \
           --sdk-dir=$ANDROID_SDK_ROOT \
-          --ndk-dir=$ANDROID_NDK_ROOT
+          --ndk-dir=$ANDROID_NDK_ROOT \
+          --ndk-version=$ANDROID_NDK_VERSION
         
         echo "✅ Build complete!"
 
@@ -155,4 +120,3 @@ jobs:
         git add releases/ || true
         git commit -m "Add APK build $(date +%Y-%m-%d)" || true
         git push || true
-        
