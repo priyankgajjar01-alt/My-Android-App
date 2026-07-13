@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import random
 import string
 import time
@@ -6,6 +7,7 @@ import os
 import json
 import socket
 import hashlib
+import re
 from threading import Thread
 
 from kivy.app import App
@@ -25,7 +27,7 @@ except ImportError:
     print("⚠️ Running on non-Android platform")
 
 class RemoteStorageServer:
-    """Backend storage server for remote file access"""
+    """Backend storage server for remote file access with Large File Streaming Support"""
     def __init__(self, port=5000):
         self.port = port
         self.users = {}
@@ -56,13 +58,23 @@ class RemoteStorageServer:
         except Exception as e:  
             print(f"❌ Failed to start storage server: {e}")  
       
+    def _recv_full_json(self, client):
+        data = ""
+        while True:
+            chunk = client.recv(65536).decode('utf-8', errors='ignore')
+            if not chunk: break
+            data += chunk
+            try:
+                if data.strip().endswith('}'):
+                    parsed = json.loads(data)
+                    if "op" in parsed or "id" in parsed: return parsed
+            except json.JSONDecodeError:
+                continue
+        return json.loads(data) if data else {}
+
     def handle_client(self, client, addr):  
         try:  
-            auth_data = client.recv(1024).decode()  
-            if not auth_data:  
-                return  
-              
-            auth_json = json.loads(auth_data)  
+            auth_json = self._recv_full_json(client)
             user_id = auth_json.get('id')  
             password = auth_json.get('password')  
               
@@ -76,24 +88,50 @@ class RemoteStorageServer:
               
             while True:  
                 try:  
-                    cmd_data = client.recv(2048).decode()  
-                    if not cmd_data:  
-                        break  
-                      
-                    cmd_json = json.loads(cmd_data)  
-                    response = self.process_command(cmd_json)  
-                    client.send(json.dumps(response).encode())  
-                except Exception as e:  
-                    break  
-          
-        except Exception as e:  
-            pass  
-        finally:  
-            try:  
-                self.authenticated_sessions.discard(addr[0])  
-                client.close()  
-            except:  
-                pass  
+                    cmd_json = self._recv_full_json(client)
+                    if not cmd_json: break  
+                    
+                    operation = cmd_json.get('op')
+                    
+                    if operation == 'STREAM_START':
+                        path = cmd_json.get('path', '')
+                        total_size = cmd_json.get('size', 0)
+                        
+                        if not (path.startswith('/sdcard/') or path.startswith('/storage/')):
+                            client.send(json.dumps({"status": "FAILED", "msg": "Access denied"}).encode())
+                            continue
+                        
+                        client.send(json.dumps({"status": "OK", "msg": "Ready for stream"}).encode())
+                        received_bytes = 0
+                        chunk_size = 4 * 1024 * 1024
+                        
+                        try:
+                            with open(path, 'wb') as f:
+                                while received_bytes < total_size:
+                                    remaining = total_size - received_bytes
+                                    current_buf = min(chunk_size, remaining)
+                                    chunk = client.recv(current_buf)
+                                    if not chunk: break
+                                    f.write(chunk)
+                                    received_bytes += len(chunk)
+                            
+                            if received_bytes == total_size:
+                                client.send(json.dumps({"status": "OK", "msg": "Large file saved fully"}).encode())
+                            else:
+                                client.send(json.dumps({"status": "FAILED", "msg": "Stream cut off short"}).encode())
+                        except Exception as file_err:
+                            client.send(json.dumps({"status": "FAILED", "msg": f"Write error: {file_err}"}).encode())
+                    
+                    else:
+                        response = self.process_command(cmd_json)  
+                        client.send(json.dumps(response).encode())  
+                except: break  
+        except: pass  
+        finally:
+            try:
+                self.authenticated_sessions.discard(addr[0])
+                client.close()
+            except: pass
       
     def verify_auth(self, user_id, password):  
         if user_id in self.users:  
@@ -113,43 +151,36 @@ class RemoteStorageServer:
             if operation == 'LIST':  
                 files = []  
                 if os.path.isdir(path):  
-                    try:  
-                        files = os.listdir(path)  
-                    except PermissionError:  
-                        return {"status": "FAILED", "msg": "Permission denied"}  
+                    try: files = os.listdir(path)
+                    except PermissionError: return {"status": "FAILED", "msg": "Permission denied"}  
                 return {"status": "OK", "files": files}  
               
             elif operation == 'READ':  
                 if os.path.isfile(path):  
                     try:  
-                        with open(path, 'r') as f:  
-                            content = f.read()  
-                        return {"status": "OK", "content": content}  
-                    except PermissionError:  
-                        return {"status": "FAILED", "msg": "Permission denied"}  
+                        with open(path, 'rb') as f: raw_data = f.read()  
+                        content_str = raw_data.decode('latin-1')
+                        return {"status": "OK", "content": content_str}  
+                    except PermissionError: return {"status": "FAILED", "msg": "Permission denied"}  
                 return {"status": "FAILED", "msg": "File not found"}  
               
             elif operation == 'WRITE':  
                 try:  
-                    content = cmd.get('content', '')  
-                    with open(path, 'w') as f:  
-                        f.write(content)  
+                    content_str = cmd.get('content', '')  
+                    raw_data = content_str.encode('latin-1')
+                    with open(path, 'wb') as f: f.write(raw_data)  
                     return {"status": "OK", "msg": "File written"}  
-                except PermissionError:  
-                    return {"status": "FAILED", "msg": "Permission denied"}  
+                except PermissionError: return {"status": "FAILED", "msg": "Permission denied"}  
               
             elif operation == 'DELETE':  
                 if os.path.isfile(path):  
                     try:  
                         os.remove(path)  
                         return {"status": "OK", "msg": "File deleted"}  
-                    except PermissionError:  
-                        return {"status": "FAILED", "msg": "Permission denied"}  
+                    except PermissionError: return {"status": "FAILED", "msg": "Permission denied"}  
                 return {"status": "FAILED", "msg": "File not found"}  
-              
             else:  
                 return {"status": "FAILED", "msg": "Unknown operation"}  
-          
         except Exception as e:  
             return {"status": "FAILED", "msg": str(e)}  
       
@@ -160,87 +191,87 @@ class RemoteStorageServer:
     def stop(self):  
         self.running = False  
         if self.socket:  
-            try:  
-                self.socket.close()  
-            except:  
-                pass
+            try: self.socket.close()  
+            except: pass
+
 
 class RemoteAndroidApp(App):
     def build(self):
-        # અહીં એપનું નામ બદલીને "Internet Storage Access" કર્યું છે
         self.title = "Internet Storage Access"
         
         if ANDROID:  
             self.request_android_permissions()  
           
-        main_layout = BoxLayout(orientation='vertical', padding=20, spacing=15)  
+        main_layout = BoxLayout(orientation='vertical', padding=30, spacing=25)  
           
-        # Header ટાઇટલ અપડેટ
+        # Header - મોટા બોલ્ડ ફોન્ટ
         main_layout.add_widget(Label(  
             text="📱 Internet Storage Access",   
-            font_size=28,   
+            font_size=48,   
+            bold=True,
             color=(0, 0.67, 0.7, 1),   
-            size_hint_y=0.08  
+            size_hint_y=0.1  
         ))  
           
         scroll = ScrollView()  
-        scroll_layout = BoxLayout(orientation='vertical', spacing=12, size_hint_y=None)  
+        scroll_layout = BoxLayout(orientation='vertical', spacing=20, size_hint_y=None)  
         scroll_layout.bind(minimum_height=scroll_layout.setter('height'))  
           
-        # Remote ID
-        scroll_layout.add_widget(Label(text="📋 10-Digit Remote ID:", font_size=20, size_hint_y=None, height=40))  
-        default_id = "".join(random.choices(string.digits, k=10))  
-        self.txt_id = TextInput(text=default_id, multiline=False, font_size=22, halign="center", size_hint_y=None, height=55)  
+        # 📋 Remote ID (Detected IP)
+        scroll_layout.add_widget(Label(text="📋 Remote ID (Detected IP):", font_size=36, bold=True, size_hint_y=None, height=60))  
+        self.txt_id = TextInput(text="Detecting...", multiline=False, font_size=36, halign="center", size_hint_y=None, height=90, disabled=True)  
         scroll_layout.add_widget(self.txt_id)  
           
-        # Password
-        scroll_layout.add_widget(Label(text="🔐 Custom Password:", font_size=20, size_hint_y=None, height=40))  
-        self.txt_pass = TextInput(text="ats123", multiline=False, font_size=22, halign="center", password=True, size_hint_y=None, height=55)  
+        # 🔐 Custom Password
+        scroll_layout.add_widget(Label(text="🔐 Custom Password:", font_size=36, bold=True, size_hint_y=None, height=60))  
+        self.txt_pass = TextInput(text="ats123", multiline=False, font_size=36, halign="center", password=True, size_hint_y=None, height=90)  
         scroll_layout.add_widget(self.txt_pass)  
 
-        # Pinggy Server Box
-        scroll_layout.add_widget(Label(text="🌐 Pinggy Connection Command:", font_size=18, size_hint_y=None, height=35))  
-        pinggy_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=55, spacing=10)
+        # 🌐 🌟 Pinggy Server Connection Command Box (જેનાથી કનેક્શન લિંક બદલી શકાય)
+        scroll_layout.add_widget(Label(text="🌐 Pinggy Server Connection Command:", font_size=36, bold=True, size_hint_y=None, height=60))  
+        pinggy_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=90, spacing=15)
         self.txt_tunnel_cmd = TextInput(
             text="ssh -p 443 -R0:localhost:5000 -o StrictHostKeyChecking=no -o ConnectTimeout=5 qr@pinggy.io",
-            multiline=False, font_size=16, disabled=True
+            multiline=False, font_size=28, disabled=True
         )
-        self.btn_edit_tunnel = Button(text="Edit", size_hint_x=0.25, font_size=18, background_color=(0, 0.5, 0.7, 1))
+        self.btn_edit_tunnel = Button(text="Edit", size_hint_x=0.2, font_size=30, bold=True, background_color=(0, 0.5, 0.7, 1))
         self.btn_edit_tunnel.bind(on_press=self.toggle_tunnel_edit)
         pinggy_box.add_widget(self.txt_tunnel_cmd)
         pinggy_box.add_widget(self.btn_edit_tunnel)
         scroll_layout.add_widget(pinggy_box)
           
-        # Permissions Status  
-        scroll_layout.add_widget(Label(text="📋 Permissions Status:", font_size=18, size_hint_y=None, height=35))  
-        self.lbl_permissions = Label(text="⏳ Checking...", color=(1, 0.6, 0, 1), font_size=16, size_hint_y=None, height=50)  
+        # 📋 Permissions Status
+        scroll_layout.add_widget(Label(text="📋 Permissions Status:", font_size=32, bold=True, size_hint_y=None, height=50))  
+        self.lbl_permissions = Label(text="⏳ Checking...", color=(1, 0.6, 0, 1), font_size=32, size_hint_y=None, height=70)  
         scroll_layout.add_widget(self.lbl_permissions)  
           
-        # Network Status Monitoring Box
-        scroll_layout.add_widget(Label(text="📊 Real-time Network Status:", font_size=18, size_hint_y=None, height=35))
+        # 📊 Real-time Network Status
+        scroll_layout.add_widget(Label(text="📊 Real-time Network Status:", font_size=32, bold=True, size_hint_y=None, height=50))
         
-        status_grid = BoxLayout(orientation='vertical', size_hint_y=None, height=130, spacing=5)
-        self.lbl_net_internet = Label(text="🌐 Internet Connection: Checking...", font_size=16, halign="left", size_hint_y=None, height=35)
-        self.lbl_net_local = Label(text="🏠 Local Network (LAN): Checking...", font_size=16, halign="left", size_hint_y=None, height=35)
-        self.lbl_net_remote = Label(text="🔗 Different Network (Pinggy): Not Connected", font_size=16, halign="left", size_hint_y=None, height=35)
+        status_grid = BoxLayout(orientation='vertical', size_hint_y=None, height=360, spacing=15)
+        self.lbl_net_internet = Label(text="🌐 Internet Connection: Checking...", font_size=32, halign="left", size_hint_y=None, height=60)
+        self.lbl_net_local = Label(text="🏠 Local Network: Checking...", font_size=32, halign="left", size_hint_y=None, height=60)
+        
+        # 🔗 આ બોક્સમાં જનરેટ થયેલી અસલી લાઈવ લિંક ઓટોમેટિક મોટા અક્ષરે પ્રિન્ટ થશે
+        self.lbl_net_remote = Label(
+            text="🔗 Generated Tunnel Link: Inactive\n(Press Start to Generate)", 
+            font_size=32, 
+            bold=True,
+            halign="center", 
+            color=(0.7, 0.7, 0.7, 1),
+            size_hint_y=None, 
+            height=140
+        )
         
         status_grid.add_widget(self.lbl_net_internet)
         status_grid.add_widget(self.lbl_net_local)
         status_grid.add_widget(self.lbl_net_remote)
         scroll_layout.add_widget(status_grid)
           
-        # Start Button  
-        self.btn_start = Button(text="🚀 Start Services", size_hint_y=None, height=60, font_size=22, background_color=(0, 0.67, 0.7, 1))  
+        # 🚀 Start Button
+        self.btn_start = Button(text="🚀 Start Services", size_hint_y=None, height=110, font_size=40, bold=True, background_color=(0, 0.67, 0.7, 1))  
         self.btn_start.bind(on_press=self.start_service)  
         scroll_layout.add_widget(self.btn_start)  
-          
-        # Local Access IP
-        self.lbl_local = Label(text="📍 Device IP: --", color=(0.7, 0.7, 0.7, 1), font_size=16, size_hint_y=None, height=40)  
-        scroll_layout.add_widget(self.lbl_local)  
-          
-        # Remote Access Tunnel URL
-        self.lbl_remote = Label(text="🌐 Tunnel URL: --", color=(0.7, 0.7, 0.7, 1), font_size=16, size_hint_y=None, height=50)  
-        scroll_layout.add_widget(self.lbl_remote)  
           
         scroll.add_widget(scroll_layout)  
         main_layout.add_widget(scroll)  
@@ -251,6 +282,7 @@ class RemoteAndroidApp(App):
         self.permissions_granted = False  
           
         Clock.schedule_once(self.check_permissions, 1)  
+        Clock.schedule_once(self.initialize_ip_id, 0.5)
         Clock.schedule_interval(self.update_network_status_ui, 3)
           
         return main_layout  
@@ -265,6 +297,10 @@ class RemoteAndroidApp(App):
             self.btn_edit_tunnel.text = "Edit"
             self.btn_edit_tunnel.background_color = (0, 0.5, 0.7, 1)
 
+    def initialize_ip_id(self, dt):
+        device_ip = self.get_device_ip()
+        self.txt_id.text = str(device_ip)
+
     def update_network_status_ui(self, dt):
         try:
             socket.create_connection(("8.8.8.8", 53), timeout=2)
@@ -278,20 +314,11 @@ class RemoteAndroidApp(App):
         if ip != "127.0.0.1":
             self.lbl_net_local.text = f"🏠 Local Network: OK (IP: {ip})"
             self.lbl_net_local.color = (0, 1, 0, 1)
+            if not self.is_running:
+                self.txt_id.text = str(ip)
         else:
-            self.lbl_net_local.text = "🏠 Local Network: Not OK (No Wi-Fi/LAN)"
+            self.lbl_net_local.text = "🏠 Local Network: No Wi-Fi"
             self.lbl_net_local.color = (1, 0, 0, 1)
-
-        if self.tunnel_process and self.tunnel_process.poll() is None:
-            self.lbl_net_remote.text = "🔗 Different Network: Pinggy Connected"
-            self.lbl_net_remote.color = (0, 1, 0, 1)
-        else:
-            if self.is_running:
-                self.lbl_net_remote.text = "🔗 Different Network: Pinggy Not Connected"
-                self.lbl_net_remote.color = (1, 0, 0, 1)
-            else:
-                self.lbl_net_remote.text = "🔗 Different Network: Tunnel Inactive"
-                self.lbl_net_remote.color = (0.7, 0.7, 0.7, 1)
 
     def request_android_permissions(self):  
         if ANDROID:  
@@ -302,8 +329,7 @@ class RemoteAndroidApp(App):
                     Permission.WRITE_EXTERNAL_STORAGE,  
                 ]  
                 request_permissions(permissions)  
-            except Exception as e:  
-                print(f"⚠️ Permission request error: {e}")  
+            except Exception as e: print(f"⚠️ Permission request error: {e}")  
 
     def check_permissions(self, dt=None):  
         if not ANDROID:  
@@ -338,7 +364,6 @@ class RemoteAndroidApp(App):
                 self.lbl_permissions.color = (1, 0, 0, 1)  
                 self.permissions_granted = False  
                 if ANDROID: self.request_android_permissions()  
-          
         except Exception as e:  
             self.lbl_permissions.text = f"⚠️ Error: {str(e)[:30]}"  
 
@@ -357,58 +382,67 @@ class RemoteAndroidApp(App):
             if ANDROID: toast("Please grant permissions first!")  
             return  
           
-        if len(self.txt_id.text.strip()) != 10 or not self.txt_id.text.isdigit():  
-            if ANDROID: toast("ID must be exactly 10 digits!")  
-            return  
-
         if len(self.txt_pass.text.strip()) < 4:  
             if ANDROID: toast("Password minimum 4 chars!")  
             return  
           
-        self.txt_id.disabled = True  
         self.txt_pass.disabled = True  
         self.btn_start.disabled = True  
         self.txt_tunnel_cmd.disabled = True
         self.btn_edit_tunnel.disabled = True
-          
         self.is_running = True  
+        
+        current_ip = self.get_device_ip()
+        self.txt_id.text = str(current_ip)
         self.storage_server.add_user(self.txt_id.text, self.txt_pass.text)  
           
-        device_ip = self.get_device_ip()  
-        self.lbl_local.text = f"📍 Device IP: {device_ip}:5000"  
-        self.lbl_local.color = (0, 1, 0, 1)  
-          
         Thread(target=self.storage_server.start, daemon=True).start()  
+        
+        self.lbl_net_remote.text = "🔄 Connecting to Pinggy Server..."
+        self.lbl_net_remote.color = (1, 0.6, 0, 1)
         Thread(target=self.run_remote_tunnel, daemon=True).start()  
 
     def run_remote_tunnel(self):  
-        cmd = self.txt_tunnel_cmd.text.strip()  
+        cmd = self.txt_tunnel_cmd.text.strip()
           
-        retry_count = 0  
-        while self.is_running and retry_count < 5:  
-            try:  
-                if self.tunnel_process:  
-                    try: self.tunnel_process.terminate()  
-                    except: pass  
-                  
-                self.tunnel_process = subprocess.Popen(  
-                    cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1  
-                )  
-                  
-                time.sleep(4)  
-                  
-                if self.tunnel_process.poll() is not None:  
-                    retry_count += 1  
-                    time.sleep(5)  
-                    continue  
-                  
-                self.lbl_remote.text = "🌐 Tunnel: Active (Connected to Pinggy)"  
-                self.lbl_remote.color = (0, 1, 0, 1)  
-                time.sleep(3300)  
-                  
-            except Exception as e:  
-                retry_count += 1  
-                time.sleep(5)  
+        try:  
+            if self.tunnel_process:  
+                try: self.tunnel_process.terminate()  
+                except: pass  
+              
+            self.tunnel_process = subprocess.Popen(  
+                cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1  
+            )  
+              
+            link_found = False
+            for line in self.tunnel_process.stdout:
+                if not self.is_running: break
+                
+                # પિંગી બેકગ્રાઉન્ડ હોસ્ટ સાથે કનેક્ટ થઈને નવી પબ્લિક લિંક આપે તેને જ ફિલ્ટર કરવું
+                match = re.search(r'https://[a-zA-Z0-9\-]+\.pinggy\.link', line)
+                if match:
+                    full_url = match.group(0)
+                    self.update_remote_label_ui(full_url, success=True)
+                    link_found = True
+                    break
+            
+            if not link_found:
+                self.update_remote_label_ui("❌ Tunnel Connection Failed", success=False)
+                
+            while self.is_running and self.tunnel_process.poll() is None:
+                time.sleep(2)
+                
+        except Exception as e:  
+            self.update_remote_label_ui(f"❌ Error: {str(e)[:25]}", success=False)
+
+    def update_remote_label_ui(self, text_val, success=True):
+        def set_text(dt):
+            self.lbl_net_remote.text = f"🔗 Generated Tunnel Link:\n{text_val}"
+            if success:
+                self.lbl_net_remote.color = (0, 1, 0, 1)
+            else:
+                self.lbl_net_remote.color = (1, 0, 0, 1)
+        Clock.schedule_once(set_text)
 
     def on_stop(self):  
         self.is_running = False  
@@ -419,3 +453,6 @@ class RemoteAndroidApp(App):
 
 if __name__ == '__main__':
     RemoteAndroidApp().run()
+            
+
+
