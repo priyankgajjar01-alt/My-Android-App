@@ -51,7 +51,16 @@ jobs:
         python -m pip install --upgrade pip setuptools wheel
         pip install --upgrade cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
-    # 🛠️ અપડેટ: --name માં "Photon Clint" સેટ કર્યું છે
+    # 🛠️ નવું સ્ટેપ: જૂની બધી જ સેટિંગ્સ અને જૂની એપનો ડેટા સાફ કરવા માટે
+    - name: 🧹 Clean Previous Build Cache & Old Configs
+      run: |
+        echo "🧹 Cleaning old cache..."
+        rm -rf .buildozer/
+        rm -f buildozer.spec
+        python3 -m pythonforandroid.toolchain clean_all || true
+        echo "✅ Clean done!"
+
+    # 🛠️ બિલ્ડ પ્રોસેસ: નવેસરથી ક્લીન બિલ્ડ થશે
     - name: Build APK
       run: |
         export ANDROLLER_SDK_ROOT=$HOME/android/sdk
@@ -62,7 +71,7 @@ jobs:
           --name="Photon Clint" \
           --version=1.0 \
           --bootstrap=sdl2 \
-          --requirements=hostpython3,python3,kivy,openssl \
+          --requirements=hostpython3,python3,kivy,openssl,android \
           --permission=INTERNET \
           --permission=READ_EXTERNAL_STORAGE \
           --permission=WRITE_EXTERNAL_STORAGE \
@@ -73,9 +82,10 @@ jobs:
           --ndk-dir=$ANDROLLER_NDK_ROOT \
           --ndk-version=25.1.8937393
 
-    # 🛠️ અપડેટ: આઉટપુટ ફાઇલનું નામ પણ પ્રોજેક્ટ મુજબ સેટ કર્યું
     - name: Copy APK
       run: |
+        # જૂની બધી એપીકે પહેલા ડિલીટ કરો જેથી નવી જ ફાઈલ પકડે
+        rm -rf APK/*
         mkdir -p APK
         APK_PATH=$(find . -maxdepth 2 -name "*.apk" 2>/dev/null | head -n 1)
         
