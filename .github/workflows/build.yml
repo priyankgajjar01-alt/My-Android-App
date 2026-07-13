@@ -33,14 +33,14 @@ jobs:
         yes | sdkmanager --licenses
         sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
-    # 🛠️ મોટો સુધારો: '--private .' એડ કર્યું જેથી એને એન્ટ્રી પોઇન્ટ main.py મળી જાય
+    # 🛠️ અપડેટ: requirements માં openssl એડ કર્યું જેથી કનેક્શન સિક્યોરિટી ઇસ્યુ ન આવે
     - name: Build APK
       run: |
         export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools
         export ANDROIDSDK=$HOME/android/sdk
         export ANDROIDNDK=$HOME/android/sdk/ndk/25.1.8937393
         
-        p4a apk --debug --private . --package=org.ats.remote --name="ATS Remote" --version=1.0 --bootstrap=sdl2 --requirements=python3,kivy,android --arch=arm64-v8a --android-api=34
+        p4a apk --debug --private . --package=org.ats.remote --name="ATS Remote" --version=1.0 --bootstrap=sdl2 --requirements=python3,kivy,android,openssl --arch=arm64-v8a --android-api=34
 
     - name: Copy APK
       run: |
