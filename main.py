@@ -2,13 +2,15 @@
 import random
 import string
 import time
-import subprocess
 import os
 import json
 import socket
 import hashlib
 import re
 from threading import Thread
+
+# 🌟 પ્યોર પાયથન SSH ટનલ માટે paramiko ઇમ્પોર્ટ કર્યું
+import paramiko
 
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -204,7 +206,7 @@ class RemoteAndroidApp(App):
           
         main_layout = BoxLayout(orientation='vertical', padding=30, spacing=25)  
           
-        # Header - મોટા બોલ્ડ ફોન્ટ
+        # Header
         main_layout.add_widget(Label(  
             text="📱 Internet Storage Access",   
             font_size=48,   
@@ -227,18 +229,10 @@ class RemoteAndroidApp(App):
         self.txt_pass = TextInput(text="ats123", multiline=False, font_size=36, halign="center", password=True, size_hint_y=None, height=90)  
         scroll_layout.add_widget(self.txt_pass)  
 
-        # 🌐 🌟 Pinggy Server Connection Command Box (જેનાથી કનેક્શન લિંક બદલી શકાય)
-        scroll_layout.add_widget(Label(text="🌐 Pinggy Server Connection Command:", font_size=36, bold=True, size_hint_y=None, height=60))  
-        pinggy_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=90, spacing=15)
-        self.txt_tunnel_cmd = TextInput(
-            text="ssh -p 443 -R0:localhost:5000 -o StrictHostKeyChecking=no -o ConnectTimeout=5 qr@pinggy.io",
-            multiline=False, font_size=28, disabled=True
-        )
-        self.btn_edit_tunnel = Button(text="Edit", size_hint_x=0.2, font_size=30, bold=True, background_color=(0, 0.5, 0.7, 1))
-        self.btn_edit_tunnel.bind(on_press=self.toggle_tunnel_edit)
-        pinggy_box.add_widget(self.txt_tunnel_cmd)
-        pinggy_box.add_widget(self.btn_edit_tunnel)
-        scroll_layout.add_widget(pinggy_box)
+        # 🌐 🌟 Pinggy Status Info Line (હવે પ્યોર પાયથન મોડ છે એટલે કમાન્ડ બોક્સની જરૂર નથી)
+        scroll_layout.add_widget(Label(text="🌐 Remote Tunnel Engine:", font_size=36, bold=True, size_hint_y=None, height=60))  
+        self.lbl_engine_info = Label(text="⚡ Pure Python Paramiko Core Ready", font_size=30, color=(0, 0.7, 0.9, 1), size_hint_y=None, height=70)
+        scroll_layout.add_widget(self.lbl_engine_info)
           
         # 📋 Permissions Status
         scroll_layout.add_widget(Label(text="📋 Permissions Status:", font_size=32, bold=True, size_hint_y=None, height=50))  
@@ -252,7 +246,7 @@ class RemoteAndroidApp(App):
         self.lbl_net_internet = Label(text="🌐 Internet Connection: Checking...", font_size=32, halign="left", size_hint_y=None, height=60)
         self.lbl_net_local = Label(text="🏠 Local Network: Checking...", font_size=32, halign="left", size_hint_y=None, height=60)
         
-        # 🔗 આ બોક્સમાં જનરેટ થયેલી અસલી લાઈવ લિંક ઓટોમેટિક મોટા અક્ષરે પ્રિન્ટ થશે
+        # 🔗 આ બોક્સમાં જનરેટ થયેલી પિંગી લિંક દેખાશે
         self.lbl_net_remote = Label(
             text="🔗 Generated Tunnel Link: Inactive\n(Press Start to Generate)", 
             font_size=32, 
@@ -276,7 +270,7 @@ class RemoteAndroidApp(App):
         scroll.add_widget(scroll_layout)  
         main_layout.add_widget(scroll)  
           
-        self.tunnel_process = None  
+        self.ssh_client = None  
         self.is_running = False  
         self.storage_server = RemoteStorageServer(port=5000)  
         self.permissions_granted = False  
@@ -286,16 +280,6 @@ class RemoteAndroidApp(App):
         Clock.schedule_interval(self.update_network_status_ui, 3)
           
         return main_layout  
-
-    def toggle_tunnel_edit(self, instance):
-        if self.txt_tunnel_cmd.disabled:
-            self.txt_tunnel_cmd.disabled = False
-            self.btn_edit_tunnel.text = "Save"
-            self.btn_edit_tunnel.background_color = (0, 0.7, 0.3, 1)
-        else:
-            self.txt_tunnel_cmd.disabled = True
-            self.btn_edit_tunnel.text = "Edit"
-            self.btn_edit_tunnel.background_color = (0, 0.5, 0.7, 1)
 
     def initialize_ip_id(self, dt):
         device_ip = self.get_device_ip()
@@ -388,8 +372,6 @@ class RemoteAndroidApp(App):
           
         self.txt_pass.disabled = True  
         self.btn_start.disabled = True  
-        self.txt_tunnel_cmd.disabled = True
-        self.btn_edit_tunnel.disabled = True
         self.is_running = True  
         
         current_ip = self.get_device_ip()
@@ -403,22 +385,38 @@ class RemoteAndroidApp(App):
         Thread(target=self.run_remote_tunnel, daemon=True).start()  
 
     def run_remote_tunnel(self):  
-        cmd = self.txt_tunnel_cmd.text.strip()
-          
+        """🌟 Paramiko Core Engine: પ્યોર પાયથન રિવર્સ ટનલિંગ લોજિક"""
         try:  
-            if self.tunnel_process:  
-                try: self.tunnel_process.terminate()  
+            if self.ssh_client:  
+                try: self.ssh_client.close()  
                 except: pass  
               
-            self.tunnel_process = subprocess.Popen(  
-                cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1  
-            )  
-              
+            # 1. SSH Client ઓપન કરો
+            self.ssh_client = paramiko.SSHClient()
+            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            # 2. Pinggy સર્વર સાથે કનેક્શન સ્થાપો
+            self.ssh_client.connect(
+                hostname='pinggy.io', 
+                port=443, 
+                username='qr', 
+                timeout=10,
+                allow_agent=False,
+                look_for_keys=False
+            )
+            
+            # 3. રિવર્સ પોર્ટ ફોરવર્ડિંગ વિનંતી (એન્ડ્રોઇડના 5000 ને પિંગી સાથે સાંકળો)
+            transport = self.ssh_client.get_transport()
+            transport.request_port_forward(src_host='', src_port=0) 
+            
+            # 4. પિંગી લિંક લાઈવ રીડ કરવા માટે કમાન્ડ રન કરો
+            stdin, stdout, stderr = self.ssh_client.exec_command("")
+            
             link_found = False
-            for line in self.tunnel_process.stdout:
+            for line in stdout:
                 if not self.is_running: break
                 
-                # પિંગી બેકગ્રાઉન્ડ હોસ્ટ સાથે કનેક્ટ થઈને નવી પબ્લિક લિંક આપે તેને જ ફિલ્ટર કરવું
+                # પિંગી દ્વારા આપેલ ગ્રીન લિંક શોધો
                 match = re.search(r'https://[a-zA-Z0-9\-]+\.pinggy\.link', line)
                 if match:
                     full_url = match.group(0)
@@ -429,7 +427,8 @@ class RemoteAndroidApp(App):
             if not link_found:
                 self.update_remote_label_ui("❌ Tunnel Connection Failed", success=False)
                 
-            while self.is_running and self.tunnel_process.poll() is None:
+            # 5. કનેક્શનને બેકગ્રાઉન્ડમાં જીવંત રાખો
+            while self.is_running and transport.is_active():
                 time.sleep(2)
                 
         except Exception as e:  
@@ -447,12 +446,10 @@ class RemoteAndroidApp(App):
     def on_stop(self):  
         self.is_running = False  
         self.storage_server.stop()  
-        if self.tunnel_process:  
-            try: self.tunnel_process.terminate()  
+        if self.ssh_client:  
+            try: self.ssh_client.close()  
             except: pass
 
 if __name__ == '__main__':
     RemoteAndroidApp().run()
-            
-
-
+        
