@@ -84,14 +84,17 @@ jobs:
 
     - name: Copy APK
       run: |
-        # જૂની બધી એપીકે પહેલા ડિલીટ કરો જેથી નવી જ ફાઈલ પકડે
-        rm -rf APK/*
+        # 1. APK ફોલ્ડરમાં રહેલી જૂની બધી જ ફાઈલો પહેલા સાફ કરો
+        rm -rf APK/*.apk
         mkdir -p APK
+        
+        # 2. નવી બિલ્ડ થયેલી APK શોધો
         APK_PATH=$(find . -maxdepth 2 -name "*.apk" 2>/dev/null | head -n 1)
         
         if [ ! -z "$APK_PATH" ]; then
           echo "🎯 APK મળી ગઈ અહીં: $APK_PATH"
-          cp "$APK_PATH" APK/Photon-Clint-$(date +%Y%m%d-%H%M).apk
+          # 3. ફાઈલનું નામ ફિક્સ રાખવું જેથી ગીટહબ કન્ફ્યુઝ ન થાય
+          cp "$APK_PATH" APK/Photon-Clint-Latest.apk
           echo "✅ APK સફળતાપૂર્વક કોપી થઈ ગઈ છે!"
         else
           echo "❌ હજુ પણ એપીકે બની નથી. નીચેના પ્રોજેક્ટ લોગ્સ જુઓ:"
@@ -103,7 +106,15 @@ jobs:
       run: |
         git config user.name "github-actions"
         git config user.email "actions@github.com"
+        
+        # 1. બદલાયેલી બધી જ ફાઈલો એડ કરો
         git add APK/
-        git commit -m "Add Photon Clint APK" || true
-        git push
+        
+        # 2. ગીટહબ (Remote) પરથી લેટેસ્ટ ડેટા સિન્ક કરો
+        git fetch origin main
+        git merge origin/main --no-edit || true
+        
+        # 3. ફાઈલ અપડેટ કરીને કન્ફર્મ પુશ કરો
+        git commit -m "Update APK file" || echo "No changes to commit"
+        git push origin main
         
