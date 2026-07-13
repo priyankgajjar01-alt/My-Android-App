@@ -102,19 +102,25 @@ jobs:
           exit 1
         fi
 
+    # 🌟 આ સેક્શનમાં આપણે ગીટ રિસેટ લોજિક એડ કર્યું છે જેથી કોઈ ટકરાવ ન થાય
     - name: Push to Repo
       run: |
         git config user.name "github-actions"
         git config user.email "actions@github.com"
         
-        # 1. બદલાયેલી બધી જ ફાઈલો એડ કરો
-        git add APK/
+        # નવી બનેલી APK ને થોડીવાર રનરના બહારના ફોલ્ડરમાં સેફ મૂકો
+        mv APK/Photon-Clint-Latest.apk ../Photon-Clint-Latest.apk
         
-        # 2. ગીટહબ (Remote) પરથી લેટેસ્ટ ડેટા સિન્ક કરો
+        # ગીટહબ રીપોઝીટરી સાથે લોકલ સ્ટેટને ક્લીન સિંક કરો
         git fetch origin main
-        git merge origin/main --no-edit || true
+        git reset --hard origin/main
         
-        # 3. ફાઈલ અપડેટ કરીને કન્ફર્મ પુશ કરો
-        git commit -m "Update APK file" || echo "No changes to commit"
-        git push origin main
+        # APK ફોલ્ડર ફરી બનાવી ફાઈલને પાછી લાવો
+        mkdir -p APK
+        mv ../Photon-Clint-Latest.apk APK/Photon-Clint-Latest.apk
+        
+        # ફોર્સ અપડેટ સાથે પુશ કરો
+        git add APK/Photon-Clint-Latest.apk
+        git commit -m "Update APK file (Forced Sync)" || echo "No changes to commit"
+        git push origin main --force
         
