@@ -1,4 +1,4 @@
-name: Build Kivy APK
+name: Build Photon Clint APK
 on:
   workflow_dispatch:
   push:
@@ -51,7 +51,7 @@ jobs:
         python -m pip install --upgrade pip setuptools wheel
         pip install --upgrade cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
-    # 🛠️ અપડેટ: પાથ ચોક્કસ કરવા અને ડખો રોકવા માટે --sdk-dir અને --ndk-dir અલગથી આપ્યા
+    # 🛠️ અપડેટ: --name માં "Photon Clint" સેટ કર્યું છે
     - name: Build APK
       run: |
         export ANDROLLER_SDK_ROOT=$HOME/android/sdk
@@ -59,7 +59,7 @@ jobs:
         
         p4a apk --debug --private . \
           --package=org.ats.remote \
-          --name="ATS Remote" \
+          --name="Photon Clint" \
           --version=1.0 \
           --bootstrap=sdl2 \
           --requirements=hostpython3,python3,kivy,openssl \
@@ -73,6 +73,7 @@ jobs:
           --ndk-dir=$ANDROLLER_NDK_ROOT \
           --ndk-version=25.1.8937393
 
+    # 🛠️ અપડેટ: આઉટપુટ ફાઇલનું નામ પણ પ્રોજેક્ટ મુજબ સેટ કર્યું
     - name: Copy APK
       run: |
         mkdir -p APK
@@ -80,7 +81,7 @@ jobs:
         
         if [ ! -z "$APK_PATH" ]; then
           echo "🎯 APK મળી ગઈ અહીં: $APK_PATH"
-          cp "$APK_PATH" APK/ATS-Remote-$(date +%Y%m%d-%H%M).apk
+          cp "$APK_PATH" APK/Photon-Clint-$(date +%Y%m%d-%H%M).apk
           echo "✅ APK સફળતાપૂર્વક કોપી થઈ ગઈ છે!"
         else
           echo "❌ હજુ પણ એપીકે બની નથી. નીચેના પ્રોજેક્ટ લોગ્સ જુઓ:"
@@ -93,5 +94,6 @@ jobs:
         git config user.name "github-actions"
         git config user.email "actions@github.com"
         git add APK/
-        git commit -m "Add APK" || true
+        git commit -m "Add Photon Clint APK" || true
         git push
+        
