@@ -20,14 +20,13 @@ jobs:
     - uses: actions/setup-java@v4
       with: { distribution: 'temurin', java-version: '17' }
 
-    # 🛠️ એન્ડ્રોઇડ બિલ્ડ માટે જરૂરી અત્યંત મહત્વના બેઝિક ટૂલ્સ
     - run: |
         sudo apt-get update
         sudo apt-get install -y git zip unzip autoconf automake libtool pkg-config zlib1g-dev libffi-dev libssl-dev cmake python3-dev
-    
+
     - run: pip install --upgrade pip cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
-    - name: Setup SDK
+    - name: Setup Android SDK
       run: |
         mkdir -p $HOME/android/sdk/cmdline-tools
         cd $HOME/android/sdk/cmdline-tools
@@ -37,7 +36,6 @@ jobs:
         yes | sdkmanager --licenses
         sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
-    # 🛠️ મોટો સુધારો: --permission INTERNET અને hostpython3,openssl કમ્પાઈલર એડ કર્યા
     - name: Build APK
       run: |
         export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools
@@ -51,6 +49,8 @@ jobs:
           --bootstrap=sdl2 \
           --requirements=hostpython3,python3,kivy,openssl \
           --permission INTERNET \
+          --permission READ_EXTERNAL_STORAGE \
+          --permission WRITE_EXTERNAL_STORAGE \
           --arch=arm64-v8a \
           --android-api=34
 
@@ -60,11 +60,11 @@ jobs:
         APK_PATH=$(find . -maxdepth 2 -name "*.apk" 2>/dev/null | head -n 1)
         
         if [ ! -z "$APK_PATH" ]; then
-          echo "🎯 APK મળી ગઈ અહીં: $APK_PATH"
+          echo "✅ APK found: $APK_PATH"
           cp "$APK_PATH" APK/ATS-Remote-$(date +%Y%m%d-%H%M).apk
-          echo "✅ APK સફળતાપૂર્વક કોપી થઈ ગઈ છે!"
+          echo "✅ APK copied successfully!"
         else
-          echo "❌ હજુ પણ એપીકે બની નથી. નીચેના પ્રોજેક્ટ લોગ્સ જુઓ:"
+          echo "❌ APK not found. Check logs above."
           ls -la
           exit 1
         fi
@@ -74,6 +74,5 @@ jobs:
         git config user.name "github-actions"
         git config user.email "actions@github.com"
         git add APK/
-        git commit -m "Add APK" || true
+        git commit -m "Add APK $(date +%Y%m%d-%H%M)" || true
         git push
-        
