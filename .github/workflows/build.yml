@@ -1,37 +1,24 @@
-name: Build APK
-
+name: Build Kivy APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 180
-
+    timeout-minutes: 120
     permissions:
       contents: write
-      actions: read
 
     steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-
-    - name: ☕ Setup Java
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
-
-    - name: 🐍 Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+    - uses: actions/checkout@v4
+      with: { fetch-depth: 0 }
+      
+    - uses: actions/setup-python@v5
+      with: { python-version: '3.10' }
+    - uses: actions/setup-java@v4
+      with: { distribution: 'temurin', java-version: '17' }
 
     - name: 📦 Install system dependencies
       run: |
@@ -40,36 +27,37 @@ jobs:
           git zip unzip autoconf automake libtool pkg-config \
           zlib1g-dev libffi-dev libssl-dev cmake build-essential
 
-    - name: 🤖 Setup Android Environment from Runner
+    # 🛠️ રામબાણ ઈલાજ: રનરના ડિફોલ્ટ NDK 27/28/29 ને ગ્લોબલ પાથ પરથી જ ઉડાવી દીધા જેથી એ ન નડે!
+    - name: 🔥 Force Wipe Global New NDKs
       run: |
-        # ગીટહબ રનરમાં પહેલેથી ઇન્સ્ટોલ કરેલા SDK માંથી NDK 25 કેમ શોધવું તે સેટ કર્યું
-        echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> $GITHUB_ENV
-        
-        # રનરની અંદર કયા NDK વર્ઝન અવેલેબલ છે તે લિસ્ટ કરીને ઓટો-ડિટેક્ટ કરવું
-        AVAILABLE_NDK=$(ls -1 /usr/local/lib/android/sdk/ndk/ | sort -V | grep -v "^27" | tail -n 1)
-        if [ -z "$AVAILABLE_NDK" ]; then
-          # જો કોઈ જૂનું વર્ઝન ન હોય, તો ડિફોલ્ટ સેટઅપ
-          AVAILABLE_NDK="25.2.9519653"
-        fi
-        
-        echo "🎯 Selected Safe NDK Version: $AVAILABLE_NDK"
-        echo "ANDROID_NDK_ROOT=/usr/local/lib/android/sdk/ndk/$AVAILABLE_NDK" >> $GITHUB_ENV
-        echo "ANDROID_NDK_VERSION=$AVAILABLE_NDK" >> $GITHUB_ENV
+        echo "🔥 Wiping incompatible default NDKs from Github Runner..."
+        sudo rm -rf /usr/local/lib/android/sdk/ndk/27*
+        sudo rm -rf /usr/local/lib/android/sdk/ndk/28*
+        sudo rm -rf /usr/local/lib/android/sdk/ndk/29*
+        echo "✅ Global clean done!"
+
+    - name: 🤖 Setup SDK & NDK 25.1
+      run: |
+        mkdir -p $HOME/android/sdk/cmdline-tools
+        cd $HOME/android/sdk/cmdline-tools
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+        unzip -q commandlinetools-linux-11076708_latest.zip && mv cmdline-tools latest
+        export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin
+        yes | sdkmanager --licenses
+        sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
     - name: 📚 Install Python packages
       run: |
         python -m pip install --upgrade pip setuptools wheel
-        pip install --upgrade cython==0.29.33
-        pip install --upgrade kivy==2.2.1
-        pip install --upgrade python-for-android==2024.1.21
+        pip install --upgrade cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
-    - name: 🏗️ Build APK
+    # 🛠️ અપડેટ: પાથ ચોક્કસ કરવા અને ડખો રોકવા માટે --sdk-dir અને --ndk-dir અલગથી આપ્યા
+    - name: Build APK
       run: |
-        echo "🚀 Building APK using NDK from: $ANDROID_NDK_ROOT"
+        export ANDROLLER_SDK_ROOT=$HOME/android/sdk
+        export ANDROLLER_NDK_ROOT=$HOME/android/sdk/ndk/25.1.8937393
         
-        p4a apk \
-          --debug \
-          --private . \
+        p4a apk --debug --private . \
           --package=org.ats.remote \
           --name="ATS Remote" \
           --version=1.0 \
@@ -81,42 +69,34 @@ jobs:
           --permission=ACCESS_NETWORK_STATE \
           --arch=arm64-v8a \
           --android-api=34 \
-          --sdk-dir=$ANDROID_SDK_ROOT \
-          --ndk-dir=$ANDROID_NDK_ROOT \
-          --ndk-version=$ANDROID_NDK_VERSION
-        
-        echo "✅ Build complete!"
+          --sdk-dir=$ANDROLLER_SDK_ROOT \
+          --ndk-dir=$ANDROLLER_NDK_ROOT \
+          --ndk-version=25.1.8937393
 
-    - name: 📦 Find and copy APK
+    - name: Copy APK
       run: |
-        mkdir -p dist
-        echo "🔍 Searching for APK..."
-        APK=$(find . -maxdepth 10 -name "*.apk" -type f 2>/dev/null | head -n 1)
+        mkdir -p APK
+        APK_PATH=$(find . -maxdepth 2 -name "*.apk" 2>/dev/null | head -n 1)
         
-        if [ -z "$APK" ]; then
-          echo "❌ APK not found!"
+        if [ ! -z "$APK_PATH" ]; then
+          echo "🎯 APK મળી ગઈ અહીં: $APK_PATH"
+          cp "$APK_PATH" APK/ATS-Remote-$(date +%Y%m%d-%H%M).apk
+          echo "✅ APK સફળતાપૂર્વક કોપી થઈ ગઈ છે!"
+        else
+          echo "❌ હજુ પણ એપીકે બની નથી. નીચેના પ્રોજેક્ટ લોગ્સ જુઓ:"
+          ls -la
           exit 1
         fi
-        
-        echo "✅ Found APK: $APK"
-        BUILD_DATE=$(date +%Y%m%d-%H%M%S)
-        cp "$APK" "dist/ATS-Remote-${BUILD_DATE}.apk"
 
-    - name: 📤 Upload artifact
-      uses: actions/upload-artifact@v4
-      if: success()
-      with:
-        name: ATS-Remote-APK
-        path: dist/*.apk
-        retention-days: 30
-
-    - name: 💾 Commit APK to repo
-      if: success() && github.event_name == 'push'
+    - name: Push to Repo
       run: |
-        mkdir -p releases
-        cp dist/ATS-Remote-*.apk releases/ 2>/dev/null || true
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add releases/ || true
-        git commit -m "Add APK build $(date +%Y-%m-%d)" || true
-        git push || true
+        git config user.name "github-actions"
+        git config user.email "actions@github.com"
+        git add APK/
+        git commit -m "Add APK" || true
+        git push
+
+
+
+
+
