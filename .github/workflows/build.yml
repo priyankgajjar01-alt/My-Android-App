@@ -33,16 +33,15 @@ jobs:
         yes | sdkmanager --licenses
         sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
-    # 🛠️ મોટો સુધારો ૧: કમાન્ડ 'create' માંથી બદલીને 'apk' કર્યો અને જરૂરી ઓપ્શન્સ સેટ કર્યા
+    # 🛠️ મોટો સુધારો: '--private .' એડ કર્યું જેથી એને એન્ટ્રી પોઇન્ટ main.py મળી જાય
     - name: Build APK
       run: |
         export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin:$HOME/android/sdk/platform-tools
         export ANDROIDSDK=$HOME/android/sdk
         export ANDROIDNDK=$HOME/android/sdk/ndk/25.1.8937393
         
-        p4a apk --debug --package=org.ats.remote --name="ATS Remote" --version=1.0 --bootstrap=sdl2 --requirements=python3,kivy,android --arch=arm64-v8a --android-api=34
+        p4a apk --debug --private . --package=org.ats.remote --name="ATS Remote" --version=1.0 --bootstrap=sdl2 --requirements=python3,kivy,android --arch=arm64-v8a --android-api=34
 
-    # 🛠️ મોટો સુધારો ૨: નવો કમાન્ડ ફાઇલ સીધી રૂટ ફોલ્ડરમાં બનાવશે એટલે ત્યાંથી જ કોપી થશે
     - name: Copy APK
       run: |
         mkdir -p APK
