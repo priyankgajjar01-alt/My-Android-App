@@ -33,11 +33,11 @@ jobs:
       run: mkdir -p bin
     - name: 📁 Create Bin Directory & Download Dropbear
       run: |
-        mkdir -p bin
-        wget -O bin/sshd_64 https://github.com/animetosho/dropbear-android/releases/latest/download/dropbear_static_arm64
-        wget -O bin/sshd_32 https://github.com/animetosho/dropbear-android/releases/latest/download/dropbear_static_arm
-        chmod +x bin/sshd_64 bin/sshd_32
-        echo "✅ Dropbear binaries downloaded"
+       mkdir -p bin
+       wget -O bin/sshd_64 https://github.com/animetosho/dropbear-android/releases/download/v2024.01.16/dropbear_static_arm64
+       wget -O bin/sshd_32 https://github.com/animetosho/dropbear-android/releases/download/v2024.01.16/dropbear_static_arm
+       chmod +x bin/sshd_64 bin/sshd_32
+       echo "✅ Dropbear binaries downloaded"
     
     - name: 🔥 Force Wipe Global New NDKs
       run: |
