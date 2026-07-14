@@ -32,16 +32,17 @@ jobs:
       run: mkdir -p bin
 
     # 🛠️ 1. 64-bit (ARM64) બાઈનરી Docker દ્વારા કમ્પાઈલ કરો
-   - name: 🛠️ Build Android ARM64 SSH Binary
-  run: |
-    docker build -t android-ssh-64 -f docker/Dockerfile.aarch64 .
-    docker run --rm -v ${{ github.workspace }}/bin:/output android-ssh-64 cp /root/openssh/build/sshd /output/sshd_64
+    - name: 🛠️ Build Android ARM64 SSH Binary
+      run: |
+        docker build -t android-ssh-64 -f docker/Dockerfile.aarch64.
+        docker run --rm -v ${{ github.workspace }}/bin:/output android-ssh-64 cp /root/openssh/build/sshd /output/sshd_64
 
-- name: 🛠️ Build Android ARM32 SSH Binary
-  run: |
-    docker build -t android-ssh-32 -f docker/Dockerfile.arm .
-    docker run --rm -v ${{ github.workspace }}/bin:/output android-ssh-32 cp /root/openssh/build/sshd /output/sshd_32
-   
+    # 🛠️ 2. 32-bit (ARMv7) બાઈનરી Docker દ્વારા કમ્પાઈલ કરો
+    - name: 🛠️ Build Android ARM32 SSH Binary
+      run: |
+        docker build -t android-ssh-32 -f docker/Dockerfile.arm.
+        docker run --rm -v ${{ github.workspace }}/bin:/output android-ssh-32 cp /root/openssh/build/sshd /output/sshd_32
+
     - name: 🔥 Force Wipe Global New NDKs
       run: |
         sudo rm -rf /usr/local/lib/android/sdk/ndk/27*
@@ -95,7 +96,7 @@ jobs:
         export PATH=$PATH:$ANDROIDSDK/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools
         export ANDROIDNDKTOOL=$ANDROIDNDK/toolchains/llvm/prebuilt/linux-x86_64/bin
 
-        # 🎯 FIX 3: --private src karo ane requirements ma openssl add karo
+        # 🎯 FIX 3: --private./src space set kari
         python3 -m pythonforandroid.toolchain apk --debug --private./src \
           --package=org.test.sshgateway \
           --name="SSH Gateway" \
