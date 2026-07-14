@@ -1,4 +1,4 @@
-Name: Build Photon Clint APK
+name: Build Photon Clint APK
 on:
   workflow_dispatch:
   push:
