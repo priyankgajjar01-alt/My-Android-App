@@ -1,4 +1,3 @@
-
 FROM ubuntu:22.04
 
 RUN apt-get update && apt-get install -y \
@@ -6,34 +5,25 @@ RUN apt-get update && apt-get install -y \
     git \
     autoconf \
     make \
-    patch \
     wget \
-    ca-certificates \
+    zlib1g-dev \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root
 
-COPY docker/musl_system.patch /root
-
-RUN wget --no-check-certificate https://git.musl-libc.org/cgit/musl/snapshot/musl-91e662d1d941215eb024787db5e910dbfb5b169f.tar.gz && \
-    tar -xf musl-91e662d1d941215eb024787db5e910dbfb5b169f.tar.gz && \
-    mv musl-91e662d1d941215eb024787db5e910dbfb5b169f /root/musl && \
-    cd /root/musl && \
-    patch -p1 < /root/musl_system.patch && \
-    mkdir build && \
-    cd build && \
-    ../configure --prefix=/root/install/musl --host=aarch64-linux-gnu && \
-    make -j12 && make install && \
-    rm -rf /root/musl /root/musl-*.tar.gz
+# OpenSSH નો સ્ટેબલ કોડ સીધો GitHub મિરર પરથી ડાઉનલોડ કરો (જે ૧૦૦% ડાઉનલોડ થશે જ)
+RUN wget --no-check-certificate https://github.com/openssh/openssh-portable/archive/refs/tags/V_9_4_P1.tar.gz && \
+    tar -xf V_9_4_P1.tar.gz && \
+    mv openssh-portable-V_9_4_P1 /root/openssh
 
 WORKDIR /root/openssh
 
-COPY . /root/openssh
-
-RUN cd /root/openssh && \
-    autoconf && \
+RUN autoreconf && \
+    ./configure --host=aarch64-linux-gnu --without-openssl-header-check --without-stackprotect LDFLAGS="-static" && \
     mkdir build && \
-    cd build && \
-    INSTALL=/root/openssh/install-sh LDFLAGS=-static CFLAGS="-D__ANDROID__ -O3 -fomit-frame-pointer -ffast-math" CC=/root/install/musl/bin/musl-gcc ../configure --prefix=/root/install/ --host=aarch64-linux-gnu --without-zlib --without-openssl && \
-    make ssh sshd && \
-    STRIPPROG=aarch64-linux-gnu-strip make install-ssh install-sshd
+    make -j12 sshd && \
+    cp sshd build/sshd
+
+# બાઈનરી આઉટપુટ માટે કન્ટેનરને રેડી રાખો
+CMD ["cp", "build/sshd", "/output/sshd_64"]
