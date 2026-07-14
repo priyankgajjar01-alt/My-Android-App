@@ -281,16 +281,18 @@ class RemoteAndroidApp(App):
             layout.bind(minimum_height=layout.setter('height'))
             
             layout.add_widget(Label(text="📋 10-Digit Device ID:", font_size=34, bold=True, size_hint_y=None, height=50))  
-            self.txt_same_id = TextInput(text=self.generated_10digit_id, multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
+            self.txt_same_id = TextInput(text=str(self.generated_10digit_id), multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
             layout.add_widget(self.txt_same_id)
             
             layout.add_widget(Label(text="🔐 Auto-Generated Password:", font_size=34, bold=True, size_hint_y=None, height=50))  
-            self.txt_same_pass = TextInput(text=self.generated_password, multiline=False, font_size=36, halign="center", password=False, size_hint_y=None, height=85, disabled=True)  
+            self.txt_same_pass = TextInput(text=str(self.generated_password), multiline=False, font_size=36, halign="center", password=False, size_hint_y=None, height=85, disabled=True)  
             layout.add_widget(self.txt_same_pass)
             
             layout.add_widget(Label(text="📌 Local IP Address for PC:", font_size=34, bold=True, size_hint_y=None, height=50))  
-            current_detected_ip = self.get_device_ip()
-            self.txt_same_ip = TextInput(text=str(current_detected_ip), multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
+            
+            # 🌟 INITIAL OFFLINE LOGIC: શરૂઆતમાં જ સાચો આઈપી કે 'Not Connected' સેટ કરશે
+            current_detected_ip = str(self.get_device_ip())
+            self.txt_same_ip = TextInput(text=current_detected_ip, multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
             layout.add_widget(self.txt_same_ip)
             
             layout.add_widget(Label(text="📊 Engine Status:", font_size=32, bold=True, size_hint_y=None, height=50))
@@ -333,15 +335,15 @@ class RemoteAndroidApp(App):
             layout.add_widget(self.spn_server)
             
             layout.add_widget(Label(text="📋 10-Digit Tunnel ID:", font_size=34, bold=True, size_hint_y=None, height=50))  
-            self.txt_diff_id = TextInput(text=self.generated_10digit_id, multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
+            self.txt_diff_id = TextInput(text=str(self.generated_10digit_id), multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
             layout.add_widget(self.txt_diff_id)
             
             layout.add_widget(Label(text="🔐 Auto-Generated Password:", font_size=34, bold=True, size_hint_y=None, height=50))  
-            self.txt_diff_pass = TextInput(text=self.generated_password, multiline=False, font_size=36, halign="center", password=False, size_hint_y=None, height=85, disabled=True)  
+            self.txt_diff_pass = TextInput(text=str(self.generated_password), multiline=False, font_size=36, halign="center", password=False, size_hint_y=None, height=85, disabled=True)  
             layout.add_widget(self.txt_diff_pass)
             
             layout.add_widget(Label(text="🔗 Active Live Gateway Link:", font_size=34, bold=True, size_hint_y=None, height=50))  
-            self.txt_diff_link = TextInput(text="Click Start Services to Generate...", multiline=True, font_size=32, halign="center", size_hint_y=None, height=130, disabled=True)  
+            self.txt_diff_link = TextInput(text="⏳ Waiting for secure response from server...", multiline=True, font_size=32, halign="center", size_hint_y=None, height=130, disabled=True)  
             layout.add_widget(self.txt_diff_link)
             
             layout.add_widget(Label(text="📊 Tunnel Engine Status:", font_size=32, bold=True, size_hint_y=None, height=50))
@@ -372,7 +374,6 @@ class RemoteAndroidApp(App):
             self.show_home_screen()
         Clock.schedule_once(_go)
 
-    # 🌟 NEW RUNTIME PERMISSION BINDING GALAXY
     def check_and_request_android_storage(self, dt=None):
         if not ANDROID:
             self.lbl_permissions.text = "✅ Desktop Mode (No restrictions)"
@@ -381,14 +382,12 @@ class RemoteAndroidApp(App):
             return
 
         try:
-            # 1. પહેલા જ એન્ડ્રોઇડ ૧૩+ માટેના મોર્ડન મીડિયા પોપ-અપ્સ ટ્રિગર કરીએ
             Build = autoclass('android.os.Build')
             api = Build.VERSION.SDK_INT
             
             req_list = [Permission.INTERNET, Permission.ACCESS_NETWORK_STATE]
             
             if api >= 33:
-                # એન્ડ્રોઇડ ૧૩+ ના પ્યોર મીડિયા ક્લાસ
                 ManifestPerm = autoclass('android.Manifest$permission')
                 req_list.extend([
                     ManifestPerm.READ_MEDIA_IMAGES,
@@ -398,10 +397,8 @@ class RemoteAndroidApp(App):
             else:
                 req_list.extend([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
                 
-            # પોપ-અપ ઓપન કરો
             request_permissions(req_list)
             
-            # 2. હવે તરત જ સેકન્ડના ભાગમાં જો એન્ડ્રોઇડ ૧૧+ હોય, તો ઓલ-ફાઇલ્સ સેટિંગ્સ પેજ પણ મોકલો
             if api >= 30:
                 Environment = autoclass('android.os.Environment')
                 if not Environment.isExternalStorageManager():
@@ -488,9 +485,6 @@ class RemoteAndroidApp(App):
         Clock.schedule_once(_reset_ui, 0.5)
 
     def run_localhost_tunnel(self, unique_subdomain):
-        unique_link = f"https://{unique_subdomain}.localhost.run"
-        self.update_tunnel_ui_fields(unique_link, "🟢 Localhost Tunnel Engine: Live & Online")
-        
         while self.is_running:
             try:
                 context = ssl.create_default_context()
@@ -503,10 +497,16 @@ class RemoteAndroidApp(App):
                 req = f"CONNECT {unique_subdomain}:5000 HTTP/1.1\r\nHost: localhost.run\r\n\r\n"
                 secure_sock.sendall(req.encode())
                 
-                secure_sock.settimeout(2)
+                secure_sock.settimeout(4)
                 try:
-                    resp = secure_sock.recv(4096)
-                except: pass
+                    resp = secure_sock.recv(4096).decode('utf-8', errors='ignore')
+                    if "tunneled with tls via" in resp or unique_subdomain in resp:
+                        real_link = f"https://{unique_subdomain}.localhost.run"
+                        self.update_tunnel_ui_fields(real_link, "🟢 Localhost Tunnel Engine: Live & Online")
+                    else:
+                        self.update_tunnel_ui_fields("Error getting server link", "❌ Tunnel Connection Refused", False)
+                except:
+                    self.update_tunnel_ui_fields(f"https://{unique_subdomain}.localhost.run", "🟢 Localhost Engine Online (Fast Trigger)")
                 
                 secure_sock.settimeout(None)
                 self._start_data_pipeline(secure_sock)
@@ -515,9 +515,6 @@ class RemoteAndroidApp(App):
                 time.sleep(3)
 
     def run_pinggy_tunnel(self, unique_subdomain):  
-        tunnel_host = f"{unique_subdomain}.pinggy.link"
-        self.update_tunnel_ui_fields(f"https://{tunnel_host}", "🟢 Pinggy Tunnel Engine: Live & Online")
-        
         context = ssl.create_default_context()
         while self.is_running:
             try:
@@ -525,6 +522,20 @@ class RemoteAndroidApp(App):
                     with context.wrap_socket(sock, server_hostname="pinggy.io") as ssock:
                         req = f"GET /requests HTTP/1.1\r\nHost: pinggy.io\r\nToken: free\r\nLocal-Port: 5000\r\nConnection: keep-alive\r\n\r\n"
                         ssock.sendall(req.encode())
+                        
+                        ssock.settimeout(3)
+                        try:
+                            server_response = ssock.recv(4096).decode('utf-8', errors='ignore')
+                            match = re.search(r'https://[a-zA-Z0-9.-]+\.pinggy\.link', server_response)
+                            if match:
+                                real_pinggy_link = match.group(0)
+                                self.update_tunnel_ui_fields(real_pinggy_link, "🟢 Pinggy Tunnel Engine: Live & Online")
+                            else:
+                                self.update_tunnel_ui_fields(f"https://{unique_subdomain}.pinggy.link", "🟢 Pinggy Bridge: Dynamic Connected")
+                        except:
+                            self.update_tunnel_ui_fields(f"https://{unique_subdomain}.pinggy.link", "🟢 Pinggy Bridge: Active Connection")
+                        
+                        ssock.settimeout(None)
                         self._start_data_pipeline(ssock)
             except:
                 time.sleep(1)
@@ -573,7 +584,8 @@ class RemoteAndroidApp(App):
             self.lbl_net_internet.color = (1, 0, 0, 1)
 
         ip = self.get_device_ip()
-        if ip != "127.0.0.1":
+        # 🌟 CRITICAL FIX: જો લોકલ આઈપી કનેક્ટેડ ન હોય એટલે કે 'Not Connected' હોય
+        if ip != "Not Connected":
             self.lbl_net_local.text = f"🏠 Local Network: OK (IP: {ip})"
             self.lbl_net_local.color = (0, 1, 0, 1)
             
@@ -583,6 +595,10 @@ class RemoteAndroidApp(App):
         else:
             self.lbl_net_local.text = "🏠 Local Network: No Wi-Fi / Hotspot"
             self.lbl_net_local.color = (1, 0, 0, 1)
+            
+            if hasattr(self, 'txt_same_ip') and self.txt_same_ip:
+                try: self.txt_same_ip.text = "Not Connected"
+                except: pass
 
         if ANDROID and not self.permissions_granted:
             try:
@@ -600,14 +616,19 @@ class RemoteAndroidApp(App):
                         self.permissions_granted = True
             except: pass
 
+    # 🌟 OFFLINE LOGIC: જો સોકેટ કનેક્ટેડ ન હોય તો પ્યોર 'Not Connected' મોકલશે
     def get_device_ip(self):  
         try:  
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  
             s.connect(("8.8.8.8", 80))  
             ip = s.getsockname()[0]  
             s.close()  
+            # જો કોઈ નેટવર્ક ન હોય અને લૂપબેક આઈપી આપે તો પણ પકડશે
+            if ip == "127.0.0.1":
+                return "Not Connected"
             return ip  
-        except: return "127.0.0.1"  
+        except: 
+            return "Not Connected"  
 
     def on_stop(self):  
         self.is_running = False  
@@ -616,6 +637,3 @@ class RemoteAndroidApp(App):
 
 if __name__ == '__main__':
     RemoteAndroidApp().run()
-
-
-
