@@ -1,4 +1,4 @@
-name: Build Photon Clint APK
+Name: Build Photon Clint APK
 on:
   workflow_dispatch:
   push:
@@ -60,7 +60,7 @@ jobs:
         python3 -m pythonforandroid.toolchain clean_all || true
         echo "✅ Clean done!"
 
-    # 🛠️ બિલ્ડ પ્રોસેસ: નવી પ્યોર પાયથન main.py પ્રમાણે એકદમ લાઈટવેઈટ requirements સાથે બિલ્ડ થશે
+    # 🛠️ બિલ્ડ પ્રોસેસ: નવી પ્યોર પાયથન main.py પ્રમાણે અને એન્ડ્રોઇડ ૧૪ ઓલ-ફાઇલ્સ એક્સેસ સાથે બિલ્ડ થશે
     - name: Build APK
       run: |
         export ANDROLLER_SDK_ROOT=$HOME/android/sdk
@@ -73,9 +73,10 @@ jobs:
           --bootstrap=sdl2 \
           --requirements=hostpython3,python3,kivy,openssl,android \
           --permission INTERNET \
+          --permission ACCESS_NETWORK_STATE \
           --permission READ_EXTERNAL_STORAGE \
           --permission WRITE_EXTERNAL_STORAGE \
-          --permission ACCESS_NETWORK_STATE \
+          --permission MANAGE_EXTERNAL_STORAGE \
           --arch=arm64-v8a \
           --android-api=34 \
           --sdk-dir=$ANDROLLER_SDK_ROOT \
@@ -123,4 +124,3 @@ jobs:
         git add APK/Photon-Clint-Latest.apk
         git commit -m "Update APK file (Forced Sync)" || echo "No changes to commit"
         git push origin main --force
-        
