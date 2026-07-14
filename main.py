@@ -24,6 +24,7 @@ from kivy.utils import platform
 try:
     from android.permissions import request_permissions, Permission, check_permission
     from android.toast import toast
+    from jnius import autoclass, cast 
     ANDROID = True
 except ImportError:
     ANDROID = False
@@ -55,7 +56,6 @@ class RemoteStorageServer:
                 except socket.timeout:  
                     continue  
                 except Exception as e:  
-                    if self.running: print(f"❌ Server error: {e}")  
                     break  
         except Exception as e:  
             print(f"❌ Failed to start storage server: {e}")  
@@ -187,8 +187,11 @@ class RemoteStorageServer:
       
     def stop(self):  
         self.running = False  
+        # 🌟 અસલી ફિક્સ: સોકેટ બંધ કરતી વખતે થ્રેડ ક્રેશ ન થાય તે માટે સેફ ક્લોઝિંગ
         if self.socket:  
-            try: self.socket.close()  
+            try:
+                self.socket.shutdown(socket.SHUT_RDWR)
+                self.socket.close()  
             except: pass
 
 class RemoteAndroidApp(App):
@@ -198,86 +201,76 @@ class RemoteAndroidApp(App):
         self.storage_server = RemoteStorageServer(port=5000)  
         self.permissions_granted = False  
         
-        # ૧૦ આંકડાનો યુનિક રેન્ડમ આઈડી જનરેટ કરવો
         self.generated_10digit_id = "".join(random.choices(string.digits, k=10))
+        self.generated_password = "".join(random.choices(string.ascii_letters + string.digits, k=6))
 
-        # મોનિટરિંગ લેબલ્સ ગ્લોબલ રાખવા
-        self.lbl_permissions = Label(text="⏳ Checking...", color=(1, 0.6, 0, 1), font_size=32, size_hint_y=None, height=60)  
+        self.lbl_permissions = Label(text="⏳ Checking Storage Permission...", color=(1, 0.6, 0, 1), font_size=32, size_hint_y=None, height=60)  
         self.lbl_net_internet = Label(text="🌐 Internet Connection: Checking...", font_size=32, size_hint_y=None, height=60)
         self.lbl_net_local = Label(text="🏠 Local Network: Checking...", font_size=32, size_hint_y=None, height=60)
         
-        # મેઈન કન્ટેનર વિજેટ
         self.root_layout = BoxLayout(orientation='vertical', padding=20, spacing=20)
-        
-        # ડિફોલ્ટ હોમ સ્ક્રીન લોડ કરવી
         self.show_home_screen()
         
-        if ANDROID: self.request_android_permissions()  
-        Clock.schedule_once(self.check_permissions, 1)  
+        Clock.schedule_once(self.check_and_request_android_14_storage, 1)  
         Clock.schedule_interval(self.update_network_status_ui, 3)
           
         return self.root_layout  
 
     def show_home_screen(self):
         self.root_layout.clear_widgets()
-        
         self.root_layout.add_widget(Label(text="📱 ATS Storage Gateway", font_size=46, bold=True, color=(0, 0.67, 0.7, 1), size_hint_y=0.15))
         
-        # પરમિશન અને બેઝિક નેટવર્ક સ્ટેટસ હંમેશા હોમ સ્ક્રીન પર પણ દેખાશે
         status_box = BoxLayout(orientation='vertical', size_hint_y=0.25, spacing=5)
         status_box.add_widget(self.lbl_permissions)
         status_box.add_widget(self.lbl_net_internet)
         status_box.add_widget(self.lbl_net_local)
         self.root_layout.add_widget(status_box)
         
-        btn_box = BoxLayout(orientation='vertical', spacing=30, size_hint_y=0.6)
+        btn_box = BoxLayout(orientation='vertical', spacing=20, size_hint=(0.6, 0.4), pos_hint={'center_x': 0.5, 'center_y': 0.5})
         
-        btn_same_net = Button(text="🏠 Same Network (Local Wi-Fi / Hotspot)", font_size=38, bold=True, background_color=(0.1, 0.7, 0.3, 1))
+        btn_same_net = Button(text="🏠 Same Network", font_size=34, bold=True, background_color=(0.1, 0.7, 0.3, 1))
         btn_same_net.bind(on_press=self.show_same_network_screen)
         
-        btn_diff_net = Button(text="🌐 Different Network (Worldwide Tunnel)", font_size=38, bold=True, background_color=(0, 0.5, 0.8, 1))
+        btn_diff_net = Button(text="🌐 Different Network", font_size=34, bold=True, background_color=(0, 0.5, 0.8, 1))
         btn_diff_net.bind(on_press=self.show_different_network_screen)
         
         btn_box.add_widget(btn_same_net)
         btn_box.add_widget(btn_diff_net)
-        self.root_layout.add_widget(btn_box)
+        
+        wrapper = BoxLayout(orientation='vertical', size_hint_y=0.6)
+        wrapper.add_widget(btn_box)
+        self.root_layout.add_widget(wrapper)
 
     def show_same_network_screen(self, instance=None):
         self.root_layout.clear_widgets()
         
-        # હેડર અને બેક બટન
-        header = BoxLayout(orientation='horizontal', size_hint_y=0.1)
-        btn_back = Button(text="⬅️ Back", size_hint_x=0.25, font_size=32, bold=True)
-        btn_back.bind(on_press=lambda x: self.show_home_screen())
+        header = BoxLayout(orientation='horizontal', size_hint_y=0.1, spacing=10)
+        btn_back = Button(text="⬅️", size_hint_x=0.15, font_size=36, bold=True)
+        btn_back.bind(on_press=lambda x: self.show_home_screen()) 
         header.add_widget(btn_back)
-        header.add_widget(Label(text="🏠 Local Same Network", font_size=40, bold=True, color=(0.1, 0.7, 0.3, 1), size_hint_x=0.75))
+        header.add_widget(Label(text="🏠 Local Same Network", font_size=40, bold=True, color=(0.1, 0.7, 0.3, 1), size_hint_x=0.85, halign="left"))
         self.root_layout.add_widget(header)
         
         scroll = ScrollView(size_hint_y=0.9)  
         layout = BoxLayout(orientation='vertical', spacing=15, size_hint_y=None)  
         layout.bind(minimum_height=layout.setter('height'))
         
-        # ૧૦ ડીજીટ આઈડી મોડલ
         layout.add_widget(Label(text="📋 10-Digit Device ID:", font_size=34, bold=True, size_hint_y=None, height=50))  
         self.txt_same_id = TextInput(text=self.generated_10digit_id, multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
         layout.add_widget(self.txt_same_id)
         
-        # પાસવર્ડ ઇનપુટ
-        layout.add_widget(Label(text="🔐 Custom Password:", font_size=34, bold=True, size_hint_y=None, height=50))  
-        self.txt_same_pass = TextInput(text="ats123", multiline=False, font_size=36, halign="center", password=True, size_hint_y=None, height=85)  
+        layout.add_widget(Label(text="🔐 Auto-Generated Password:", font_size=34, bold=True, size_hint_y=None, height=50))  
+        self.txt_same_pass = TextInput(text=self.generated_password, multiline=False, font_size=36, halign="center", password=False, size_hint_y=None, height=85, disabled=True)  
         layout.add_widget(self.txt_same_pass)
         
-        # લોકલ આઈપી એડ્રેસ બોક્સ
-        layout.add_widget(Label(text="📌 Local IP Address to enter in PC:", font_size=34, bold=True, size_hint_y=None, height=50))  
+        layout.add_widget(Label(text="📌 Local IP Address for PC:", font_size=34, bold=True, size_hint_y=None, height=50))  
         self.txt_same_ip = TextInput(text=self.get_device_ip(), multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
         layout.add_widget(self.txt_same_ip)
         
-        # ડાયનેમિક સ્ટેટસ લેબલ ફોર લોકલ કનેક્શન
         layout.add_widget(Label(text="📊 Engine Status:", font_size=32, bold=True, size_hint_y=None, height=50))
         self.lbl_same_status = Label(text="🏠 Local Server: Inactive", font_size=30, bold=True, color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=70)
         layout.add_widget(self.lbl_same_status)
         
-        # સ્ટાર્ટ અને સ્ટોપ કંટ્રોલ
         self.btn_same_start = Button(text="🚀 Start Service", size_hint_y=None, height=100, font_size=36, bold=True, background_color=(0, 0.67, 0.7, 1))  
         self.btn_same_start.bind(on_press=self.start_same_net_service)  
         layout.add_widget(self.btn_same_start)
@@ -289,9 +282,7 @@ class RemoteAndroidApp(App):
         scroll.add_widget(layout)
         self.root_layout.add_widget(scroll)
         
-        # જો સેવાઓ ઓલરેડી ચાલુ હોય તો UI સ્ટેટ જાળવવું
         if self.is_running:
-            self.txt_same_pass.disabled = True
             self.btn_same_start.disabled = True
             self.btn_same_stop.disabled = False
             self.lbl_same_status.text = f"🟢 LAN Server Active on Port 5000"
@@ -300,43 +291,37 @@ class RemoteAndroidApp(App):
     def show_different_network_screen(self, instance=None):
         self.root_layout.clear_widgets()
         
-        header = BoxLayout(orientation='horizontal', size_hint_y=0.1)
-        btn_back = Button(text="⬅️ Back", size_hint_x=0.25, font_size=32, bold=True)
-        btn_back.bind(on_press=lambda x: self.show_home_screen())
+        header = BoxLayout(orientation='horizontal', size_hint_y=0.1, spacing=10)
+        btn_back = Button(text="⬅️", size_hint_x=0.15, font_size=36, bold=True)
+        btn_back.bind(on_press=lambda x: self.show_home_screen()) 
         header.add_widget(btn_back)
-        header.add_widget(Label(text="🌐 Different Network Tunnel", font_size=40, bold=True, color=(0, 0.5, 0.8, 1), size_hint_x=0.75))
+        header.add_widget(Label(text="🌐 Different Network Tunnel", font_size=40, bold=True, color=(0, 0.5, 0.8, 1), size_hint_x=0.85, halign="left"))
         self.root_layout.add_widget(header)
         
         scroll = ScrollView(size_hint_y=0.9)  
         layout = BoxLayout(orientation='vertical', spacing=12, size_hint_y=None)  
         layout.bind(minimum_height=layout.setter('height'))
         
-        # સર્વર સિલેક્શન ડ્રોપડાઉન (Spinner)
         layout.add_widget(Label(text="⚡ Select Tunnel Server Platform:", font_size=34, bold=True, size_hint_y=None, height=50))
         self.spn_server = Spinner(text='Pinggy HTTP Bridge', values=('Pinggy HTTP Bridge', 'Localhost.run Server'), size_hint_y=None, height=90, font_size=34)
         layout.add_widget(self.spn_server)
         
-        # ૧૦ ડીજીટ આઈડી
         layout.add_widget(Label(text="📋 10-Digit Tunnel ID:", font_size=34, bold=True, size_hint_y=None, height=50))  
         self.txt_diff_id = TextInput(text=self.generated_10digit_id, multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
         layout.add_widget(self.txt_diff_id)
         
-        # પાસવર્ડ
-        layout.add_widget(Label(text="🔐 Custom Password:", font_size=34, bold=True, size_hint_y=None, height=50))  
-        self.txt_diff_pass = TextInput(text="ats123", multiline=False, font_size=36, halign="center", password=True, size_hint_y=None, height=85)  
+        layout.add_widget(Label(text="🔐 Auto-Generated Password:", font_size=34, bold=True, size_hint_y=None, height=50))  
+        self.txt_diff_pass = TextInput(text=self.generated_password, multiline=False, font_size=36, halign="center", password=False, size_hint_y=None, height=85, disabled=True)  
         layout.add_widget(self.txt_diff_pass)
         
-        # જનરેટ થયેલી લિંક ડિસ્પ્લે બોક્સ
         layout.add_widget(Label(text="🔗 Active Live Gateway Link:", font_size=34, bold=True, size_hint_y=None, height=50))  
         self.txt_diff_link = TextInput(text="Click Start Services to Generate...", multiline=True, font_size=32, halign="center", size_hint_y=None, height=130, disabled=True)  
         layout.add_widget(self.txt_diff_link)
         
-        # સ્ટેટસ લેબલ
         layout.add_widget(Label(text="📊 Tunnel Engine Status:", font_size=32, bold=True, size_hint_y=None, height=50))
         self.lbl_diff_status = Label(text="🔗 Tunnel Connection: Inactive", font_size=30, bold=True, color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=70)
         layout.add_widget(self.lbl_diff_status)
         
-        # કંટ્રોલ બટનો
         self.btn_diff_start = Button(text="🚀 Start Tunnel Services", size_hint_y=None, height=100, font_size=36, bold=True, background_color=(0, 0.67, 0.7, 1))  
         self.btn_diff_start.bind(on_press=self.start_diff_net_service)  
         layout.add_widget(self.btn_diff_start)
@@ -349,26 +334,54 @@ class RemoteAndroidApp(App):
         self.root_layout.add_widget(scroll)
         
         if self.is_running:
-            self.txt_diff_pass.disabled = True
             self.spn_server.disabled = True
             self.btn_diff_start.disabled = True
             self.btn_diff_stop.disabled = False
 
+    def check_and_request_android_14_storage(self, dt=None):
+        if not ANDROID:
+            self.lbl_permissions.text = "✅ Desktop Mode (No restrictions)"
+            self.lbl_permissions.color = (0, 1, 0, 1)
+            self.permissions_granted = True
+            return
+
+        try:
+            Environment = autoclass('android.os.Environment')
+            if Environment.isExternalStorageManager():
+                self.lbl_permissions.text = "✅ All-Files Access Granted!"
+                self.lbl_permissions.color = (0, 1, 0, 1)
+                self.permissions_granted = True
+            else:
+                self.lbl_permissions.text = "❌ Permission Required! Opening Settings..."
+                self.lbl_permissions.color = (1, 0, 0, 1)
+                self.permissions_granted = False
+                
+                Settings = autoclass('android.provider.Settings')
+                Uri = autoclass('android.net.Uri')
+                Intent = autoclass('android.content.Intent')
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                
+                intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                uri = Uri.fromParts("package", PythonActivity.mActivity.getPackageName(), None)
+                intent.setData(uri)
+                PythonActivity.mActivity.startActivity(intent)
+                toast("Please turn ON the switch for All Files Access!")
+        except Exception as e:
+            self.lbl_permissions.text = f"⚠️ Setup Error: {str(e)[:40]}"
+            try:
+                request_permissions([Permission.INTERNET, Permission.ACCESS_NETWORK_STATE, Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
+            except: pass
+
     def start_same_net_service(self, instance):
         if ANDROID and not self.permissions_granted:  
-            if ANDROID: toast("Please grant permissions first!")  
-            return  
-        if len(self.txt_same_pass.text.strip()) < 4:  
-            if ANDROID: toast("Password minimum 4 chars!")  
+            self.check_and_request_android_14_storage()
             return  
             
         self.is_running = True
-        self.txt_same_pass.disabled = True  
         self.btn_same_start.disabled = True  
         self.btn_same_stop.disabled = False
         
-        # ઓથેન્ટિકેશન માટે ૧૦ આંકડાનો આઈડી અને યુઝર પાસવર્ડ સેટ કરવો
-        self.storage_server.add_user(self.generated_10digit_id, self.txt_same_pass.text)  
+        self.storage_server.add_user(self.generated_10digit_id, self.generated_password)  
         Thread(target=self.storage_server.start, daemon=True).start()  
         
         self.lbl_same_status.text = "🟢 LAN Server Active on Port 5000"
@@ -377,19 +390,15 @@ class RemoteAndroidApp(App):
 
     def start_diff_net_service(self, instance):
         if ANDROID and not self.permissions_granted:  
-            if ANDROID: toast("Please grant permissions first!")  
-            return  
-        if len(self.txt_diff_pass.text.strip()) < 4:  
-            if ANDROID: toast("Password minimum 4 chars!")  
+            self.check_and_request_android_14_storage()
             return  
             
         self.is_running = True
-        self.txt_diff_pass.disabled = True  
         self.spn_server.disabled = True
         self.btn_diff_start.disabled = True  
         self.btn_diff_stop.disabled = False
         
-        self.storage_server.add_user(self.generated_10digit_id, self.txt_diff_pass.text)  
+        self.storage_server.add_user(self.generated_10digit_id, self.generated_password)  
         Thread(target=self.storage_server.start, daemon=True).start()  
         
         self.lbl_diff_status.text = "🔄 Initiating Secure Server Tunnel Connection..."
@@ -397,24 +406,25 @@ class RemoteAndroidApp(App):
         
         unique_subdomain = "ats" + "".join(random.choices(string.digits, k=4))
         
-        # યુઝરની ચોઈસ પ્રમાણે પર્ટીક્યુલર સિંગલ ટનલ સર્વર ચલાવવું
         if self.spn_server.text == 'Pinggy HTTP Bridge':
             Thread(target=self.run_pinggy_tunnel, args=(unique_subdomain,), daemon=True).start()  
         else:
             Thread(target=self.run_localhost_tunnel, args=(unique_subdomain,), daemon=True).start()  
 
     def stop_all_services(self, instance):
+        # 🌟 અસલી ફિક્સ: એપ બંધ ન થાય એ માટે પહેલા ફ્લેગ બદલવો અને સર્વર સોકેટ સેફલી સ્ટોપ કરવું
         self.is_running = False  
         self.storage_server.stop()  
         
-        # નવો ફ્રેશ આઈડી બનાવી દેવો તાજા સેક્યોરિટી સેશન માટે
         self.generated_10digit_id = "".join(random.choices(string.digits, k=10))
+        self.generated_password = "".join(random.choices(string.ascii_letters + string.digits, k=6))
         
-        if ANDROID: toast("All background storage node engines stopped.")
+        if ANDROLLER_SDK_ROOT := True:
+            if ANDROID: toast("Services stopped safely. UI active.")
+        
         self.show_home_screen()
 
     def run_pinggy_tunnel(self, unique_subdomain):  
-        """⚡ SERVER 1: Pinggy Pure HTTP Web Bridge"""
         tunnel_host = f"{unique_subdomain}.pinggy.link"
         self.update_tunnel_ui_fields(f"https://{tunnel_host}", "🟢 Pinggy Tunnel Engine: Live & Online")
         
@@ -431,7 +441,7 @@ class RemoteAndroidApp(App):
                 if not self.is_running: break
 
     def run_localhost_tunnel(self, unique_subdomain):
-        """⚡ SERVER 2: Localhost.run Server Node"""
+        """⚡ SERVER 2: Localhost.run Server Node (Fix: Proper Buffer Buffer Handshake)"""
         unique_fallback_link = f"https://{unique_subdomain}.localhost.run"
         
         while self.is_running:
@@ -442,8 +452,18 @@ class RemoteAndroidApp(App):
                 raw_sock.connect(("localhost.run", 443))
                 
                 secure_sock = context.wrap_socket(raw_sock, server_hostname="localhost.run")
-                server_banner = secure_sock.recv(1024) 
                 
+                # 🌟 અસલી લોકલહોસ્ટ ફિક્સ: લૂપ લગાવીને આખું વેલકમ બેનર કમ્પ્લીટ રીડ કરવું જેથી રિટ્રાય એરર ન આવે
+                secure_sock.settimeout(3)
+                try:
+                    while True:
+                        banner_chunk = secure_sock.recv(1024)
+                        if not banner_chunk or b"SSH" in banner_chunk or b"localhost.run" in banner_chunk:
+                            break
+                except socket.timeout:
+                    pass
+                
+                secure_sock.settimeout(10)
                 req = f"CONNECT {unique_subdomain}:5000 HTTP/1.1\r\nHost: localhost.run\r\n\r\n"
                 secure_sock.sendall(req.encode())
                 
@@ -502,53 +522,14 @@ class RemoteAndroidApp(App):
             self.lbl_net_local.text = "🏠 Local Network: No Wi-Fi / Hotspot"
             self.lbl_net_local.color = (1, 0, 0, 1)
 
-    def request_android_permissions(self):  
-        if ANDROID:  
-            try:  
-                # 🌟 અસલી એન્ડ્રોઇડ ૧૪ ફિક્સ: MANAGE_EXTERNAL_STORAGE રનટાઈમ પરમિશન લિસ્ટમાં ઉમેરી દીધી છે
-                permissions = [
-                    Permission.INTERNET, 
-                    Permission.ACCESS_NETWORK_STATE,
-                    Permission.READ_EXTERNAL_STORAGE, 
-                    Permission.WRITE_EXTERNAL_STORAGE,
-                    "android.permission.MANAGE_EXTERNAL_STORAGE"
-                ]  
-                request_permissions(permissions)  
-            except Exception as e: print(f"⚠️ Permission request error: {e}")  
-
-    def check_permissions(self, dt=None):  
-        if not ANDROID:  
-            self.lbl_permissions.text = "✅ Desktop Mode (No restrictions)"  
-            self.lbl_permissions.color = (0, 1, 0, 1)  
-            self.permissions_granted = True  
-            return  
-        try:  
-            internet_ok = check_permission(Permission.INTERNET)  
-            storage_read_ok = check_permission(Permission.READ_EXTERNAL_STORAGE)  
-            storage_write_ok = check_permission(Permission.WRITE_EXTERNAL_STORAGE)  
-            manage_storage_ok = check_permission("android.permission.MANAGE_EXTERNAL_STORAGE")
-            
-            status_text = ""  
-            all_ok = True  
-            
-            if internet_ok: status_text += "✅ Net "  
-            else: status_text += "❌ Net "; all_ok = False  
-            
-            if storage_read_ok and storage_write_ok: status_text += "✅ Storage "  
-            else: status_text += "❌ Storage "; all_ok = False  
-            
-            if manage_storage_ok: status_text += "✅ All-Files Access"
-            else: status_text += "❌ All-Files Access"; all_ok = False
-            
-            self.lbl_permissions.text = status_text  
-            if all_ok:  
-                self.lbl_permissions.color = (0, 1, 0, 1)  
-                self.permissions_granted = True  
-            else:  
-                self.lbl_permissions.color = (1, 0, 0, 1)  
-                self.permissions_granted = False  
-                if ANDROID: self.request_android_permissions()  
-        except Exception as e: self.lbl_permissions.text = f"⚠️ Error: {str(e)[:30]}"  
+        if ANDROID and not self.permissions_granted:
+            try:
+                Environment = autoclass('android.os.Environment')
+                if Environment.isExternalStorageManager():
+                    self.lbl_permissions.text = "✅ All-Files Access Granted!"
+                    self.lbl_permissions.color = (0, 1, 0, 1)
+                    self.permissions_granted = True
+            except: pass
 
     def get_device_ip(self):  
         try:  
