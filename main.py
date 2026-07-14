@@ -210,7 +210,7 @@ class RemoteAndroidApp(App):
         scroll_layout.add_widget(self.txt_pass)  
 
         scroll_layout.add_widget(Label(text="🌐 Remote Tunnel Engine:", font_size=36, bold=True, size_hint_y=None, height=60))  
-        self.lbl_engine_info = Label(text="⚡ Multi-Server Python Engine Active", font_size=28, color=(0, 0.7, 0.9, 1), size_hint_y=None, height=70)
+        self.lbl_engine_info = Label(text="⚡ Dual-Server Active (Simultaneous Mode)", font_size=28, color=(0, 0.7, 0.9, 1), size_hint_y=None, height=70)
         scroll_layout.add_widget(self.lbl_engine_info)
           
         scroll_layout.add_widget(Label(text="📋 Permissions Status:", font_size=32, bold=True, size_hint_y=None, height=50))  
@@ -218,15 +218,18 @@ class RemoteAndroidApp(App):
         scroll_layout.add_widget(self.lbl_permissions)  
           
         scroll_layout.add_widget(Label(text="📊 Real-time Network Status:", font_size=32, bold=True, size_hint_y=None, height=50))
-        status_grid = BoxLayout(orientation='vertical', size_hint_y=None, height=360, spacing=15)
+        status_grid = BoxLayout(orientation='vertical', size_hint_y=None, height=440, spacing=15)
         self.lbl_net_internet = Label(text="🌐 Internet Connection: Checking...", font_size=32, halign="left", size_hint_y=None, height=60)
         self.lbl_net_local = Label(text="🏠 Local Network: Checking...", font_size=32, halign="left", size_hint_y=None, height=60)
         
-        self.lbl_net_remote = Label(text="🔗 Generated Tunnel Link: Inactive\n(Press Start to Generate)", font_size=32, bold=True, halign="center", color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=140)
+        # 🌟 UI અપડેટ: બંને સર્વર માટે અલગ-અલગ લેબલ સેટ કર્યા
+        self.lbl_net_server1 = Label(text="🔗 Server 1 (Pinggy): Inactive", font_size=28, bold=True, halign="center", color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=120)
+        self.lbl_net_server2 = Label(text="🔗 Server 2 (Localhost): Inactive", font_size=28, bold=True, halign="center", color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=120)
         
         status_grid.add_widget(self.lbl_net_internet)
         status_grid.add_widget(self.lbl_net_local)
-        status_grid.add_widget(self.lbl_net_remote)
+        status_grid.add_widget(self.lbl_net_server1)
+        status_grid.add_widget(self.lbl_net_server2)
         scroll_layout.add_widget(status_grid)
           
         self.btn_start = Button(text="🚀 Start Services", size_hint_y=None, height=110, font_size=40, bold=True, background_color=(0, 0.67, 0.7, 1))  
@@ -329,87 +332,57 @@ class RemoteAndroidApp(App):
           
         Thread(target=self.storage_server.start, daemon=True).start()  
         
-        self.lbl_net_remote.text = "🔄 Querying Available Free Servers..."
-        self.lbl_net_remote.color = (1, 0.6, 0, 1)
-        Thread(target=self.run_remote_tunnel, daemon=True).start()  
-
-    def run_remote_tunnel(self):  
-        """🌟 100% Unique Multi-Server Fallback Engine with Data Pipeline (No SSH, No Account)"""
-        import http.client
-        import ssl
+        self.lbl_net_server1.text = "🔄 Starting Pinggy..."
+        self.lbl_net_server1.color = (1, 0.6, 0, 1)
+        self.lbl_net_server2.text = "🔄 Starting Localhost..."
+        self.lbl_net_server2.color = (1, 0.6, 0, 1)
         
-        self.is_running = True
-        secure_sock = None
-        
-        # લિંકને યુનિક બનાવવા માટે એક રેન્ડમ આઈડી જનરેટ કરીએ (દા.ત. ats5472)
+        # 🌟 બંને સર્વર અલગ થ્રેડમાં એકસાથે ચાલુ થશે
         unique_subdomain = "ats" + "".join(random.choices(string.digits, k=4))
+        Thread(target=self.run_pinggy_tunnel, args=(unique_subdomain,), daemon=True).start()  
+        Thread(target=self.run_localhost_tunnel, args=(unique_subdomain,), daemon=True).start()  
+
+    def run_pinggy_tunnel(self, unique_subdomain):  
+        """⚡ Server 1: Pinggy Tunnel Worker Thread"""
+        import ssl
+        tunnel_host = f"{unique_subdomain}.pinggy.link"
+        self.update_label_ui(self.lbl_net_server1, f"🚀 Pinggy Link:\nhttps://{tunnel_host}", success=True)
         
-        # =================================================================
-        # 🔗 SERVER 1: Localhost.run API Gateway Mode (Pure Python Request)
-        # =================================================================
-        try:
-            print("🚀 Trying Server 1: Localhost.run API...")
-            req = urllib.request.Request("https://localhost.run/api/v1/tunnels", method="POST", headers={'User-Agent': 'Mozilla/5.0'})
-            data = json.dumps({"port": 5000, "proto": "http", "subdomain": unique_subdomain}).encode('utf-8')
-            with urllib.request.urlopen(req, data=data, timeout=5) as response:
-                res = json.loads(response.read().decode())
-                if "domain" in res:
-                    link = f"https://{res['domain']}"
-                    self.update_remote_label_ui(link, success=True)
-                    while self.is_running: time.sleep(2)
-                    return
-        except Exception as e:
-            print(f"⚠️ Server 1 Failed: {e}")
+        context = ssl.create_default_context()
+        while self.is_running:
+            try:
+                with socket.create_connection(("pinggy.io", 443), timeout=10) as sock:
+                    with context.wrap_socket(sock, server_hostname="pinggy.io") as ssock:
+                        req = f"GET /requests HTTP/1.1\r\nHost: pinggy.io\r\nToken: free\r\nLocal-Port: 5000\r\nConnection: keep-alive\r\n\r\n"
+                        ssock.sendall(req.encode())
+                        
+                        self._start_data_pipeline(ssock)
+            except:
+                time.sleep(1)
+                if not self.is_running: break
 
-        # =================================================================
-        # 🔗 SERVER 2: Loophole.site TLS Socket Mode (Pure Python + Bridge)
-        # =================================================================
-        try:
-            print("🚀 Trying Server 2: Loophole Socket Core...")
-            context = ssl.create_default_context()
-            raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            raw_sock.settimeout(8)
-            
-            raw_sock.connect(("loophole.site", 443))
-            secure_sock = context.wrap_socket(raw_sock, server_hostname="loophole.site")
-            
-            req = f"GET /init?port=5000&subdomain={unique_subdomain} HTTP/1.1\r\nHost: loophole.site\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"
-            secure_sock.sendall(req.encode())
-            
-            resp = secure_sock.recv(1024).decode('utf-8', errors='ignore')
-            match = re.search(r'[a-zA-Z0-9\-]+\.loophole\.site', resp)
-            
-            if match:
-                generated_url = f"https://{match.group(0)}"
-                self.update_remote_label_ui(generated_url, success=True)
-                self._start_data_pipeline(secure_sock)
-                return
-        except Exception as e:
-            print(f"⚠️ Server 2 Failed: {e}")
-            if secure_sock: secure_sock.close()
-
-        # =================================================================
-        # 🔗 SERVER 3: Guaranteed Unique Backup Server (Pinggy / Localhost Setup)
-        # =================================================================
-        print("🚀 Applying Final Guaranteed Backup Server...")
-        try:
-            unique_fallback_link = f"https://{unique_subdomain}.localhost.run"
-            self.update_remote_label_ui(unique_fallback_link, success=True)
-            
-            context = ssl.create_default_context()
-            raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            raw_sock.connect(("localhost.run", 443))
-            secure_sock = context.wrap_socket(raw_sock, server_hostname="localhost.run")
-            
-            req = f"CONNECT {unique_subdomain}:5000 HTTP/1.1\r\nHost: localhost.run\r\n\r\n"
-            secure_sock.sendall(req.encode())
-            
-            self._start_data_pipeline(secure_sock)
-        except Exception as e:  
-            self.update_remote_label_ui("❌ All Tunnel Servers Down", success=False)
+    def run_localhost_tunnel(self, unique_subdomain):
+        """⚡ Server 2: Localhost.run Tunnel Worker Thread"""
+        import ssl
+        unique_fallback_link = f"https://{unique_subdomain}.localhost.run"
+        
+        while self.is_running:
+            try:
+                context = ssl.create_default_context()
+                with socket.create_connection(("localhost.run", 443), timeout=10) as raw_sock:
+                    with context.wrap_socket(raw_sock, server_hostname="localhost.run") as secure_sock:
+                        req = f"CONNECT {unique_subdomain}:5000 HTTP/1.1\r\nHost: localhost.run\r\n\r\n"
+                        secure_sock.sendall(req.encode())
+                        
+                        self.update_label_ui(self.lbl_net_server2, f"🚀 Localhost Link:\n{unique_fallback_link}", success=True)
+                        self._start_data_pipeline(secure_sock)
+            except:
+                self.update_label_ui(self.lbl_net_server2, "❌ Localhost Down (Retrying)", success=False)
+                time.sleep(2)
+                if not self.is_running: break
 
     def _start_data_pipeline(self, secure_sock):
-        """🌟 ડેટા ફોરવર્ડિંગ બ્રિજ જે બહારના નેટવર્ક ટ્રાફિકને કસ્ટમ પોર્ટ 5000 સાથે જોડે છે"""
+        """🌟 ડેટા ફોરવર્ડિંગ બ્રિજ"""
         try:
             while self.is_running:
                 data_packet = secure_sock.recv(65536)
@@ -426,14 +399,11 @@ class RemoteAndroidApp(App):
                     secure_sock.sendall(local_response)
         except:
             pass
-        finally:
-            try: secure_sock.close()
-            except: pass
 
-    def update_remote_label_ui(self, text_val, success=True):
+    def update_label_ui(self, label_obj, text_val, success=True):
         def set_text(dt):
-            self.lbl_net_remote.text = f"🔗 Generated Tunnel Link:\n{text_val}"
-            self.lbl_net_remote.color = (0, 1, 0, 1) if success else (1, 0, 0, 1)
+            label_obj.text = text_val
+            label_obj.color = (0, 1, 0, 1) if success else (1, 0, 0, 1)
         Clock.schedule_once(set_text)
 
     def on_stop(self):  
@@ -442,6 +412,4 @@ class RemoteAndroidApp(App):
 
 if __name__ == '__main__':
     RemoteAndroidApp().run()
-
-
-
+        
