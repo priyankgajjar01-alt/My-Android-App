@@ -9,7 +9,7 @@ import ssl
 import hashlib
 import re
 import urllib.request  
-import base64  # 🌟 1. CRITICAL FIX: બાઈનરી ફાઈલો (Photo, Video, APK) માટે બેઝ64 ઈમ્પોર્ટ
+import base64  
 from threading import Thread
 
 from kivy.app import App
@@ -21,6 +21,8 @@ from kivy.uix.button import Button
 from kivy.uix.spinner import Spinner
 from kivy.clock import Clock
 from kivy.utils import platform
+from kivy.core.window import Window  
+from kivy.graphics import Color, RoundedRectangle  
 
 try:
     from android.permissions import request_permissions, Permission, check_permission
@@ -153,7 +155,6 @@ class RemoteStorageServer:
                     except PermissionError: return {"status": "FAILED", "msg": "Permission denied"}  
                 return {"status": "OK", "files": files}  
               
-            # 🌟 SERVER SIDE FIX: Base64 સિક્યોર બાઈનરી ટ્રાન્સફર (READ & WRITE)
             elif operation == 'READ':  
                 if os.path.isfile(path):  
                     try:  
@@ -195,12 +196,27 @@ class RemoteStorageServer:
                 self.socket.close()  
             except: pass
 
+class ModernRoundButton(Button):
+    def __init__(self, bg_color=(0, 0.67, 0.7, 1), radius=[15], **kwargs):
+        super().__init__(**kwargs)
+        self.background_color = (0, 0, 0, 0)  
+        self.bg_color = bg_color
+        self.radius = radius
+        self.bind(pos=self.update_canvas, size=self.update_canvas)
+
+    def update_canvas(self, *args):
+        self.canvas.before.clear()
+        with self.canvas.before:
+            Color(*self.bg_color)
+            RoundedRectangle(pos=self.pos, size=self.size, radius=self.radius)
+
 class RemoteAndroidApp(App):
     def build(self):
         self.title = "Internet Storage Access"
         self.is_running = False  
         self.storage_server = RemoteStorageServer(port=5000)  
         self.permissions_granted = False  
+        self.current_screen = "home"  
         
         self.generated_10digit_id = "".join(random.choices(string.digits, k=10))
         self.generated_password = "".join(random.choices(string.ascii_letters + string.digits, k=6))
@@ -212,12 +228,23 @@ class RemoteAndroidApp(App):
         self.root_layout = BoxLayout(orientation='vertical', padding=20, spacing=20)
         self.show_home_screen()
         
+        Window.bind(on_keyboard=self.on_hardware_back_button)
+        
         Clock.schedule_once(self.check_and_request_android_storage, 1)  
         Clock.schedule_interval(self.update_network_status_ui, 3)
           
         return self.root_layout  
 
+    def on_hardware_back_button(self, window, key, *args):
+        if key == 27:  
+            if self.current_screen != "home":
+                self.safe_back_home()
+                return True  
+            return False  
+        return False
+
     def show_home_screen(self):
+        self.current_screen = "home"
         self.root_layout.clear_widgets()
         self.root_layout.add_widget(Label(text="📱 ATS Storage Gateway", font_size=46, bold=True, color=(0, 0.67, 0.7, 1), size_hint_y=0.15))
         
@@ -227,12 +254,12 @@ class RemoteAndroidApp(App):
         status_box.add_widget(self.lbl_net_local)
         self.root_layout.add_widget(status_box)
         
-        btn_box = BoxLayout(orientation='vertical', spacing=15, size_hint=(0.6, 0.25), pos_hint={'center_x': 0.5, 'center_y': 0.5})
+        btn_box = BoxLayout(orientation='vertical', spacing=15, size_hint=(0.6, None), height=120, pos_hint={'center_x': 0.5, 'center_y': 0.5})
         
-        btn_same_net = Button(text="🏠 Same Network", font_size=32, bold=True, background_color=(0.1, 0.7, 0.3, 1))
+        btn_same_net = ModernRoundButton(text="🏠 Same Network", font_size=32, bold=True, bg_color=(0.1, 0.7, 0.3, 1), radius=[20])
         btn_same_net.bind(on_press=self.show_same_network_screen)
         
-        btn_diff_net = Button(text="🌐 Different Network", font_size=32, bold=True, background_color=(0, 0.5, 0.8, 1))
+        btn_diff_net = ModernRoundButton(text="🌐 Different Network", font_size=32, bold=True, bg_color=(0, 0.5, 0.8, 1), radius=[20])
         btn_diff_net.bind(on_press=self.show_different_network_screen)
         
         btn_box.add_widget(btn_same_net)
@@ -243,11 +270,12 @@ class RemoteAndroidApp(App):
         self.root_layout.add_widget(wrapper)
 
     def show_same_network_screen(self, instance=None):
+        self.current_screen = "same_net"
         def _build_same_screen(dt):
             self.root_layout.clear_widgets()
             
             header = BoxLayout(orientation='horizontal', size_hint_y=0.1, spacing=10)
-            btn_back = Button(text="⬅️", size_hint_x=0.15, font_size=36, bold=True)
+            btn_back = ModernRoundButton(text="⬅️", size_hint_x=0.15, font_size=36, bold=True, bg_color=(0.3, 0.3, 0.3, 1))
             btn_back.bind(on_press=lambda x: self.safe_back_home()) 
             header.add_widget(btn_back)
             header.add_widget(Label(text="🏠 Local Same Network", font_size=40, bold=True, color=(0.1, 0.7, 0.3, 1), size_hint_x=0.85, halign="left"))
@@ -266,18 +294,21 @@ class RemoteAndroidApp(App):
             layout.add_widget(self.txt_same_pass)
             
             layout.add_widget(Label(text="📌 Local IP Address for PC:", font_size=34, bold=True, size_hint_y=None, height=50))  
-            self.txt_same_ip = TextInput(text=self.get_device_ip(), multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
+            
+            # 🌟 CRITICAL FIX 1: અહીં ડાયરેક્ટ આઈપી સેટ કરી દીધો, જેથી લોડ થતા જ તરત આઈપી દેખાવા મંડે!
+            current_detected_ip = self.get_device_ip()
+            self.txt_same_ip = TextInput(text=str(current_detected_ip), multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
             layout.add_widget(self.txt_same_ip)
             
             layout.add_widget(Label(text="📊 Engine Status:", font_size=32, bold=True, size_hint_y=None, height=50))
             self.lbl_same_status = Label(text="🏠 Local Server: Inactive", font_size=30, bold=True, color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=70)
             layout.add_widget(self.lbl_same_status)
             
-            self.btn_same_start = Button(text="🚀 Start Service", size_hint_y=None, height=55, font_size=34, bold=True, background_color=(0, 0.67, 0.7, 1))  
+            self.btn_same_start = ModernRoundButton(text="🚀 Start Service", size_hint_y=None, height=48, font_size=32, bold=True, bg_color=(0, 0.67, 0.7, 1), radius=[15])  
             self.btn_same_start.bind(on_press=self.start_same_net_service)  
             layout.add_widget(self.btn_same_start)
             
-            self.btn_same_stop = Button(text="🛑 Stop Service", size_hint_y=None, height=55, font_size=34, bold=True, background_color=(1, 0.2, 0.2, 1), disabled=True)  
+            self.btn_same_stop = ModernRoundButton(text="🛑 Stop Service", size_hint_y=None, height=48, font_size=32, bold=True, bg_color=(1, 0.2, 0.2, 1), radius=[15], disabled=True)  
             self.btn_same_stop.bind(on_press=self.stop_all_services)  
             layout.add_widget(self.btn_same_stop)
             
@@ -292,11 +323,12 @@ class RemoteAndroidApp(App):
         Clock.schedule_once(_build_same_screen)
 
     def show_different_network_screen(self, instance=None):
+        self.current_screen = "diff_net"
         def _build_diff_screen(dt):
             self.root_layout.clear_widgets()
             
             header = BoxLayout(orientation='horizontal', size_hint_y=0.1, spacing=10)
-            btn_back = Button(text="⬅️", size_hint_x=0.15, font_size=36, bold=True)
+            btn_back = ModernRoundButton(text="⬅️", size_hint_x=0.15, font_size=36, bold=True, bg_color=(0.3, 0.3, 0.3, 1))
             btn_back.bind(on_press=lambda x: self.safe_back_home()) 
             header.add_widget(btn_back)
             header.add_widget(Label(text="🌐 Different Network Tunnel", font_size=40, bold=True, color=(0, 0.5, 0.8, 1), size_hint_x=0.85, halign="left"))
@@ -326,11 +358,11 @@ class RemoteAndroidApp(App):
             self.lbl_diff_status = Label(text="🔗 Tunnel Connection: Inactive", font_size=30, bold=True, color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=70)
             layout.add_widget(self.lbl_diff_status)
             
-            self.btn_diff_start = Button(text="🚀 Start Tunnel Services", size_hint_y=None, height=55, font_size=34, bold=True, background_color=(0, 0.67, 0.7, 1))  
+            self.btn_diff_start = ModernRoundButton(text="🚀 Start Tunnel Services", size_hint_y=None, height=48, font_size=32, bold=True, bg_color=(0, 0.67, 0.7, 1), radius=[15])  
             self.btn_diff_start.bind(on_press=self.start_diff_net_service)  
             layout.add_widget(self.btn_diff_start)
             
-            self.btn_diff_stop = Button(text="🛑 Stop Tunnel Services", size_hint_y=None, height=55, font_size=34, bold=True, background_color=(1, 0.2, 0.2, 1), disabled=True)  
+            self.btn_diff_stop = ModernRoundButton(text="🛑 Stop Tunnel Services", size_hint_y=None, height=48, font_size=32, bold=True, bg_color=(1, 0.2, 0.2, 1), radius=[15], disabled=True)  
             self.btn_diff_stop.bind(on_press=self.stop_all_services)  
             layout.add_widget(self.btn_diff_stop)
             
@@ -356,10 +388,28 @@ class RemoteAndroidApp(App):
             return
 
         try:
-            Build = autoclass('android.os.Build$VERSION')
-            sdk_version = Build.SDK_INT
+            Build = autoclass('android.os.Build')
+            api = Build.VERSION.SDK_INT
             
-            if sdk_version >= 30:
+            if api <= 29:
+                storage_read_ok = check_permission(Permission.READ_EXTERNAL_STORAGE)  
+                storage_write_ok = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
+                
+                if storage_read_ok and storage_write_ok:
+                    self.lbl_permissions.text = "✅ Storage Access Granted!"
+                    self.lbl_permissions.color = (0, 1, 0, 1)
+                    self.permissions_granted = True
+                else:
+                    self.lbl_permissions.text = "❌ Storage Permission Required!"
+                    self.lbl_permissions.color = (1, 0, 0, 1)
+                    self.permissions_granted = False
+                    request_permissions([
+                        Permission.INTERNET, 
+                        Permission.ACCESS_NETWORK_STATE, 
+                        Permission.READ_EXTERNAL_STORAGE, 
+                        Permission.WRITE_EXTERNAL_STORAGE
+                    ])
+            else:
                 Environment = autoclass('android.os.Environment')
                 if Environment.isExternalStorageManager():
                     self.lbl_permissions.text = "✅ All-Files Access Granted!"
@@ -375,27 +425,11 @@ class RemoteAndroidApp(App):
                     Intent = autoclass('android.content.Intent')
                     PythonActivity = autoclass('org.kivy.android.PythonActivity')
                     
+                    activity = PythonActivity.mActivity
                     intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                    uri = Uri.fromParts("package", PythonActivity.mActivity.getPackageName(), None)
-                    intent.setData(uri)
-                    PythonActivity.mActivity.startActivity(intent)
+                    intent.setData(Uri.parse("package:" + activity.getPackageName()))
+                    activity.startActivity(intent)
                     toast("Please turn ON the switch for All Files Access!")
-            else:
-                # 🌟 SUGGESTION FIX: Android 13+ (API 33) કમ્પેટીબિલિટી પરમિશન કીટ
-                req_list = [Permission.INTERNET, Permission.ACCESS_NETWORK_STATE]
-                if sdk_version >= 33:
-                    req_list.extend([
-                        autoclass('android.Manifest$permission').READ_MEDIA_IMAGES,
-                        autoclass('android.Manifest$permission').READ_MEDIA_VIDEO,
-                        autoclass('android.Manifest$permission').READ_MEDIA_AUDIO
-                    ])
-                else:
-                    req_list.extend([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
-                
-                request_permissions(req_list)
-                self.permissions_granted = True
-                self.lbl_permissions.text = "✅ Storage Access Granted!"
-                self.lbl_permissions.color = (0, 1, 0, 1)
         except Exception as e:
             self.lbl_permissions.text = f"⚠️ Setup Error: {str(e)[:40]}"
 
@@ -439,7 +473,9 @@ class RemoteAndroidApp(App):
             Thread(target=self.run_pinggy_tunnel, args=(unique_subdomain,), daemon=True).start()  
 
     def stop_all_services(self, instance=None):
-        # 🌟 3. THREAD SHUTDOWN FIX: લૂપ બહાર નીકળે એ માટે ફ્લેગ અને સોકેટ શટડાઉન
+        if not self.is_running:
+            return  
+
         self.is_running = False  
         self.storage_server.stop()  
         
@@ -447,9 +483,12 @@ class RemoteAndroidApp(App):
         self.generated_password = "".join(random.choices(string.ascii_letters + string.digits, k=6))
         
         if ANDROID: 
+            try:
+                PythonService = autoclass('org.kivy.android.PythonService')
+                PythonService.stopService()
+            except: pass
             toast("Services stopped safely. UI active.")
         
-        # 🌟 થ્રેડ કમ્પ્લીટલી મરી જાય એ માટે અડધી સેકન્ડનો બફર ટાઈમ આપ્યો
         def _reset_ui(dt):
             self.show_home_screen()
         Clock.schedule_once(_reset_ui, 0.5)
@@ -543,16 +582,19 @@ class RemoteAndroidApp(App):
         if ip != "127.0.0.1":
             self.lbl_net_local.text = f"🏠 Local Network: OK (IP: {ip})"
             self.lbl_net_local.color = (0, 1, 0, 1)
-            try: self.txt_same_ip.text = str(ip)
-            except: pass
+            
+            # 🌟 CRITICAL FIX 2: પહેલાં ચેક કરી લેશે કે `txt_same_ip` ઓબ્જેક્ટ બનેલો છે કે નહિ, જેથી ક્રેશ થયા વગર બોક્સ અપડેટ થાય!
+            if hasattr(self, 'txt_same_ip') and self.txt_same_ip:
+                try: self.txt_same_ip.text = str(ip)
+                except: pass
         else:
             self.lbl_net_local.text = "🏠 Local Network: No Wi-Fi / Hotspot"
             self.lbl_net_local.color = (1, 0, 0, 1)
 
         if ANDROID and not self.permissions_granted:
             try:
-                Build = autoclass('android.os.Build$VERSION')
-                if Build.SDK_INT >= 30:
+                Build = autoclass('android.os.Build')
+                if Build.VERSION.SDK_INT >= 30:
                     Environment = autoclass('android.os.Environment')
                     if Environment.isExternalStorageManager():
                         self.lbl_permissions.text = "✅ All-Files Access Granted!"
@@ -577,7 +619,7 @@ class RemoteAndroidApp(App):
     def on_stop(self):  
         self.is_running = False  
         self.storage_server.stop()  
-        time.sleep(0.5)  # 🌟 થ્રેડ કિલિંગ સેફ બફર ટાઈમ
+        time.sleep(0.5)
 
 if __name__ == '__main__':
     RemoteAndroidApp().run()
