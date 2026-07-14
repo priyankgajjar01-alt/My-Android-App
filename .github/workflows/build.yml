@@ -27,23 +27,21 @@ jobs:
           git zip unzip autoconf automake libtool pkg-config \
           zlib1g-dev libffi-dev libssl-dev cmake build-essential
 
-    # 🛠️ રનરના ડિફોલ્ટ NDK ને ગ્લોબલ પાથ પરથી ઉડાવી દીધા જેથી કન્ફ્લિક્ટ ન થાય
     - name: 🔥 Force Wipe Global New NDKs
       run: |
-        echo "🔥 Wiping incompatible default NDKs from Github Runner..."
         sudo rm -rf /usr/local/lib/android/sdk/ndk/27*
         sudo rm -rf /usr/local/lib/android/sdk/ndk/28*
         sudo rm -rf /usr/local/lib/android/sdk/ndk/29*
-        echo "✅ Global clean done!"
 
-    # 🌟 API 34 અને 64-bit બિલ્ડ માટે સ્ટેબલ SDK અને NDK 25.2.9519653 સેટઅપ
-    - name: 🤖 Setup SDK & NDK 25.2 (Optimized for 64-bit API 34)
+    - name: 🤖 Setup SDK & NDK 25.2 (API 34)
       run: |
         mkdir -p $HOME/android/sdk/cmdline-tools
         cd $HOME/android/sdk/cmdline-tools
         wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
         unzip -q commandlinetools-linux-11076708_latest.zip && mv cmdline-tools latest
-        export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin
+
+        export ANDROID_HOME=$HOME/android/sdk
+        export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
         yes | sdkmanager --licenses
         sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653"
 
@@ -52,24 +50,23 @@ jobs:
         python -m pip install --upgrade pip setuptools wheel
         pip install --upgrade cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
-    # 🧹 જૂની કેશ સાફ કરીને ફ્રેશ બિલ્ડ તૈયાર કરવા માટે
-    - name: 🧹 Clean Previous Build Cache & Old Configs
+    - name: 🧹 Clean Previous Build Cache
       run: |
-        echo "🧹 Cleaning old cache..."
+        # 🎯 FIX: rf અને ડોટ વચ્ચે સ્પેસ સેટ કરી
         rm -rf .buildozer/
-        rm -f buildozer.spec
-        python3 -m pythonforandroid.toolchain clean_all || true
-        echo "✅ Clean done!"
 
     # 🛠️ બિલ્ડ પ્રોસેસ: પ્યોર 64-bit (ARM64) અને API 34 સાથે કમ્પ્લીટ બિલ્ડ
     - name: Build APK
+      env: 
+        # 🎯 FIX: ગિટહબ રનર માટે એબ્સોલ્યુટ પાથ સેટ કર્યો જેથી વેરીએબલ ખાલી ન રહે
+        ANDROIDSDK: /home/runner/android/sdk
+        ANDROIDNDK: /home/runner/android/sdk/ndk/25.2.9519653
+        ANDROIDAPI: 34
       run: |
-        export ANDROIDSDK=$HOME/android/sdk
-        export ANDROIDNDK=$HOME/android/sdk/ndk/25.2.9519653
-        export ANDROIDAPI=34
+        export PATH=$PATH:$ANDROIDSDK/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools
         export ANDROIDNDKTOOL=$ANDROIDNDK/toolchains/llvm/prebuilt/linux-x86_64/bin
 
-        # 🎯 FIX: --private અને ડોટ વચ્ચે સ્પેસ આપી દીધી છે
+        # 🎯 FIX: --private અને ડોટ વચ્ચે સ્પેસ સેટ કરી (સ્લેશ હટાવી દીધો)
         python3 -m pythonforandroid.toolchain apk --debug --private . \
           --package=org.test.internetstorage \
           --name="Internet Storage Access" \
@@ -92,13 +89,12 @@ jobs:
 
     - name: Copy APK
       run: |
-        # જૂની એપીકે ડિલીટ કરીને નવી કોપી કરવી
         rm -rf APK/*
         mkdir -p APK
-        # 🎯 FIX: find અને ડોટ વચ્ચે સ્પેસ આપી દીધી છે
+        # 🎯 FIX: find અને ડોટ વચ્ચે સ્પેસ
         APK_PATH=$(find . -type f -name "*.apk" 2>/dev/null | head -n 1)
 
-        # 🎯 FIX: if બ્રેકેટ અને '!' વચ્ચે સ્પેસ સેટ કરી દીધી છે
+        # 🎯 FIX: બ્રેકેટ સ્પેસિંગ સેટ કરી
         if [ ! -z "$APK_PATH" ]; then
           echo "🎯 APK મળી ગઈ અહીં: $APK_PATH"
           cp "$APK_PATH" APK/Photon-Clint-$(date +%Y%m%d-%H%M).apk
@@ -109,18 +105,11 @@ jobs:
           exit 1
         fi
 
-    # 🚀 છેલ્લું સ્ટેપ: ફોર્સ વગર સેફ પુશ - પહેલા pull પછી push
     - name: Push to Repo
       run: |
         git config user.name "github-actions"
         git config user.email "actions@github.com"
-
-        # ગિટ સિંક કરવા માટે પહેલા લેટેસ્ટ ફેચ અને rebase કરીએ
         git pull origin main --rebase || true
-
         git add APK/
         git commit -m "Add Photon Clint APK (64-bit API 34 Build) [$(date +%Y%m%d-%H%M)]" || true
-
-        # 🎯 Force વગર push - rebase થી conflict solve થઈ ગયો હશે
         git push origin main
-        
