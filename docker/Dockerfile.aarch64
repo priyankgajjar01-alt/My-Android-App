@@ -12,15 +12,16 @@ WORKDIR /root
 COPY docker/musl_system.patch /root
 
 
-RUN git clone git://git.musl-libc.org/musl && \
+RUN git clone https://git.musl-libc.org/git/musl && \
     cd /root/musl && \
     git checkout 91e662d1d941215eb024787db5e910dbfb5b169f && \
     patch -p1 < /root/musl_system.patch && \
     mkdir build && \
     cd build && \
     ../configure --prefix=/root/install/musl --host=aarch64-linux-gnu && \
-    make -j12 && make install /root/install/musl/bin/musl-gcc /root/install/musl/lib/musl-gcc.specs && \
+    make -j12 && make install && \
     rm -rf /root/musl
+
 
 WORKDIR /root/openssh
 
