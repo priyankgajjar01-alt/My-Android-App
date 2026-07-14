@@ -55,7 +55,7 @@ class RemoteStorageServer:
                     Thread(target=self.handle_client, args=(client, addr), daemon=True).start()  
                 except socket.timeout:  
                     continue  
-                except Exception as e:  
+                except Exception:  
                     break  
         except Exception as e:  
             print(f"❌ Failed to start storage server: {e}")  
@@ -189,7 +189,6 @@ class RemoteStorageServer:
         self.running = False  
         if self.socket:  
             try:
-                self.socket.shutdown(socket.SHUT_RDWR)
                 self.socket.close()  
             except: pass
 
@@ -225,6 +224,7 @@ class RemoteAndroidApp(App):
         status_box.add_widget(self.lbl_net_local)
         self.root_layout.add_widget(status_box)
         
+        # 🌟 બટનોની સાઈઝ ૫૦% ઘટાડીને પ્રોપર સેન્ટર અલાઈન કરી
         btn_box = BoxLayout(orientation='vertical', spacing=20, size_hint=(0.6, 0.4), pos_hint={'center_x': 0.5, 'center_y': 0.5})
         
         btn_same_net = Button(text="🏠 Same Network", font_size=34, bold=True, background_color=(0.1, 0.7, 0.3, 1))
@@ -245,7 +245,7 @@ class RemoteAndroidApp(App):
         
         header = BoxLayout(orientation='horizontal', size_hint_y=0.1, spacing=10)
         btn_back = Button(text="⬅️", size_hint_x=0.15, font_size=36, bold=True)
-        btn_back.bind(on_press=lambda x: self.show_home_screen()) 
+        btn_back.bind(on_press=lambda x: self.show_home_screen()) # 🌟 બેક એરોથી એપ બંધ નહિ થાય
         header.add_widget(btn_back)
         header.add_widget(Label(text="🏠 Local Same Network", font_size=40, bold=True, color=(0.1, 0.7, 0.3, 1), size_hint_x=0.85, halign="left"))
         self.root_layout.add_widget(header)
@@ -302,7 +302,7 @@ class RemoteAndroidApp(App):
         layout.bind(minimum_height=layout.setter('height'))
         
         layout.add_widget(Label(text="⚡ Select Tunnel Server Platform:", font_size=34, bold=True, size_hint_y=None, height=50))
-        self.spn_server = Spinner(text='Pinggy HTTP Bridge', values=('Pinggy HTTP Bridge', 'Localhost.run Server'), size_hint_y=None, height=90, font_size=34)
+        self.spn_server = Spinner(text='Localhost.run Server', values=('Localhost.run Server', 'Pinggy HTTP Bridge'), size_hint_y=None, height=90, font_size=34)
         layout.add_widget(self.spn_server)
         
         layout.add_widget(Label(text="📋 10-Digit Tunnel ID:", font_size=34, bold=True, size_hint_y=None, height=50))  
@@ -338,7 +338,6 @@ class RemoteAndroidApp(App):
             self.btn_diff_stop.disabled = False
 
     def check_and_request_android_storage(self, dt=None):
-        """🌟 યુનિવર્સલ પદ્ધતિ: Android 7 થી લઈને 14+ બધા જ ડિવાઇસને ઓટો-ડિટેક્ટ કરશે"""
         if not ANDROID:
             self.lbl_permissions.text = "✅ Desktop Mode (No restrictions)"
             self.lbl_permissions.color = (0, 1, 0, 1)
@@ -349,7 +348,7 @@ class RemoteAndroidApp(App):
             Build = autoclass('android.os.Build$VERSION')
             sdk_version = Build.SDK_INT
             
-            # 📱 એન્ડ્રોઇડ ૧૧ થી ૧૪+ માટે (API 30+)
+            # Android 11 થી 14+ માટે ઓલ-ફાઇલ્સ સેટિંગ્સ
             if sdk_version >= 30:
                 Environment = autoclass('android.os.Environment')
                 if Environment.isExternalStorageManager():
@@ -357,7 +356,7 @@ class RemoteAndroidApp(App):
                     self.lbl_permissions.color = (0, 1, 0, 1)
                     self.permissions_granted = True
                 else:
-                    self.lbl_permissions.text = "❌ Permission Required! Opening Settings..."
+                    self.lbl_permissions.text = "❌ All-Files Access Required!"
                     self.lbl_permissions.color = (1, 0, 0, 1)
                     self.permissions_granted = False
                     
@@ -371,14 +370,13 @@ class RemoteAndroidApp(App):
                     intent.setData(uri)
                     PythonActivity.mActivity.startActivity(intent)
                     toast("Please turn ON the switch for All Files Access!")
-            
-            # 📱 એન્ડ્રોઇડ ૭, ૮ અને ૯ માટે (API 29 કે તેનાથી નીચે)
+            # Android 7 થી 9/10 માટે નોર્મલ પરમિશન
             else:
                 storage_read_ok = check_permission(Permission.READ_EXTERNAL_STORAGE)  
                 storage_write_ok = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
                 
                 if storage_read_ok and storage_write_ok:
-                    self.lbl_permissions.text = "✅ Storage Access Granted (Legacy)!"
+                    self.lbl_permissions.text = "✅ Storage Access Granted!"
                     self.lbl_permissions.color = (0, 1, 0, 1)
                     self.permissions_granted = True
                 else:
@@ -428,20 +426,51 @@ class RemoteAndroidApp(App):
         
         unique_subdomain = "ats" + "".join(random.choices(string.digits, k=4))
         
-        if self.spn_server.text == 'Pinggy HTTP Bridge':
-            Thread(target=self.run_pinggy_tunnel, args=(unique_subdomain,), daemon=True).start()  
-        else:
+        if self.spn_server.text == 'Localhost.run Server':
             Thread(target=self.run_localhost_tunnel, args=(unique_subdomain,), daemon=True).start()  
+        else:
+            Thread(target=self.run_pinggy_tunnel, args=(unique_subdomain,), daemon=True).start()  
 
-    def stop_all_services(self, instance):
+    def stop_all_services(self, instance=None):
+        """🌟 સેફ સ્ટોપ લોજિક: એપ ક્યારેય ક્લોઝ ન થાય"""
         self.is_running = False  
         self.storage_server.stop()  
         
         self.generated_10digit_id = "".join(random.choices(string.digits, k=10))
         self.generated_password = "".join(random.choices(string.ascii_letters + string.digits, k=6))
         
-        if ANDROID: toast("Services stopped safely. UI active.")
+        if ANDROID: 
+            toast("Services stopped safely. UI active.")
+        
         self.show_home_screen()
+
+    def run_localhost_tunnel(self, unique_subdomain):
+        """⚡ SERVER: પ્યોર HTTP CONNECT ગેટવે લિંક (તમારા જૂના રેફરન્સ લોજિક મુજબ)"""
+        unique_link = f"https://{unique_subdomain}.localhost.run"
+        self.update_tunnel_ui_fields(unique_link, "🟢 Localhost Tunnel Engine: Live & Online")
+        
+        while self.is_running:
+            try:
+                context = ssl.create_default_context()
+                raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                raw_sock.settimeout(10)
+                raw_sock.connect(("localhost.run", 443))
+                
+                secure_sock = context.wrap_socket(raw_sock, server_hostname="localhost.run")
+                
+                # 🌟 જુના રેફરન્સ મુજબનો CONNECT કમાન્ડ પ્યોર સિંક
+                req = f"CONNECT {unique_subdomain}:5000 HTTP/1.1\r\nHost: localhost.run\r\n\r\n"
+                secure_sock.sendall(req.encode())
+                
+                # કનેક્શન સક્સેસ રિસ્પોન્સ રીડ કરવો
+                secure_sock.settimeout(5)
+                resp = secure_sock.recv(1024)
+                
+                secure_sock.settimeout(None)
+                self._start_data_pipeline(secure_sock)
+            except Exception:
+                if not self.is_running: break
+                time.sleep(3)
 
     def run_pinggy_tunnel(self, unique_subdomain):  
         tunnel_host = f"{unique_subdomain}.pinggy.link"
@@ -457,38 +486,6 @@ class RemoteAndroidApp(App):
                         self._start_data_pipeline(ssock)
             except:
                 time.sleep(1)
-                if not self.is_running: break
-
-    def run_localhost_tunnel(self, unique_subdomain):
-        unique_fallback_link = f"https://{unique_subdomain}.localhost.run"
-        
-        while self.is_running:
-            try:
-                context = ssl.create_default_context()
-                raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                raw_sock.settimeout(10)
-                raw_sock.connect(("localhost.run", 443))
-                
-                secure_sock = context.wrap_socket(raw_sock, server_hostname="localhost.run")
-                
-                secure_sock.settimeout(3)
-                try:
-                    while True:
-                        banner_chunk = secure_sock.recv(1024)
-                        if not banner_chunk or b"SSH" in banner_chunk or b"localhost.run" in banner_chunk:
-                            break
-                except socket.timeout:
-                    pass
-                
-                secure_sock.settimeout(10)
-                req = f"CONNECT {unique_subdomain}:5000 HTTP/1.1\r\nHost: localhost.run\r\n\r\n"
-                secure_sock.sendall(req.encode())
-                
-                self.update_tunnel_ui_fields(unique_fallback_link, "🟢 Localhost Tunnel Engine: Live & Online")
-                self._start_data_pipeline(secure_sock)
-            except Exception as e:
-                self.update_tunnel_ui_fields("Retrying Connection Link...", "❌ Localhost: Retrying Sync Connection...", success=False)
-                time.sleep(3)
                 if not self.is_running: break
 
     def _start_data_pipeline(self, secure_sock):
@@ -546,6 +543,11 @@ class RemoteAndroidApp(App):
                     Environment = autoclass('android.os.Environment')
                     if Environment.isExternalStorageManager():
                         self.lbl_permissions.text = "✅ All-Files Access Granted!"
+                        self.lbl_permissions.color = (0, 1, 0, 1)
+                        self.permissions_granted = True
+                else:
+                    if check_permission(Permission.READ_EXTERNAL_STORAGE) and check_permission(Permission.WRITE_EXTERNAL_STORAGE):
+                        self.lbl_permissions.text = "✅ Storage Access Granted!"
                         self.lbl_permissions.color = (0, 1, 0, 1)
                         self.permissions_granted = True
             except: pass
