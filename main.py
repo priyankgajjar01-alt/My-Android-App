@@ -187,7 +187,6 @@ class RemoteStorageServer:
       
     def stop(self):  
         self.running = False  
-        # 🌟 અસલી ફિક્સ: સોકેટ બંધ કરતી વખતે થ્રેડ ક્રેશ ન થાય તે માટે સેફ ક્લોઝિંગ
         if self.socket:  
             try:
                 self.socket.shutdown(socket.SHUT_RDWR)
@@ -211,7 +210,7 @@ class RemoteAndroidApp(App):
         self.root_layout = BoxLayout(orientation='vertical', padding=20, spacing=20)
         self.show_home_screen()
         
-        Clock.schedule_once(self.check_and_request_android_14_storage, 1)  
+        Clock.schedule_once(self.check_and_request_android_storage, 1)  
         Clock.schedule_interval(self.update_network_status_ui, 3)
           
         return self.root_layout  
@@ -338,7 +337,8 @@ class RemoteAndroidApp(App):
             self.btn_diff_start.disabled = True
             self.btn_diff_stop.disabled = False
 
-    def check_and_request_android_14_storage(self, dt=None):
+    def check_and_request_android_storage(self, dt=None):
+        """🌟 યુનિવર્સલ પદ્ધતિ: Android 7 થી લઈને 14+ બધા જ ડિવાઇસને ઓટો-ડિટેક્ટ કરશે"""
         if not ANDROID:
             self.lbl_permissions.text = "✅ Desktop Mode (No restrictions)"
             self.lbl_permissions.color = (0, 1, 0, 1)
@@ -346,35 +346,57 @@ class RemoteAndroidApp(App):
             return
 
         try:
-            Environment = autoclass('android.os.Environment')
-            if Environment.isExternalStorageManager():
-                self.lbl_permissions.text = "✅ All-Files Access Granted!"
-                self.lbl_permissions.color = (0, 1, 0, 1)
-                self.permissions_granted = True
+            Build = autoclass('android.os.Build$VERSION')
+            sdk_version = Build.SDK_INT
+            
+            # 📱 એન્ડ્રોઇડ ૧૧ થી ૧૪+ માટે (API 30+)
+            if sdk_version >= 30:
+                Environment = autoclass('android.os.Environment')
+                if Environment.isExternalStorageManager():
+                    self.lbl_permissions.text = "✅ All-Files Access Granted!"
+                    self.lbl_permissions.color = (0, 1, 0, 1)
+                    self.permissions_granted = True
+                else:
+                    self.lbl_permissions.text = "❌ Permission Required! Opening Settings..."
+                    self.lbl_permissions.color = (1, 0, 0, 1)
+                    self.permissions_granted = False
+                    
+                    Settings = autoclass('android.provider.Settings')
+                    Uri = autoclass('android.net.Uri')
+                    Intent = autoclass('android.content.Intent')
+                    PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                    
+                    intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    uri = Uri.fromParts("package", PythonActivity.mActivity.getPackageName(), None)
+                    intent.setData(uri)
+                    PythonActivity.mActivity.startActivity(intent)
+                    toast("Please turn ON the switch for All Files Access!")
+            
+            # 📱 એન્ડ્રોઇડ ૭, ૮ અને ૯ માટે (API 29 કે તેનાથી નીચે)
             else:
-                self.lbl_permissions.text = "❌ Permission Required! Opening Settings..."
-                self.lbl_permissions.color = (1, 0, 0, 1)
-                self.permissions_granted = False
+                storage_read_ok = check_permission(Permission.READ_EXTERNAL_STORAGE)  
+                storage_write_ok = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
                 
-                Settings = autoclass('android.provider.Settings')
-                Uri = autoclass('android.net.Uri')
-                Intent = autoclass('android.content.Intent')
-                PythonActivity = autoclass('org.kivy.android.PythonActivity')
-                
-                intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                uri = Uri.fromParts("package", PythonActivity.mActivity.getPackageName(), None)
-                intent.setData(uri)
-                PythonActivity.mActivity.startActivity(intent)
-                toast("Please turn ON the switch for All Files Access!")
+                if storage_read_ok and storage_write_ok:
+                    self.lbl_permissions.text = "✅ Storage Access Granted (Legacy)!"
+                    self.lbl_permissions.color = (0, 1, 0, 1)
+                    self.permissions_granted = True
+                else:
+                    self.lbl_permissions.text = "❌ Storage Permission Required!"
+                    self.lbl_permissions.color = (1, 0, 0, 1)
+                    self.permissions_granted = False
+                    request_permissions([
+                        Permission.INTERNET, 
+                        Permission.ACCESS_NETWORK_STATE, 
+                        Permission.READ_EXTERNAL_STORAGE, 
+                        Permission.WRITE_EXTERNAL_STORAGE
+                    ])
         except Exception as e:
             self.lbl_permissions.text = f"⚠️ Setup Error: {str(e)[:40]}"
-            try:
-                request_permissions([Permission.INTERNET, Permission.ACCESS_NETWORK_STATE, Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
-            except: pass
 
     def start_same_net_service(self, instance):
         if ANDROID and not self.permissions_granted:  
-            self.check_and_request_android_14_storage()
+            self.check_and_request_android_storage()
             return  
             
         self.is_running = True
@@ -390,7 +412,7 @@ class RemoteAndroidApp(App):
 
     def start_diff_net_service(self, instance):
         if ANDROID and not self.permissions_granted:  
-            self.check_and_request_android_14_storage()
+            self.check_and_request_android_storage()
             return  
             
         self.is_running = True
@@ -412,16 +434,13 @@ class RemoteAndroidApp(App):
             Thread(target=self.run_localhost_tunnel, args=(unique_subdomain,), daemon=True).start()  
 
     def stop_all_services(self, instance):
-        # 🌟 અસલી ફિક્સ: એપ બંધ ન થાય એ માટે પહેલા ફ્લેગ બદલવો અને સર્વર સોકેટ સેફલી સ્ટોપ કરવું
         self.is_running = False  
         self.storage_server.stop()  
         
         self.generated_10digit_id = "".join(random.choices(string.digits, k=10))
         self.generated_password = "".join(random.choices(string.ascii_letters + string.digits, k=6))
         
-        if ANDROLLER_SDK_ROOT := True:
-            if ANDROID: toast("Services stopped safely. UI active.")
-        
+        if ANDROID: toast("Services stopped safely. UI active.")
         self.show_home_screen()
 
     def run_pinggy_tunnel(self, unique_subdomain):  
@@ -441,7 +460,6 @@ class RemoteAndroidApp(App):
                 if not self.is_running: break
 
     def run_localhost_tunnel(self, unique_subdomain):
-        """⚡ SERVER 2: Localhost.run Server Node (Fix: Proper Buffer Buffer Handshake)"""
         unique_fallback_link = f"https://{unique_subdomain}.localhost.run"
         
         while self.is_running:
@@ -453,7 +471,6 @@ class RemoteAndroidApp(App):
                 
                 secure_sock = context.wrap_socket(raw_sock, server_hostname="localhost.run")
                 
-                # 🌟 અસલી લોકલહોસ્ટ ફિક્સ: લૂપ લગાવીને આખું વેલકમ બેનર કમ્પ્લીટ રીડ કરવું જેથી રિટ્રાય એરર ન આવે
                 secure_sock.settimeout(3)
                 try:
                     while True:
@@ -524,11 +541,13 @@ class RemoteAndroidApp(App):
 
         if ANDROID and not self.permissions_granted:
             try:
-                Environment = autoclass('android.os.Environment')
-                if Environment.isExternalStorageManager():
-                    self.lbl_permissions.text = "✅ All-Files Access Granted!"
-                    self.lbl_permissions.color = (0, 1, 0, 1)
-                    self.permissions_granted = True
+                Build = autoclass('android.os.Build$VERSION')
+                if Build.SDK_INT >= 30:
+                    Environment = autoclass('android.os.Environment')
+                    if Environment.isExternalStorageManager():
+                        self.lbl_permissions.text = "✅ All-Files Access Granted!"
+                        self.lbl_permissions.color = (0, 1, 0, 1)
+                        self.permissions_granted = True
             except: pass
 
     def get_device_ip(self):  
