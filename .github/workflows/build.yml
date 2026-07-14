@@ -1,4 +1,4 @@
-name: Build Photon Clint APK
+name: Build Photon Clint 64bit APK
 on:
   workflow_dispatch:
   push:
@@ -27,7 +27,7 @@ jobs:
           git zip unzip autoconf automake libtool pkg-config \
           zlib1g-dev libffi-dev libssl-dev cmake build-essential
 
-    # 🛠️ રનરના ડિફોલ્ટ NDK 27/28/29 ને ગ્લોબલ પાથ પરથી ઉડાવી દીધા જેથી એ જૂના API સાથે કન્ફ્લિક્ટ ન કરે!
+    # 🛠️ રનરના ડિફોલ્ટ NDK ને ગ્લોબલ પાથ પરથી ઉડાવી દીધા જેથી કન્ફ્લિક્ટ ન થાય
     - name: 🔥 Force Wipe Global New NDKs
       run: |
         echo "🔥 Wiping incompatible default NDKs from Github Runner..."
@@ -36,8 +36,8 @@ jobs:
         sudo rm -rf /usr/local/lib/android/sdk/ndk/29*
         echo "✅ Global clean done!"
 
-    # 🌟 API 28 માટે એકદમ મેચિંગ ટૂલ્સ અને પ્લેટફોર્મ ડાઉનલોડ કરવું
-    - name: 🤖 Setup SDK & NDK 25.1 (Optimized for API 28)
+    # 🌟 API 34 અને 64-bit બિલ્ડ માટે સ્ટેબલ SDK અને NDK 25.1 સેટઅપ
+    - name: 🤖 Setup SDK & NDK 25.1 (Optimized for 64-bit API 34)
       run: |
         mkdir -p $HOME/android/sdk/cmdline-tools
         cd $HOME/android/sdk/cmdline-tools
@@ -45,13 +45,14 @@ jobs:
         unzip -q commandlinetools-linux-11076708_latest.zip && mv cmdline-tools latest
         export PATH=$PATH:$HOME/android/sdk/cmdline-tools/latest/bin
         yes | sdkmanager --licenses
-        sdkmanager "platform-tools" "platforms;android-28" "build-tools;28.0.3" "ndk;25.1.8937393"
+        sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
     - name: 📚 Install Python packages
       run: |
         python -m pip install --upgrade pip setuptools wheel
         pip install --upgrade cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
+    # 🧹 જૂની કેશ સાફ કરીને ફ્રેશ બિલ્ડ તૈયાર કરવા માટે
     - name: 🧹 Clean Previous Build Cache & Old Configs
       run: |
         echo "🧹 Cleaning old cache..."
@@ -60,7 +61,7 @@ jobs:
         python3 -m pythonforandroid.toolchain clean_all || true
         echo "✅ Clean done!"
 
-    # 🌟 બિલ્ડ પ્રોસેસ: પ્યોર 32-bit (ARMv7) અને API 28 સાથે કમ્પ્લીટ મેચિંગ બિલ્ડ
+    # 🛠️ બિલ્ડ પ્રોસેસ: પ્યોર 64-bit (ARM64) અને API 34 સાથે કમ્પ્લીટ બિલ્ડ
     - name: Build APK
       run: |
         export ANDROLLER_SDK_ROOT=$HOME/android/sdk
@@ -77,25 +78,25 @@ jobs:
           --permission READ_EXTERNAL_STORAGE \
           --permission WRITE_EXTERNAL_STORAGE \
           --permission MANAGE_EXTERNAL_STORAGE \
-          --arch=armeabi-v7a \
-          --android-api=28 \
+          --arch=arm64-v8a \
+          --android-api=34 \
           --sdk-dir=$ANDROLLER_SDK_ROOT \
           --ndk-dir=$ANDROLLER_NDK_ROOT \
           --ndk-version=25.1.8937393
 
     - name: Copy APK
       run: |
-        rm -rf APK/*.apk
+        # જૂની એપીકે ડિલીટ કરીને નવી કોપી કરવી
+        rm -rf APK/*
         mkdir -p APK
-        
         APK_PATH=$(find . -maxdepth 2 -name "*.apk" 2>/dev/null | head -n 1)
         
         if [ ! -z "$APK_PATH" ]; then
           echo "🎯 APK મળી ગઈ અહીં: $APK_PATH"
-          cp "$APK_PATH" APK/Photon-Clint-Latest.apk
+          cp "$APK_PATH" APK/Photon-Clint-$(date +%Y%m%d-%H%M).apk
           echo "✅ APK સફળતાપૂર્વક કોપી થઈ ગઈ છે!"
         else
-          echo "❌ એપીકે બની નથી. લોગ્સ ચેક કરો:"
+          echo "❌ એપીકે બની નથી. લોગ્સ જુઓ:"
           ls -la
           exit 1
         fi
@@ -104,15 +105,6 @@ jobs:
       run: |
         git config user.name "github-actions"
         git config user.email "actions@github.com"
-        
-        mv APK/Photon-Clint-Latest.apk ../Photon-Clint-Latest.apk
-        
-        git fetch origin main
-        git reset --hard origin/main
-        
-        mkdir -p APK
-        mv ../Photon-Clint-Latest.apk APK/Photon-Clint-Latest.apk
-        
-        git add APK/Photon-Clint-Latest.apk
-        git commit -m "Update APK file (32-bit API 28 Build)" || echo "No changes to commit"
-        git push origin main --force
+        git add APK/
+        git commit -m "Add Photon Clint APK (64-bit API 34 Build)" || true
+        git push
