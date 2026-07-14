@@ -225,7 +225,7 @@ class RemoteAndroidApp(App):
         self.lbl_net_internet = Label(text="🌐 Internet Connection: Checking...", font_size=32, size_hint_y=None, height=60)
         self.lbl_net_local = Label(text="🏠 Local Network: Checking...", font_size=32, size_hint_y=None, height=60)
         
-        self.root_layout = BoxLayout(orientation='vertical', padding=20, spacing=20)
+        self.root_layout = BoxLayout(orientation='vertical', padding=25, spacing=25)
         self.show_home_screen()
         
         Window.bind(on_keyboard=self.on_hardware_back_button)
@@ -246,40 +246,35 @@ class RemoteAndroidApp(App):
     def show_home_screen(self):
         self.current_screen = "home"
         self.root_layout.clear_widgets()
+        
         self.root_layout.add_widget(Label(text="📱 ATS Storage Gateway", font_size=46, bold=True, color=(0, 0.67, 0.7, 1), size_hint_y=0.15))
         
-        status_box = BoxLayout(orientation='vertical', size_hint_y=0.25, spacing=5)
+        status_box = BoxLayout(orientation='vertical', size_hint_y=0.25, spacing=8)
         status_box.add_widget(self.lbl_permissions)
         status_box.add_widget(self.lbl_net_internet)
         status_box.add_widget(self.lbl_net_local)
         self.root_layout.add_widget(status_box)
         
-        btn_box = BoxLayout(orientation='vertical', spacing=15, size_hint=(0.6, None), height=120, pos_hint={'center_x': 0.5, 'center_y': 0.5})
+        btn_box = BoxLayout(orientation='vertical', spacing=25, size_hint=(0.7, None), height=125, pos_hint={'center_x': 0.5, 'center_y': 0.5})
         
-        btn_same_net = ModernRoundButton(text="🏠 Same Network", font_size=32, bold=True, bg_color=(0.1, 0.7, 0.3, 1), radius=[20])
+        btn_same_net = ModernRoundButton(text="🏠 Same Network", font_size=34, bold=True, bg_color=(0.1, 0.7, 0.3, 1), radius=[20])
         btn_same_net.bind(on_press=self.show_same_network_screen)
         
-        btn_diff_net = ModernRoundButton(text="🌐 Different Network", font_size=32, bold=True, bg_color=(0, 0.5, 0.8, 1), radius=[20])
+        btn_diff_net = ModernRoundButton(text="🌐 Different Network", font_size=34, bold=True, bg_color=(0, 0.5, 0.8, 1), radius=[20])
         btn_diff_net.bind(on_press=self.show_different_network_screen)
         
         btn_box.add_widget(btn_same_net)
         btn_box.add_widget(btn_diff_net)
         
-        wrapper = BoxLayout(orientation='vertical', size_hint_y=0.6)
-        wrapper.add_widget(btn_box)
-        self.root_layout.add_widget(wrapper)
+        self.root_layout.add_widget(btn_box)
+        self.root_layout.add_widget(Label(size_hint_y=0.2))
 
     def show_same_network_screen(self, instance=None):
         self.current_screen = "same_net"
         def _build_same_screen(dt):
             self.root_layout.clear_widgets()
             
-            header = BoxLayout(orientation='horizontal', size_hint_y=0.1, spacing=10)
-            btn_back = ModernRoundButton(text="⬅️", size_hint_x=0.15, font_size=36, bold=True, bg_color=(0.3, 0.3, 0.3, 1))
-            btn_back.bind(on_press=lambda x: self.safe_back_home()) 
-            header.add_widget(btn_back)
-            header.add_widget(Label(text="🏠 Local Same Network", font_size=40, bold=True, color=(0.1, 0.7, 0.3, 1), size_hint_x=0.85, halign="left"))
-            self.root_layout.add_widget(header)
+            self.root_layout.add_widget(Label(text="🏠 Local Same Network", font_size=42, bold=True, color=(0.1, 0.7, 0.3, 1), size_hint_y=0.1, halign="center"))
             
             scroll = ScrollView(size_hint_y=0.9)  
             layout = BoxLayout(orientation='vertical', spacing=15, size_hint_y=None)  
@@ -294,8 +289,6 @@ class RemoteAndroidApp(App):
             layout.add_widget(self.txt_same_pass)
             
             layout.add_widget(Label(text="📌 Local IP Address for PC:", font_size=34, bold=True, size_hint_y=None, height=50))  
-            
-            # 🌟 CRITICAL FIX 1: અહીં ડાયરેક્ટ આઈપી સેટ કરી દીધો, જેથી લોડ થતા જ તરત આઈપી દેખાવા મંડે!
             current_detected_ip = self.get_device_ip()
             self.txt_same_ip = TextInput(text=str(current_detected_ip), multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
             layout.add_widget(self.txt_same_ip)
@@ -307,6 +300,8 @@ class RemoteAndroidApp(App):
             self.btn_same_start = ModernRoundButton(text="🚀 Start Service", size_hint_y=None, height=48, font_size=32, bold=True, bg_color=(0, 0.67, 0.7, 1), radius=[15])  
             self.btn_same_start.bind(on_press=self.start_same_net_service)  
             layout.add_widget(self.btn_same_start)
+            
+            layout.add_widget(Label(size_hint_y=None, height=10))
             
             self.btn_same_stop = ModernRoundButton(text="🛑 Stop Service", size_hint_y=None, height=48, font_size=32, bold=True, bg_color=(1, 0.2, 0.2, 1), radius=[15], disabled=True)  
             self.btn_same_stop.bind(on_press=self.stop_all_services)  
@@ -327,12 +322,7 @@ class RemoteAndroidApp(App):
         def _build_diff_screen(dt):
             self.root_layout.clear_widgets()
             
-            header = BoxLayout(orientation='horizontal', size_hint_y=0.1, spacing=10)
-            btn_back = ModernRoundButton(text="⬅️", size_hint_x=0.15, font_size=36, bold=True, bg_color=(0.3, 0.3, 0.3, 1))
-            btn_back.bind(on_press=lambda x: self.safe_back_home()) 
-            header.add_widget(btn_back)
-            header.add_widget(Label(text="🌐 Different Network Tunnel", font_size=40, bold=True, color=(0, 0.5, 0.8, 1), size_hint_x=0.85, halign="left"))
-            self.root_layout.add_widget(header)
+            self.root_layout.add_widget(Label(text="🌐 Different Network Tunnel", font_size=42, bold=True, color=(0, 0.5, 0.8, 1), size_hint_y=0.1, halign="center"))
             
             scroll = ScrollView(size_hint_y=0.9)  
             layout = BoxLayout(orientation='vertical', spacing=12, size_hint_y=None)  
@@ -362,6 +352,8 @@ class RemoteAndroidApp(App):
             self.btn_diff_start.bind(on_press=self.start_diff_net_service)  
             layout.add_widget(self.btn_diff_start)
             
+            layout.add_widget(Label(size_hint_y=None, height=10))
+            
             self.btn_diff_stop = ModernRoundButton(text="🛑 Stop Tunnel Services", size_hint_y=None, height=48, font_size=32, bold=True, bg_color=(1, 0.2, 0.2, 1), radius=[15], disabled=True)  
             self.btn_diff_stop.bind(on_press=self.stop_all_services)  
             layout.add_widget(self.btn_diff_stop)
@@ -380,6 +372,7 @@ class RemoteAndroidApp(App):
             self.show_home_screen()
         Clock.schedule_once(_go)
 
+    # 🌟 NEW RUNTIME PERMISSION BINDING GALAXY
     def check_and_request_android_storage(self, dt=None):
         if not ANDROID:
             self.lbl_permissions.text = "✅ Desktop Mode (No restrictions)"
@@ -388,38 +381,30 @@ class RemoteAndroidApp(App):
             return
 
         try:
+            # 1. પહેલા જ એન્ડ્રોઇડ ૧૩+ માટેના મોર્ડન મીડિયા પોપ-અપ્સ ટ્રિગર કરીએ
             Build = autoclass('android.os.Build')
             api = Build.VERSION.SDK_INT
             
-            if api <= 29:
-                storage_read_ok = check_permission(Permission.READ_EXTERNAL_STORAGE)  
-                storage_write_ok = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
-                
-                if storage_read_ok and storage_write_ok:
-                    self.lbl_permissions.text = "✅ Storage Access Granted!"
-                    self.lbl_permissions.color = (0, 1, 0, 1)
-                    self.permissions_granted = True
-                else:
-                    self.lbl_permissions.text = "❌ Storage Permission Required!"
-                    self.lbl_permissions.color = (1, 0, 0, 1)
-                    self.permissions_granted = False
-                    request_permissions([
-                        Permission.INTERNET, 
-                        Permission.ACCESS_NETWORK_STATE, 
-                        Permission.READ_EXTERNAL_STORAGE, 
-                        Permission.WRITE_EXTERNAL_STORAGE
-                    ])
+            req_list = [Permission.INTERNET, Permission.ACCESS_NETWORK_STATE]
+            
+            if api >= 33:
+                # એન્ડ્રોઇડ ૧૩+ ના પ્યોર મીડિયા ક્લાસ
+                ManifestPerm = autoclass('android.Manifest$permission')
+                req_list.extend([
+                    ManifestPerm.READ_MEDIA_IMAGES,
+                    ManifestPerm.READ_MEDIA_VIDEO,
+                    ManifestPerm.READ_MEDIA_AUDIO
+                ])
             else:
+                req_list.extend([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
+                
+            # પોપ-અપ ઓપન કરો
+            request_permissions(req_list)
+            
+            # 2. હવે તરત જ સેકન્ડના ભાગમાં જો એન્ડ્રોઇડ ૧૧+ હોય, તો ઓલ-ફાઇલ્સ સેટિંગ્સ પેજ પણ મોકલો
+            if api >= 30:
                 Environment = autoclass('android.os.Environment')
-                if Environment.isExternalStorageManager():
-                    self.lbl_permissions.text = "✅ All-Files Access Granted!"
-                    self.lbl_permissions.color = (0, 1, 0, 1)
-                    self.permissions_granted = True
-                else:
-                    self.lbl_permissions.text = "❌ All-Files Access Required!"
-                    self.lbl_permissions.color = (1, 0, 0, 1)
-                    self.permissions_granted = False
-                    
+                if not Environment.isExternalStorageManager():
                     Settings = autoclass('android.provider.Settings')
                     Uri = autoclass('android.net.Uri')
                     Intent = autoclass('android.content.Intent')
@@ -429,7 +414,16 @@ class RemoteAndroidApp(App):
                     intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
                     intent.setData(Uri.parse("package:" + activity.getPackageName()))
                     activity.startActivity(intent)
-                    toast("Please turn ON the switch for All Files Access!")
+                    toast("Please turn ON All Files Access switch!")
+                else:
+                    self.lbl_permissions.text = "✅ All-Files Access Granted!"
+                    self.lbl_permissions.color = (0, 1, 0, 1)
+                    self.permissions_granted = True
+            else:
+                self.permissions_granted = True
+                self.lbl_permissions.text = "✅ Storage Access Granted!"
+                self.lbl_permissions.color = (0, 1, 0, 1)
+                
         except Exception as e:
             self.lbl_permissions.text = f"⚠️ Setup Error: {str(e)[:40]}"
 
@@ -583,7 +577,6 @@ class RemoteAndroidApp(App):
             self.lbl_net_local.text = f"🏠 Local Network: OK (IP: {ip})"
             self.lbl_net_local.color = (0, 1, 0, 1)
             
-            # 🌟 CRITICAL FIX 2: પહેલાં ચેક કરી લેશે કે `txt_same_ip` ઓબ્જેક્ટ બનેલો છે કે નહિ, જેથી ક્રેશ થયા વગર બોક્સ અપડેટ થાય!
             if hasattr(self, 'txt_same_ip') and self.txt_same_ip:
                 try: self.txt_same_ip.text = str(ip)
                 except: pass
@@ -593,8 +586,8 @@ class RemoteAndroidApp(App):
 
         if ANDROID and not self.permissions_granted:
             try:
-                Build = autoclass('android.os.Build')
-                if Build.VERSION.SDK_INT >= 30:
+                Version = autoclass('android.os.Build$VERSION')
+                if Version.SDK_INT >= 30:
                     Environment = autoclass('android.os.Environment')
                     if Environment.isExternalStorageManager():
                         self.lbl_permissions.text = "✅ All-Files Access Granted!"
@@ -623,3 +616,6 @@ class RemoteAndroidApp(App):
 
 if __name__ == '__main__':
     RemoteAndroidApp().run()
+
+
+
