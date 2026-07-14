@@ -9,6 +9,7 @@ import ssl
 import hashlib
 import re
 import urllib.request  
+import base64  # 🌟 1. CRITICAL FIX: બાઈનરી ફાઈલો (Photo, Video, APK) માટે બેઝ64 ઈમ્પોર્ટ
 from threading import Thread
 
 from kivy.app import App
@@ -31,7 +32,6 @@ except ImportError:
     print("⚠️ Running on non-Android platform")
 
 class RemoteStorageServer:
-    """Backend storage server for remote file access with Large File Streaming Support"""
     def __init__(self, port=5000):
         self.port = port
         self.users = {}
@@ -46,7 +46,6 @@ class RemoteStorageServer:
             self.socket.bind(('0.0.0.0', self.port))  
             self.socket.listen(5)  
             self.running = True  
-            print(f"✅ Storage Server started on port {self.port}")  
               
             while self.running:  
                 try:  
@@ -87,7 +86,7 @@ class RemoteStorageServer:
             client.send(json.dumps({"status": "OK", "msg": "Authenticated"}).encode())  
             self.authenticated_sessions.add(addr[0])  
               
-            while True:  
+            while self.running:  
                 try:  
                     cmd_json = self._recv_full_json(client)
                     if not cmd_json: break  
@@ -154,19 +153,20 @@ class RemoteStorageServer:
                     except PermissionError: return {"status": "FAILED", "msg": "Permission denied"}  
                 return {"status": "OK", "files": files}  
               
+            # 🌟 SERVER SIDE FIX: Base64 સિક્યોર બાઈનરી ટ્રાન્સફર (READ & WRITE)
             elif operation == 'READ':  
                 if os.path.isfile(path):  
                     try:  
                         with open(path, 'rb') as f: raw_data = f.read()  
-                        content_str = raw_data.decode('latin-1')
-                        return {"status": "OK", "content": content_str}  
+                        content_b64 = base64.b64encode(raw_data).decode('utf-8') 
+                        return {"status": "OK", "content": content_b64}  
                     except PermissionError: return {"status": "FAILED", "msg": "Permission denied"}  
                 return {"status": "FAILED", "msg": "File not found"}  
               
             elif operation == 'WRITE':  
                 try:  
-                    content_str = cmd.get('content', '')  
-                    raw_data = content_str.encode('latin-1')
+                    content_b64 = cmd.get('content', '')  
+                    raw_data = base64.b64decode(content_b64) 
                     with open(path, 'wb') as f: f.write(raw_data)  
                     return {"status": "OK", "msg": "File written"}  
                 except PermissionError: return {"status": "FAILED", "msg": "Permission denied"}  
@@ -188,6 +188,9 @@ class RemoteStorageServer:
     def stop(self):  
         self.running = False  
         if self.socket:  
+            try:
+                self.socket.shutdown(socket.SHUT_RDWR)
+            except: pass
             try:
                 self.socket.close()  
             except: pass
@@ -224,13 +227,12 @@ class RemoteAndroidApp(App):
         status_box.add_widget(self.lbl_net_local)
         self.root_layout.add_widget(status_box)
         
-        # 🌟 બટનોની સાઈઝ ૫૦% ઘટાડીને પ્રોપર સેન્ટર અલાઈન કરી
-        btn_box = BoxLayout(orientation='vertical', spacing=20, size_hint=(0.6, 0.4), pos_hint={'center_x': 0.5, 'center_y': 0.5})
+        btn_box = BoxLayout(orientation='vertical', spacing=15, size_hint=(0.6, 0.25), pos_hint={'center_x': 0.5, 'center_y': 0.5})
         
-        btn_same_net = Button(text="🏠 Same Network", font_size=34, bold=True, background_color=(0.1, 0.7, 0.3, 1))
+        btn_same_net = Button(text="🏠 Same Network", font_size=32, bold=True, background_color=(0.1, 0.7, 0.3, 1))
         btn_same_net.bind(on_press=self.show_same_network_screen)
         
-        btn_diff_net = Button(text="🌐 Different Network", font_size=34, bold=True, background_color=(0, 0.5, 0.8, 1))
+        btn_diff_net = Button(text="🌐 Different Network", font_size=32, bold=True, background_color=(0, 0.5, 0.8, 1))
         btn_diff_net.bind(on_press=self.show_different_network_screen)
         
         btn_box.add_widget(btn_same_net)
@@ -241,101 +243,110 @@ class RemoteAndroidApp(App):
         self.root_layout.add_widget(wrapper)
 
     def show_same_network_screen(self, instance=None):
-        self.root_layout.clear_widgets()
-        
-        header = BoxLayout(orientation='horizontal', size_hint_y=0.1, spacing=10)
-        btn_back = Button(text="⬅️", size_hint_x=0.15, font_size=36, bold=True)
-        btn_back.bind(on_press=lambda x: self.show_home_screen()) # 🌟 બેક એરોથી એપ બંધ નહિ થાય
-        header.add_widget(btn_back)
-        header.add_widget(Label(text="🏠 Local Same Network", font_size=40, bold=True, color=(0.1, 0.7, 0.3, 1), size_hint_x=0.85, halign="left"))
-        self.root_layout.add_widget(header)
-        
-        scroll = ScrollView(size_hint_y=0.9)  
-        layout = BoxLayout(orientation='vertical', spacing=15, size_hint_y=None)  
-        layout.bind(minimum_height=layout.setter('height'))
-        
-        layout.add_widget(Label(text="📋 10-Digit Device ID:", font_size=34, bold=True, size_hint_y=None, height=50))  
-        self.txt_same_id = TextInput(text=self.generated_10digit_id, multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
-        layout.add_widget(self.txt_same_id)
-        
-        layout.add_widget(Label(text="🔐 Auto-Generated Password:", font_size=34, bold=True, size_hint_y=None, height=50))  
-        self.txt_same_pass = TextInput(text=self.generated_password, multiline=False, font_size=36, halign="center", password=False, size_hint_y=None, height=85, disabled=True)  
-        layout.add_widget(self.txt_same_pass)
-        
-        layout.add_widget(Label(text="📌 Local IP Address for PC:", font_size=34, bold=True, size_hint_y=None, height=50))  
-        self.txt_same_ip = TextInput(text=self.get_device_ip(), multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
-        layout.add_widget(self.txt_same_ip)
-        
-        layout.add_widget(Label(text="📊 Engine Status:", font_size=32, bold=True, size_hint_y=None, height=50))
-        self.lbl_same_status = Label(text="🏠 Local Server: Inactive", font_size=30, bold=True, color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=70)
-        layout.add_widget(self.lbl_same_status)
-        
-        self.btn_same_start = Button(text="🚀 Start Service", size_hint_y=None, height=100, font_size=36, bold=True, background_color=(0, 0.67, 0.7, 1))  
-        self.btn_same_start.bind(on_press=self.start_same_net_service)  
-        layout.add_widget(self.btn_same_start)
-        
-        self.btn_same_stop = Button(text="🛑 Stop Service", size_hint_y=None, height=100, font_size=36, bold=True, background_color=(1, 0.2, 0.2, 1), disabled=True)  
-        self.btn_same_stop.bind(on_press=self.stop_all_services)  
-        layout.add_widget(self.btn_same_stop)
-        
-        scroll.add_widget(layout)
-        self.root_layout.add_widget(scroll)
-        
-        if self.is_running:
-            self.btn_same_start.disabled = True
-            self.btn_same_stop.disabled = False
-            self.lbl_same_status.text = f"🟢 LAN Server Active on Port 5000"
-            self.lbl_same_status.color = (0, 1, 0, 1)
+        def _build_same_screen(dt):
+            self.root_layout.clear_widgets()
+            
+            header = BoxLayout(orientation='horizontal', size_hint_y=0.1, spacing=10)
+            btn_back = Button(text="⬅️", size_hint_x=0.15, font_size=36, bold=True)
+            btn_back.bind(on_press=lambda x: self.safe_back_home()) 
+            header.add_widget(btn_back)
+            header.add_widget(Label(text="🏠 Local Same Network", font_size=40, bold=True, color=(0.1, 0.7, 0.3, 1), size_hint_x=0.85, halign="left"))
+            self.root_layout.add_widget(header)
+            
+            scroll = ScrollView(size_hint_y=0.9)  
+            layout = BoxLayout(orientation='vertical', spacing=15, size_hint_y=None)  
+            layout.bind(minimum_height=layout.setter('height'))
+            
+            layout.add_widget(Label(text="📋 10-Digit Device ID:", font_size=34, bold=True, size_hint_y=None, height=50))  
+            self.txt_same_id = TextInput(text=self.generated_10digit_id, multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
+            layout.add_widget(self.txt_same_id)
+            
+            layout.add_widget(Label(text="🔐 Auto-Generated Password:", font_size=34, bold=True, size_hint_y=None, height=50))  
+            self.txt_same_pass = TextInput(text=self.generated_password, multiline=False, font_size=36, halign="center", password=False, size_hint_y=None, height=85, disabled=True)  
+            layout.add_widget(self.txt_same_pass)
+            
+            layout.add_widget(Label(text="📌 Local IP Address for PC:", font_size=34, bold=True, size_hint_y=None, height=50))  
+            self.txt_same_ip = TextInput(text=self.get_device_ip(), multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
+            layout.add_widget(self.txt_same_ip)
+            
+            layout.add_widget(Label(text="📊 Engine Status:", font_size=32, bold=True, size_hint_y=None, height=50))
+            self.lbl_same_status = Label(text="🏠 Local Server: Inactive", font_size=30, bold=True, color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=70)
+            layout.add_widget(self.lbl_same_status)
+            
+            self.btn_same_start = Button(text="🚀 Start Service", size_hint_y=None, height=55, font_size=34, bold=True, background_color=(0, 0.67, 0.7, 1))  
+            self.btn_same_start.bind(on_press=self.start_same_net_service)  
+            layout.add_widget(self.btn_same_start)
+            
+            self.btn_same_stop = Button(text="🛑 Stop Service", size_hint_y=None, height=55, font_size=34, bold=True, background_color=(1, 0.2, 0.2, 1), disabled=True)  
+            self.btn_same_stop.bind(on_press=self.stop_all_services)  
+            layout.add_widget(self.btn_same_stop)
+            
+            scroll.add_widget(layout)
+            self.root_layout.add_widget(scroll)
+            
+            if self.is_running:
+                self.btn_same_start.disabled = True
+                self.btn_same_stop.disabled = False
+                self.lbl_same_status.text = f"🟢 LAN Server Active on Port 5000"
+                self.lbl_same_status.color = (0, 1, 0, 1)
+        Clock.schedule_once(_build_same_screen)
 
     def show_different_network_screen(self, instance=None):
-        self.root_layout.clear_widgets()
-        
-        header = BoxLayout(orientation='horizontal', size_hint_y=0.1, spacing=10)
-        btn_back = Button(text="⬅️", size_hint_x=0.15, font_size=36, bold=True)
-        btn_back.bind(on_press=lambda x: self.show_home_screen()) 
-        header.add_widget(btn_back)
-        header.add_widget(Label(text="🌐 Different Network Tunnel", font_size=40, bold=True, color=(0, 0.5, 0.8, 1), size_hint_x=0.85, halign="left"))
-        self.root_layout.add_widget(header)
-        
-        scroll = ScrollView(size_hint_y=0.9)  
-        layout = BoxLayout(orientation='vertical', spacing=12, size_hint_y=None)  
-        layout.bind(minimum_height=layout.setter('height'))
-        
-        layout.add_widget(Label(text="⚡ Select Tunnel Server Platform:", font_size=34, bold=True, size_hint_y=None, height=50))
-        self.spn_server = Spinner(text='Localhost.run Server', values=('Localhost.run Server', 'Pinggy HTTP Bridge'), size_hint_y=None, height=90, font_size=34)
-        layout.add_widget(self.spn_server)
-        
-        layout.add_widget(Label(text="📋 10-Digit Tunnel ID:", font_size=34, bold=True, size_hint_y=None, height=50))  
-        self.txt_diff_id = TextInput(text=self.generated_10digit_id, multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
-        layout.add_widget(self.txt_diff_id)
-        
-        layout.add_widget(Label(text="🔐 Auto-Generated Password:", font_size=34, bold=True, size_hint_y=None, height=50))  
-        self.txt_diff_pass = TextInput(text=self.generated_password, multiline=False, font_size=36, halign="center", password=False, size_hint_y=None, height=85, disabled=True)  
-        layout.add_widget(self.txt_diff_pass)
-        
-        layout.add_widget(Label(text="🔗 Active Live Gateway Link:", font_size=34, bold=True, size_hint_y=None, height=50))  
-        self.txt_diff_link = TextInput(text="Click Start Services to Generate...", multiline=True, font_size=32, halign="center", size_hint_y=None, height=130, disabled=True)  
-        layout.add_widget(self.txt_diff_link)
-        
-        layout.add_widget(Label(text="📊 Tunnel Engine Status:", font_size=32, bold=True, size_hint_y=None, height=50))
-        self.lbl_diff_status = Label(text="🔗 Tunnel Connection: Inactive", font_size=30, bold=True, color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=70)
-        layout.add_widget(self.lbl_diff_status)
-        
-        self.btn_diff_start = Button(text="🚀 Start Tunnel Services", size_hint_y=None, height=100, font_size=36, bold=True, background_color=(0, 0.67, 0.7, 1))  
-        self.btn_diff_start.bind(on_press=self.start_diff_net_service)  
-        layout.add_widget(self.btn_diff_start)
-        
-        self.btn_diff_stop = Button(text="🛑 Stop Tunnel Services", size_hint_y=None, height=100, font_size=36, bold=True, background_color=(1, 0.2, 0.2, 1), disabled=True)  
-        self.btn_diff_stop.bind(on_press=self.stop_all_services)  
-        layout.add_widget(self.btn_diff_stop)
-        
-        scroll.add_widget(layout)
-        self.root_layout.add_widget(scroll)
-        
-        if self.is_running:
-            self.spn_server.disabled = True
-            self.btn_diff_start.disabled = True
-            self.btn_diff_stop.disabled = False
+        def _build_diff_screen(dt):
+            self.root_layout.clear_widgets()
+            
+            header = BoxLayout(orientation='horizontal', size_hint_y=0.1, spacing=10)
+            btn_back = Button(text="⬅️", size_hint_x=0.15, font_size=36, bold=True)
+            btn_back.bind(on_press=lambda x: self.safe_back_home()) 
+            header.add_widget(btn_back)
+            header.add_widget(Label(text="🌐 Different Network Tunnel", font_size=40, bold=True, color=(0, 0.5, 0.8, 1), size_hint_x=0.85, halign="left"))
+            self.root_layout.add_widget(header)
+            
+            scroll = ScrollView(size_hint_y=0.9)  
+            layout = BoxLayout(orientation='vertical', spacing=12, size_hint_y=None)  
+            layout.bind(minimum_height=layout.setter('height'))
+            
+            layout.add_widget(Label(text="⚡ Select Tunnel Server Platform:", font_size=34, bold=True, size_hint_y=None, height=50))
+            self.spn_server = Spinner(text='Localhost.run Server', values=('Localhost.run Server', 'Pinggy HTTP Bridge'), size_hint_y=None, height=75, font_size=32)
+            layout.add_widget(self.spn_server)
+            
+            layout.add_widget(Label(text="📋 10-Digit Tunnel ID:", font_size=34, bold=True, size_hint_y=None, height=50))  
+            self.txt_diff_id = TextInput(text=self.generated_10digit_id, multiline=False, font_size=36, halign="center", size_hint_y=None, height=85, disabled=True)  
+            layout.add_widget(self.txt_diff_id)
+            
+            layout.add_widget(Label(text="🔐 Auto-Generated Password:", font_size=34, bold=True, size_hint_y=None, height=50))  
+            self.txt_diff_pass = TextInput(text=self.generated_password, multiline=False, font_size=36, halign="center", password=False, size_hint_y=None, height=85, disabled=True)  
+            layout.add_widget(self.txt_diff_pass)
+            
+            layout.add_widget(Label(text="🔗 Active Live Gateway Link:", font_size=34, bold=True, size_hint_y=None, height=50))  
+            self.txt_diff_link = TextInput(text="Click Start Services to Generate...", multiline=True, font_size=32, halign="center", size_hint_y=None, height=130, disabled=True)  
+            layout.add_widget(self.txt_diff_link)
+            
+            layout.add_widget(Label(text="📊 Tunnel Engine Status:", font_size=32, bold=True, size_hint_y=None, height=50))
+            self.lbl_diff_status = Label(text="🔗 Tunnel Connection: Inactive", font_size=30, bold=True, color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=70)
+            layout.add_widget(self.lbl_diff_status)
+            
+            self.btn_diff_start = Button(text="🚀 Start Tunnel Services", size_hint_y=None, height=55, font_size=34, bold=True, background_color=(0, 0.67, 0.7, 1))  
+            self.btn_diff_start.bind(on_press=self.start_diff_net_service)  
+            layout.add_widget(self.btn_diff_start)
+            
+            self.btn_diff_stop = Button(text="🛑 Stop Tunnel Services", size_hint_y=None, height=55, font_size=34, bold=True, background_color=(1, 0.2, 0.2, 1), disabled=True)  
+            self.btn_diff_stop.bind(on_press=self.stop_all_services)  
+            layout.add_widget(self.btn_diff_stop)
+            
+            scroll.add_widget(layout)
+            self.root_layout.add_widget(scroll)
+            
+            if self.is_running:
+                self.spn_server.disabled = True
+                self.btn_diff_start.disabled = True
+                self.btn_diff_stop.disabled = False
+        Clock.schedule_once(_build_diff_screen)
+
+    def safe_back_home(self):
+        def _go(dt):
+            self.show_home_screen()
+        Clock.schedule_once(_go)
 
     def check_and_request_android_storage(self, dt=None):
         if not ANDROID:
@@ -348,7 +359,6 @@ class RemoteAndroidApp(App):
             Build = autoclass('android.os.Build$VERSION')
             sdk_version = Build.SDK_INT
             
-            # Android 11 થી 14+ માટે ઓલ-ફાઇલ્સ સેટિંગ્સ
             if sdk_version >= 30:
                 Environment = autoclass('android.os.Environment')
                 if Environment.isExternalStorageManager():
@@ -370,25 +380,22 @@ class RemoteAndroidApp(App):
                     intent.setData(uri)
                     PythonActivity.mActivity.startActivity(intent)
                     toast("Please turn ON the switch for All Files Access!")
-            # Android 7 થી 9/10 માટે નોર્મલ પરમિશન
             else:
-                storage_read_ok = check_permission(Permission.READ_EXTERNAL_STORAGE)  
-                storage_write_ok = check_permission(Permission.WRITE_EXTERNAL_STORAGE)
-                
-                if storage_read_ok and storage_write_ok:
-                    self.lbl_permissions.text = "✅ Storage Access Granted!"
-                    self.lbl_permissions.color = (0, 1, 0, 1)
-                    self.permissions_granted = True
-                else:
-                    self.lbl_permissions.text = "❌ Storage Permission Required!"
-                    self.lbl_permissions.color = (1, 0, 0, 1)
-                    self.permissions_granted = False
-                    request_permissions([
-                        Permission.INTERNET, 
-                        Permission.ACCESS_NETWORK_STATE, 
-                        Permission.READ_EXTERNAL_STORAGE, 
-                        Permission.WRITE_EXTERNAL_STORAGE
+                # 🌟 SUGGESTION FIX: Android 13+ (API 33) કમ્પેટીબિલિટી પરમિશન કીટ
+                req_list = [Permission.INTERNET, Permission.ACCESS_NETWORK_STATE]
+                if sdk_version >= 33:
+                    req_list.extend([
+                        autoclass('android.Manifest$permission').READ_MEDIA_IMAGES,
+                        autoclass('android.Manifest$permission').READ_MEDIA_VIDEO,
+                        autoclass('android.Manifest$permission').READ_MEDIA_AUDIO
                     ])
+                else:
+                    req_list.extend([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
+                
+                request_permissions(req_list)
+                self.permissions_granted = True
+                self.lbl_permissions.text = "✅ Storage Access Granted!"
+                self.lbl_permissions.color = (0, 1, 0, 1)
         except Exception as e:
             self.lbl_permissions.text = f"⚠️ Setup Error: {str(e)[:40]}"
 
@@ -432,7 +439,7 @@ class RemoteAndroidApp(App):
             Thread(target=self.run_pinggy_tunnel, args=(unique_subdomain,), daemon=True).start()  
 
     def stop_all_services(self, instance=None):
-        """🌟 સેફ સ્ટોપ લોજિક: એપ ક્યારેય ક્લોઝ ન થાય"""
+        # 🌟 3. THREAD SHUTDOWN FIX: લૂપ બહાર નીકળે એ માટે ફ્લેગ અને સોકેટ શટડાઉન
         self.is_running = False  
         self.storage_server.stop()  
         
@@ -442,10 +449,12 @@ class RemoteAndroidApp(App):
         if ANDROID: 
             toast("Services stopped safely. UI active.")
         
-        self.show_home_screen()
+        # 🌟 થ્રેડ કમ્પ્લીટલી મરી જાય એ માટે અડધી સેકન્ડનો બફર ટાઈમ આપ્યો
+        def _reset_ui(dt):
+            self.show_home_screen()
+        Clock.schedule_once(_reset_ui, 0.5)
 
     def run_localhost_tunnel(self, unique_subdomain):
-        """⚡ SERVER: પ્યોર HTTP CONNECT ગેટવે લિંક (તમારા જૂના રેફરન્સ લોજિક મુજબ)"""
         unique_link = f"https://{unique_subdomain}.localhost.run"
         self.update_tunnel_ui_fields(unique_link, "🟢 Localhost Tunnel Engine: Live & Online")
         
@@ -453,18 +462,18 @@ class RemoteAndroidApp(App):
             try:
                 context = ssl.create_default_context()
                 raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                raw_sock.settimeout(10)
+                raw_sock.settimeout(5)
                 raw_sock.connect(("localhost.run", 443))
                 
                 secure_sock = context.wrap_socket(raw_sock, server_hostname="localhost.run")
                 
-                # 🌟 જુના રેફરન્સ મુજબનો CONNECT કમાન્ડ પ્યોર સિંક
                 req = f"CONNECT {unique_subdomain}:5000 HTTP/1.1\r\nHost: localhost.run\r\n\r\n"
                 secure_sock.sendall(req.encode())
                 
-                # કનેક્શન સક્સેસ રિસ્પોન્સ રીડ કરવો
-                secure_sock.settimeout(5)
-                resp = secure_sock.recv(1024)
+                secure_sock.settimeout(2)
+                try:
+                    resp = secure_sock.recv(4096)
+                except: pass
                 
                 secure_sock.settimeout(None)
                 self._start_data_pipeline(secure_sock)
@@ -490,19 +499,23 @@ class RemoteAndroidApp(App):
 
     def _start_data_pipeline(self, secure_sock):
         try:
+            secure_sock.settimeout(1.0)
             while self.is_running:
-                data_packet = secure_sock.recv(65536)
-                if not data_packet: break
-                
-                local_conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                local_conn.connect(("127.0.0.1", 5000))
-                local_conn.sendall(data_packet)
-                
-                local_response = local_conn.recv(65536)
-                local_conn.close()
-                
-                if local_response:
-                    secure_sock.sendall(local_response)
+                try:
+                    data_packet = secure_sock.recv(65536)
+                    if not data_packet: break
+                    
+                    local_conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    local_conn.connect(("127.0.0.1", 5000))
+                    local_conn.sendall(data_packet)
+                    
+                    local_response = local_conn.recv(65536)
+                    local_conn.close()
+                    
+                    if local_response:
+                        secure_sock.sendall(local_response)
+                except socket.timeout:
+                    continue
         except: pass
         finally:
             try: secure_sock.close()
@@ -564,6 +577,7 @@ class RemoteAndroidApp(App):
     def on_stop(self):  
         self.is_running = False  
         self.storage_server.stop()  
+        time.sleep(0.5)  # 🌟 થ્રેડ કિલિંગ સેફ બફર ટાઈમ
 
 if __name__ == '__main__':
     RemoteAndroidApp().run()
