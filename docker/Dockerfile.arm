@@ -1,41 +1,52 @@
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+# 1. System deps
 RUN apt-get update && apt-get install -y \
-    gcc-arm-linux-gnueabi \
-    g++-arm-linux-gnueabi \
-    git autoconf automake make wget pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+    git wget unzip curl build-essential autoconf automake libtool \
+    zlib1g-dev libssl-dev pkg-config cmake
+
+# 2. Android NDK 25.2 install
+RUN mkdir -p /opt && cd /opt && \
+    wget -q https://dl.google.com/android/repository/android-ndk-r25b-linux.zip && \
+    unzip -q android-ndk-r25b-linux.zip && \
+    mv android-ndk-r25b android-ndk
+
+ENV ANDROID_NDK=/opt/android-ndk
+ENV PATH=$PATH:/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin
+ENV CC=armv7a-linux-androideabi21-clang
+ENV CXX=armv7a-linux-androideabi21-clang++
+ENV AR=llvm-ar
+ENV RANLIB=llvm-ranlib
+
+# 3. ZLIB 1.3 compile static - NDK clang sathe
+WORKDIR /root
+RUN wget -t 3 --retry-connrefused https://github.com/madler/zlib/releases/download/v1.3/zlib-1.3.tar.gz && \
+    tar -xf zlib-1.3.tar.gz && \
+    cd zlib-1.3 && \
+    CC=$CC CFLAGS="--target=armv7a-linux-androideabi21" ./configure --prefix=/root/target --static && \
+    make -j$(nproc) && make install
+
+# 4. OpenSSL 3.1.4 compile static
+RUN wget -q https://github.com/openssl/releases/download/openssl-3.1.4/openssl-3.1.4.tar.gz && \
+    tar -xf openssl-3.1.4.tar.gz && \
+    cd openssl-3.1.4 && \
+    ./Configure android-arm no-shared --prefix=/root/target --openssldir=/root/target/ssl && \
+    make -j$(nproc) && make install_sw
+
+# 5. OpenSSH compile
+RUN git clone https://github.com/openssh/openssh-portable.git /root/openssh
+WORKDIR /root/openssh
+RUN autoreconf && \
+    ./configure --host=arm-linux-androideabi \
+    --with-ssl-dir=/root/target \
+    --with-zlib=/root/target \
+    --disable-etc-default-login \
+    --disable-strip \
+    LDFLAGS="-static" && \
+    make -j$(nproc)
 
 WORKDIR /root
-
-# 1. zlib ક્રોસ-કમ્પાઈલ કરો
-RUN wget https://zlib.net/zlib-1.3.1.tar.gz && \
-    tar -xf zlib-1.3.1.tar.gz && \
-    cd zlib-1.3.1 && \
-    CC=arm-linux-gnueabi-gcc ./configure --prefix=/root/target --static && \
-    make -j12 && make install
-
-# 2. OpenSSL ક્રોસ-કમ્પાઈલ કરો
-RUN wget https://github.com/openssl/openssl/releases/download/openssl-3.0.13/openssl-3.0.13.tar.gz && \
-    tar -xf openssl-3.0.13.tar.gz && \
-    cd openssl-3.0.13 && \
-    ./Configure linux-generic32 --cross-compile-prefix=arm-linux-gnueabi- prefix=/root/target no-shared no-dso && \
-    make -j12 && make install_sw
-
-# 3. OpenSSH ક્રોસ-કમ્પાઈલ કરો
-RUN wget https://github.com/openssh/openssh-portable/archive/refs/tags/V_9_4_P1.tar.gz && \
-    tar -xf V_9_4_P1.tar.gz && \
-    cd openssh-portable-V_9_4_P1 && \
-    autoreconf && \
-    ./configure --host=arm-linux-gnueabi \
-                --with-ssl-dir=/root/target \
-                --with-zlib=/root/target \
-                --without-stackprotect \
-                LDFLAGS="-static -L/root/target/lib" \
-                CFLAGS="-I/root/target/include" && \
-    mkdir build && \
-    make -j12 sshd && \
-    cp sshd build/sshd
-
-CMD ["cp", "openssh-portable-V_9_4_P1/build/sshd", "/output/sshd_32"]
+RUN mkdir -p /output
+CMD ["cp", "/root/openssh/sshd", "/output/sshd"]
