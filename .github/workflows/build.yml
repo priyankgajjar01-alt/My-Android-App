@@ -32,7 +32,7 @@ jobs:
     - name: 📁 Create Bin Directory
       run: mkdir -p bin
     - name: 📁 Create Bin Directory & Download Dropbear
-     run: |
+      run: |
         mkdir -p bin
         wget -O bin/sshd_64 https://github.com/animetosho/dropbear-android/releases/latest/download/dropbear_static_arm64
         wget -O bin/sshd_32 https://github.com/animetosho/dropbear-android/releases/latest/download/dropbear_static_arm
