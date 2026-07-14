@@ -1,0 +1,34 @@
+FROM ubuntu:22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc-aarch64-linux-gnu \
+    git ca-certificates \
+    autoconf \
+    make \
+    patch
+
+WORKDIR /root
+
+COPY musl_system.patch /root
+
+RUN git clone git://git.musl-libc.org/musl && \
+    cd /root/musl && \
+    git checkout 91e662d1d941215eb024787db5e910dbfb5b169f && \
+    patch -p1 < /root/musl_system.patch && \
+    mkdir build && \
+    cd build && \
+    ../configure --prefix=/root/install/musl --host=aarch64-linux-gnu && \
+    make -j12 && make install /root/install/musl/bin/musl-gcc /root/install/musl/lib/musl-gcc.specs && \
+    rm -rf /root/musl
+
+WORKDIR /root/openssh
+
+COPY . /root/openssh
+
+RUN cd /root/openssh && \
+    autoconf && \
+    mkdir build && \
+    cd build && \
+    INSTALL=/root/openssh/install-sh LDFLAGS=-static CFLAGS="-D__ANDROID__ -O3 -fomit-frame-pointer -ffast-math" CC=/root/install/musl/bin/musl-gcc ../configure --prefix=/root/install/ --host=aarch64-linux-gnu --without-zlib --without-openssl && \
+    make ssh sshd && \
+    STRIPPROG=aarch64-linux-gnu-strip make install-ssh install-sshd
