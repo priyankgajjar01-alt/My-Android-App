@@ -218,11 +218,11 @@ class RemoteAndroidApp(App):
         scroll_layout.add_widget(self.lbl_permissions)  
           
         scroll_layout.add_widget(Label(text="📊 Real-time Network Status:", font_size=32, bold=True, size_hint_y=None, height=50))
+        # 🌟 UI અપડેટ: બંને સર્વર દેખાય એ માટે હાઈટ 440 કરી અને બે લેબલ સેટ કર્યા
         status_grid = BoxLayout(orientation='vertical', size_hint_y=None, height=440, spacing=15)
         self.lbl_net_internet = Label(text="🌐 Internet Connection: Checking...", font_size=32, halign="left", size_hint_y=None, height=60)
         self.lbl_net_local = Label(text="🏠 Local Network: Checking...", font_size=32, halign="left", size_hint_y=None, height=60)
         
-        # 🌟 UI અપડેટ: બંને સર્વર માટે અલગ-અલગ લેબલ સેટ કર્યા
         self.lbl_net_server1 = Label(text="🔗 Server 1 (Pinggy): Inactive", font_size=28, bold=True, halign="center", color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=120)
         self.lbl_net_server2 = Label(text="🔗 Server 2 (Localhost): Inactive", font_size=28, bold=True, halign="center", color=(0.7, 0.7, 0.7, 1), size_hint_y=None, height=120)
         
@@ -337,13 +337,13 @@ class RemoteAndroidApp(App):
         self.lbl_net_server2.text = "🔄 Starting Localhost..."
         self.lbl_net_server2.color = (1, 0.6, 0, 1)
         
-        # 🌟 બંને સર્વર અલગ થ્રેડમાં એકસાથે ચાલુ થશે
+        # 🌟 બંને સર્વર માટે એક જ કમન યુનિક આઈડી જનરેટ કરીને થ્રેડ્સ સ્ટાર્ટ કરીએ
         unique_subdomain = "ats" + "".join(random.choices(string.digits, k=4))
         Thread(target=self.run_pinggy_tunnel, args=(unique_subdomain,), daemon=True).start()  
         Thread(target=self.run_localhost_tunnel, args=(unique_subdomain,), daemon=True).start()  
 
     def run_pinggy_tunnel(self, unique_subdomain):  
-        """⚡ Server 1: Pinggy Tunnel Worker Thread"""
+        """⚡ SERVER 1: Pinggy Pure HTTP Web Bridge (Simultaneous Mode)"""
         import ssl
         tunnel_host = f"{unique_subdomain}.pinggy.link"
         self.update_label_ui(self.lbl_net_server1, f"🚀 Pinggy Link:\nhttps://{tunnel_host}", success=True)
@@ -362,7 +362,7 @@ class RemoteAndroidApp(App):
                 if not self.is_running: break
 
     def run_localhost_tunnel(self, unique_subdomain):
-        """⚡ Server 2: Localhost.run Tunnel Worker Thread"""
+        """⚡ SERVER 2: Guaranteed Unique Backup Server (Localhost Classic Setup)"""
         import ssl
         unique_fallback_link = f"https://{unique_subdomain}.localhost.run"
         
@@ -377,12 +377,12 @@ class RemoteAndroidApp(App):
                         self.update_label_ui(self.lbl_net_server2, f"🚀 Localhost Link:\n{unique_fallback_link}", success=True)
                         self._start_data_pipeline(secure_sock)
             except:
-                self.update_label_ui(self.lbl_net_server2, "❌ Localhost Down (Retrying)", success=False)
-                time.sleep(2)
+                self.update_label_ui(self.lbl_net_server2, "🔄 Localhost: Retrying...", success=False)
+                time.sleep(3)
                 if not self.is_running: break
 
     def _start_data_pipeline(self, secure_sock):
-        """🌟 ડેટા ફોરવર્ડિંગ બ્રિજ"""
+        """🌟 ડેટા ફોરવર્ડિંગ બ્રિજ જે બહારના નેટવર્ક ટ્રાફિકને કસ્ટમ પોર્ટ 5000 સાથે જોડે છે"""
         try:
             while self.is_running:
                 data_packet = secure_sock.recv(65536)
@@ -399,6 +399,9 @@ class RemoteAndroidApp(App):
                     secure_sock.sendall(local_response)
         except:
             pass
+        finally:
+            try: secure_sock.close()
+            except: pass
 
     def update_label_ui(self, label_obj, text_val, success=True):
         def set_text(dt):
@@ -412,4 +415,4 @@ class RemoteAndroidApp(App):
 
 if __name__ == '__main__':
     RemoteAndroidApp().run()
-        
+                                    
