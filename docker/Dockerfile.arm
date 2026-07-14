@@ -1,17 +1,21 @@
+
 FROM ubuntu:22.04
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y \
     gcc-arm-linux-gnueabi \
-    git ca-certificates \
+    git \
     autoconf \
     make \
-    patch
+    patch \
+    wget \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root
 
 COPY docker/musl_system.patch /root
 
-RUN wget https://git.musl-libc.org/cgit/musl/snapshot/musl-91e662d1d941215eb024787db5e910dbfb5b169f.tar.gz && \
+RUN wget --no-check-certificate https://git.musl-libc.org/cgit/musl/snapshot/musl-91e662d1d941215eb024787db5e910dbfb5b169f.tar.gz && \
     tar -xf musl-91e662d1d941215eb024787db5e910dbfb5b169f.tar.gz && \
     mv musl-91e662d1d941215eb024787db5e910dbfb5b169f /root/musl && \
     cd /root/musl && \
@@ -21,7 +25,6 @@ RUN wget https://git.musl-libc.org/cgit/musl/snapshot/musl-91e662d1d941215eb0247
     ../configure --prefix=/root/install/musl --host=arm-linux-gnueabi && \
     make -j12 && make install && \
     rm -rf /root/musl /root/musl-*.tar.gz
-
 
 WORKDIR /root/openssh
 
