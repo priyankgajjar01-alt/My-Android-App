@@ -101,10 +101,18 @@ jobs:
           exit 1
         fi
 
+    # 🚀 છેલ્લું સ્ટેપ: જે રિજેક્ટેડ પુશ વાળી સમસ્યાને ફોર્સ લગાવીને સોલ્વ કરશે
     - name: Push to Repo
       run: |
         git config user.name "github-actions"
         git config user.email "actions@github.com"
+        
+        # ગિટ સિંક કરવા માટે પહેલા લેટેસ્ટ ફેચ કરીએ
+        git fetch origin main
+        
         git add APK/
         git commit -m "Add Photon Clint APK (64-bit API 34 Build)" || true
-        git push
+        
+        # 🎯 ફોર્સ પુશ જેથી ઓવરરાઈટ કન્ફ્લિક્ટ વગર પુશ થઈ જાય
+        git push origin main --force
+        
