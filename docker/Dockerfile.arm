@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /root
 
-COPY musl_system.patch /root
+COPY docker/musl_system.patch /root
 
 RUN git clone git://git.musl-libc.org/musl && \
     cd /root/musl && \
