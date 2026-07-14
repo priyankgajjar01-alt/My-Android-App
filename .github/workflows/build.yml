@@ -1,4 +1,3 @@
-
 name: Build Universal Android SSH Gateway
 on:
   workflow_dispatch:
@@ -35,13 +34,13 @@ jobs:
     # 🛠️ 1. 64-bit (ARM64) બાઈનરી Docker દ્વારા કમ્પાઈલ કરો
     - name: 🛠️ Build Android ARM64 SSH Binary
       run: |
-        docker build -t android-ssh-64 -f docker/Dockerfile.aarch64 .
+        docker build -t android-ssh-64 -f docker/Dockerfile.aarch64.
         docker run --rm -v ${{ github.workspace }}/bin:/output android-ssh-64 cp /root/openssh/build/sshd /output/sshd_64
 
     # 🛠️ 2. 32-bit (ARMv7) બાઈનરી Docker દ્વારા કમ્પાઈલ કરો
     - name: 🛠️ Build Android ARM32 SSH Binary
       run: |
-        docker build -t android-ssh-32 -f docker/Dockerfile.arm .
+        docker build -t android-ssh-32 -f docker/Dockerfile.arm.
         docker run --rm -v ${{ github.workspace }}/bin:/output android-ssh-32 cp /root/openssh/build/sshd /output/sshd_32
 
     - name: 🔥 Force Wipe Global New NDKs
@@ -67,28 +66,43 @@ jobs:
         python -m pip install --upgrade pip setuptools wheel
         python -m pip install --upgrade cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
+    # 🎯 FIX 1: p4a ne system zlib vaprva force karo
+    - name: 🛠️ Fix Zlib Compile Issue
+      run: |
+        export P4A_USE_SYSTEM_ZLIB=1
+        echo "P4A_USE_SYSTEM_ZLIB=1" >> $GITHUB_ENV
+
+    # 🎯 FIX 2: sshd binaries ne app ma include karva mate src folder banavo
+    - name: 📦 Prepare Source with Binaries
+      run: |
+        mkdir -p src
+        cp main.py src/
+        cp -r kv/ src/ 2>/dev/null || true
+        cp -r bin/ src/private/
+        echo "✅ Binaries moved to src/private/"
+
     - name: 🧹 Clean Previous Build Cache
       run: |
-        rm -rf .buildozer/
+        rm -rf.buildozer/
 
     # 🛠️ બિલ્ડ પ્રોસેસ: નવું નામ, નવી Requirements અને 32/64-bit બંને આર્કિટેક્ચર પેક કરો
     - name: Build APK
-      env: 
+      env:
         ANDROIDSDK: /home/runner/android/sdk
         ANDROIDNDK: /home/runner/android/sdk/ndk/25.2.9519653
         ANDROIDAPI: 34
+        P4A_USE_SYSTEM_ZLIB: 1
       run: |
         export PATH=$PATH:$ANDROIDSDK/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools
         export ANDROIDNDKTOOL=$ANDROIDNDK/toolchains/llvm/prebuilt/linux-x86_64/bin
 
-        # 🎯 REQUIREMENTS માં pyjnius અને android ઉમેર્યું, openssl ની જરૂર નથી
-        # 🎯 ARCH માં arm64-v8a અને armeabi-v7a બંને સેટ કર્યા
-        python3 -m pythonforandroid.toolchain apk --debug --private . \
-          --package=org.test.internetstorage \
-          --name="Internet Storage Access" \
+        # 🎯 FIX 3: --private src karo ane requirements ma openssl add karo
+        python3 -m pythonforandroid.toolchain apk --debug --private./src \
+          --package=org.test.sshgateway \
+          --name="SSH Gateway" \
           --version=1.0 \
           --bootstrap=sdl2 \
-          --requirements=hostpython3,python3,kivy,pyjnius,android \
+          --requirements=hostpython3,python3,kivy,pyjnius,android,openssl \
           --permission INTERNET \
           --permission ACCESS_NETWORK_STATE \
           --permission READ_EXTERNAL_STORAGE \
@@ -108,11 +122,11 @@ jobs:
       run: |
         rm -rf APK/*
         mkdir -p APK
-        APK_PATH=$(find . -type f -name "*.apk" 2>/dev/null | head -n 1)
+        APK_PATH=$(find. -type f -name "*.apk" 2>/dev/null | head -n 1)
 
-        if [ ! -z "$APK_PATH" ]; then
+        if [! -z "$APK_PATH" ]; then
           echo "🎯 APK મળી ગઈ અહીં: $APK_PATH"
-          cp "$APK_PATH" APK/Internet-Storage-Access-$(date +%Y%m%d-%H%M).apk
+          cp "$APK_PATH" APK/SSH-Gateway-$(date +%Y%m%d-%H%M).apk
           echo "✅ APK સફળતાપૂર્વક કોપી થઈ ગઈ છે!"
         else
           echo "❌ એપીકે બની નથી. લોગ્સ જુઓ:"
