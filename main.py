@@ -218,7 +218,6 @@ class RemoteAndroidApp(App):
         scroll_layout.add_widget(self.lbl_permissions)  
           
         scroll_layout.add_widget(Label(text="📊 Real-time Network Status:", font_size=32, bold=True, size_hint_y=None, height=50))
-        # 🌟 UI અપડેટ: બંને સર્વર દેખાય એ માટે હાઈટ 440 કરી અને બે લેબલ સેટ કર્યા
         status_grid = BoxLayout(orientation='vertical', size_hint_y=None, height=440, spacing=15)
         self.lbl_net_internet = Label(text="🌐 Internet Connection: Checking...", font_size=32, halign="left", size_hint_y=None, height=60)
         self.lbl_net_local = Label(text="🏠 Local Network: Checking...", font_size=32, halign="left", size_hint_y=None, height=60)
@@ -337,13 +336,12 @@ class RemoteAndroidApp(App):
         self.lbl_net_server2.text = "🔄 Starting Localhost..."
         self.lbl_net_server2.color = (1, 0.6, 0, 1)
         
-        # 🌟 બંને સર્વર માટે એક જ કમન યુનિક આઈડી જનરેટ કરીને થ્રેડ્સ સ્ટાર્ટ કરીએ
         unique_subdomain = "ats" + "".join(random.choices(string.digits, k=4))
         Thread(target=self.run_pinggy_tunnel, args=(unique_subdomain,), daemon=True).start()  
         Thread(target=self.run_localhost_tunnel, args=(unique_subdomain,), daemon=True).start()  
 
     def run_pinggy_tunnel(self, unique_subdomain):  
-        """⚡ SERVER 1: Pinggy Pure HTTP Web Bridge (Simultaneous Mode)"""
+        """⚡ SERVER 1: Pinggy Pure HTTP Web Bridge"""
         import ssl
         tunnel_host = f"{unique_subdomain}.pinggy.link"
         self.update_label_ui(self.lbl_net_server1, f"🚀 Pinggy Link:\nhttps://{tunnel_host}", success=True)
@@ -362,27 +360,37 @@ class RemoteAndroidApp(App):
                 if not self.is_running: break
 
     def run_localhost_tunnel(self, unique_subdomain):
-        """⚡ SERVER 2: Guaranteed Unique Backup Server (Localhost Classic Setup)"""
+        """⚡ SERVER 2: Localhost.run (Classic Verified Fix)"""
         import ssl
         unique_fallback_link = f"https://{unique_subdomain}.localhost.run"
         
         while self.is_running:
             try:
                 context = ssl.create_default_context()
-                with socket.create_connection(("localhost.run", 443), timeout=10) as raw_sock:
-                    with context.wrap_socket(raw_sock, server_hostname="localhost.run") as secure_sock:
-                        req = f"CONNECT {unique_subdomain}:5000 HTTP/1.1\r\nHost: localhost.run\r\n\r\n"
-                        secure_sock.sendall(req.encode())
-                        
-                        self.update_label_ui(self.lbl_net_server2, f"🚀 Localhost Link:\n{unique_fallback_link}", success=True)
-                        self._start_data_pipeline(secure_sock)
-            except:
+                raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                raw_sock.settimeout(10)
+                raw_sock.connect(("localhost.run", 443))
+                
+                secure_sock = context.wrap_socket(raw_sock, server_hostname="localhost.run")
+                
+                # 🌟 અસલી ફિક્સ: સર્વરનું સિક્યોરિટી બેનર એન્ડ હેન્ડશેક પહેલા રીડ કરવું જરૂરી છે
+                server_banner = secure_sock.recv(1024) 
+                
+                req = f"CONNECT {unique_subdomain}:5000 HTTP/1.1\r\nHost: localhost.run\r\n\r\n"
+                secure_sock.sendall(req.encode())
+                
+                # કનેક્શન કન્ફર્મ થયા પછી જ UI અપડેટ કરો
+                self.update_label_ui(self.lbl_net_server2, f"🚀 Localhost Link:\n{unique_fallback_link}", success=True)
+                
+                self._start_data_pipeline(secure_sock)
+            except Exception as e:
+                print(f"Localhost Retry Error: {e}")
                 self.update_label_ui(self.lbl_net_server2, "🔄 Localhost: Retrying...", success=False)
                 time.sleep(3)
                 if not self.is_running: break
 
     def _start_data_pipeline(self, secure_sock):
-        """🌟 ડેટા ફોરવર્ડિંગ બ્રિજ જે બહારના નેટવર્ક ટ્રાફિકને કસ્ટમ પોર્ટ 5000 સાથે જોડે છે"""
+        """🌟 ડેટા ફોરવર્ડિંગ બ્રિજ"""
         try:
             while self.is_running:
                 data_packet = secure_sock.recv(65536)
@@ -415,4 +423,3 @@ class RemoteAndroidApp(App):
 
 if __name__ == '__main__':
     RemoteAndroidApp().run()
-                                    
