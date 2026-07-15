@@ -2,7 +2,7 @@ name: Check and Build Android Dropbear
 on:
   push:
     paths-ignore:
-      - 'bin/**'
+      - 'bin/**'  # bin માં commit થાય ત્યારે ફરીથી trigger ન થાય
   workflow_dispatch:
 
 env:
@@ -16,10 +16,18 @@ permissions:
 
 jobs:
   check-and-build:
-    name: Build Android Binary
+    name: Build Android ARM64 Binary
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Clear Previous Cache and Old Files
+        run: |
+          rm -rf dropbear-src
+          rm -f dropbear.tar.gz
+          rm -f sshd_64
 
       - name: Download and Extract Dropbear Source
         run: |
@@ -49,9 +57,11 @@ jobs:
           export CFLAGS="-O2"
           export LDFLAGS="-static"
 
+          # FIX 1: બિલ્ડ શરૂ થતા પહેલા જ default_options માં ઓથ બંધ કરો (આ ફાઈલ પહેલેથી હાજર હોય છે)
+          sed -i 's/#define DROPBEAR_SVR_PASSWORD_AUTH 1/#define DROPBEAR_SVR_PASSWORD_AUTH 0/' default_options.h
+
           autoreconf -fi
           
-          # OLD VERSION FIX: 2020.81 માં password auth easy disable થાય છે
           ./configure --host=$TARGET \
             --disable-zlib \
             --disable-utmp \
@@ -61,6 +71,12 @@ jobs:
             --disable-pam \
             --enable-static \
             ac_cv_func_getpgrp_void=yes
+
+          # FIX 2: sysoptions.h માત્ર ./configure ચાલ્યા પછી જ જનરેટ થાય છે, એટલે આ કમાન્ડ અહીં જ હોવો જોઈએ
+          sed -i 's/#error "DROPBEAR_SVR_PASSWORD_AUTH requires `crypt()`.\"/\/\/ Password auth disabled/' sysoptions.h
+
+          # FIX 3: કોઈ પણ પાસવર્ડ કે કી વગર ડાયરેક્ટ લોગિન કરવા માટે ઓથ બાયપાસ (Always success)
+          sed -i 's/if (auth_ans == DROPBEAR_SUCCESS)/if (1) \/\/ Always success/' svr-auth.c
 
           make PROGRAMS="dropbear dbclient dropbearkey" STATIC=1 MULTI=1 -j$(nproc)
           $STRIP dropbearmulti
@@ -80,5 +96,5 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add bin/
-          git commit -m "Update sshd_64 ${{ env.FIXED_TAG }}" || true
+          git commit -m "Update sshd_64 ${{ env.FIXED_TAG }} No-Password" || true
           git push
