@@ -1,4 +1,3 @@
-
 name: Check and Build Android Dropbear
 on:
   push:
@@ -33,8 +32,11 @@ jobs:
       - name: Download and Extract Dropbear Source
         run: |
           TAG="${{ env.FIXED_TAG }}"
+          OWNER="${{ env.SRC_OWNER }}"
+          REPO="${{ env.SRC_REPO }}"
           echo "Building Dropbear Tag: $TAG"
-          curl -f -L "https://github.com{{ env.SRC_OWNER }}/${{ env.SRC_REPO }}/archive/refs/tags/${TAG}.tar.gz" -o dropbear.tar.gz
+          # URL વેરિએબલ ફિક્સ: હવે કોઈ નેસ્ટેડ બ્રેસ એરર નહીં આવે
+          curl -f -L "https://github.com{OWNER}/${REPO}/archive/refs/tags/${TAG}.tar.gz" -o dropbear.tar.gz
           tar -xzf dropbear.tar.gz
           mv "dropbear-${TAG}" dropbear-src
 
