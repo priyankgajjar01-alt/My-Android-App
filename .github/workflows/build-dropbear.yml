@@ -1,10 +1,7 @@
-name: Build Dropbear (Ribbons Safe Method)
+name: Build Dropbear (Ribbons Final Fix)
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - '.github/workflows/build-dropbear.yml'
 
 jobs:
   build-dropbear:
@@ -13,67 +10,62 @@ jobs:
       contents: write
 
     steps:
-    - name: 📦 Checkout Current Repo
+    - name: 📦 Checkout Repo
       uses: actions/checkout@v4
 
-    - name: 📥 Clone Ribbons Project
-      run: git clone --depth 1 https://github.com/ribbons/android-dropbear.git $HOME/ribbons-build
-
-    - name: 🤖 Setup NDK
+    - name: 📦 Install Dependencies
       run: |
+        sudo apt-get update
+        sudo apt-get install -y git build-essential autoconf automake libtool pkg-config curl unzip file
+
+    - name: 🤖 Install Android NDK r27c
+      run: |
+        cd $HOME
         wget -q https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
         unzip -q android-ndk-r27c-linux.zip
-        echo "ANDROID_NDK_HOME=$(find "$HOME" -maxdepth 1 -type d -name "android-ndk-r27*" | head -n1)" >> $GITHUB_ENV
 
-    # 🔍 debug સ્ટેપ: કઈ ફાઈલો છે તે લાઈવ ચેક કરવા માટે
-    - name: 🔍 Debug Repo Structure
+    - name: 📥 Clone and Build
       run: |
-        echo "=== Listing files in ribbons-build ==="
-        ls -la $HOME/ribbons-build
-
-    - name: 🏗️ Execute Build Script
-      run: |
+        git clone --depth 1 https://github.com/ribbons/android-dropbear.git $HOME/ribbons-build
         cd $HOME/ribbons-build
-        export NDK=$ANDROID_NDK_HOME
         
-        # જો સ્ક્રિપ્ટનું નામ build.sh કે ખાલી build હોય તો એને પરમિશન આપો
+        # 🎯 ફિક્સ: બિલ્ડ સ્ટેપની અંદર જ ડાયનેમિક પાથ શોધીને સીધો export કરી દીધો
+        DETECTED_NDK=$(find "$HOME" -maxdepth 1 -type d -name "android-ndk-r27*" | head -n1)
+        export ANDROID_NDK_HOME=$DETECTED_NDK
+        export NDK=$DETECTED_NDK
+        
+        echo "🟢 Found NDK Path: $NDK"
+        
+        # બિલ્ડ સ્ક્રિપ્ટ રન કરવાની પ્રોસેસ
         chmod +x build* 2>/dev/null || true
-        
-        # જે પણ સાચી બિલ્ડ સ્ક્રિપ્ટ હશે તેને રન કરશે
         if [ -f ./build.sh ]; then
             TARGET=aarch64-linux-android ./build.sh
         elif [ -f ./build ]; then
             TARGET=aarch64-linux-android ./build
-        elif [ -f ./Makefile ] || [ -f ./configure ]; then
-            echo "⚠️ No build script found, compiling using default make..."
-            ./configure --host=aarch64-linux-android && make
         else
-            echo "❌ No standard build method detected!"
-            exit 1
+            # જો કોઈ સ્ક્રિપ્ટ ન મળે તો જ કન્ફિગરેશન બેકઅપ
+            ./autogen.sh || autoreconf -fi
+            ./configure --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --disable-zlib ac_cv_func_getpgrp_void=yes
+            make PROGRAMS="dropbear" MULTI=1 -j$(nproc)
         fi
 
-    - name: 📤 Process Binaries
+    - name: 📤 Process and Commit
       run: |
+        cd $GITHUB_WORKSPACE
         mkdir -p bin
-        # બિલ્ડ થયા પછી બાઈનરી શોધીને કોપી કરવાનું લોજિક
+        
+        # બાઈનરી શોધીને કોપી કરો
         find $HOME/ribbons-build -name "dropbearmulti" -o -name "dropbear" -o -name "sshd" | head -n 1 | xargs -I {} cp {} bin/sshd_64 || true
         
         if [ -f bin/sshd_64 ]; then
             chmod +x bin/sshd_64
-            file bin/sshd_64
-        else
-            echo "❌ Binary compilation failed or file not found!"
-            exit 1
-        fi
-
-    - name: 📤 Commit & Push
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        if [ -f bin/sshd_64 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
             git add bin/sshd_64
-            git diff-index --quiet HEAD || git commit -m "Update sshd_64 via Ribbons build [$(date +%Y%m%d-%H%M)]"
+            git diff-index --quiet HEAD || git commit -m "Update sshd_64 via build [$(date +%Y%m%d-%H%M)]"
             git pull --rebase origin main || true
             git push origin main
+        else
+            echo "❌ No binary generated! Please check compilation logs above."
+            exit 1
         fi
-        
