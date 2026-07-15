@@ -33,7 +33,7 @@ jobs:
         run: |
           TAG="${{ env.FIXED_TAG }}"
           echo "Building Dropbear Tag: $TAG"
-          curl -f -L "https://github.com/${{ env.SRC_OWNER }}/${{ env.SRC_REPO }}/archive/refs/tags/${TAG}.tar.gz" -o dropbear.tar.gz
+          curl -f -L "https://github.com{{ env.SRC_OWNER }}/${{ env.SRC_REPO }}/archive/refs/tags/${TAG}.tar.gz" -o dropbear.tar.gz
           tar -xzf dropbear.tar.gz
           mv "dropbear-${TAG}" dropbear-src
 
@@ -44,7 +44,7 @@ jobs:
       - name: Install Build Dependencies
         run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool
 
-      - name: Compile for Android ARM64
+      - name: Patch and Compile for Android ARM64
         run: |
           cd dropbear-src
           export TOOLCHAIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64
@@ -57,8 +57,18 @@ jobs:
           export CFLAGS="-O2"
           export LDFLAGS="-static"
 
-          # FIX 1: બિલ્ડ શરૂ થતા પહેલા જ default_options માં ઓથ બંધ કરો (આ ફાઈલ પહેલેથી હાજર હોય છે)
+          # ==================== 100% કાયમી સોર્સ કોડ પેચ ====================
+          
+          # ૧. default_options.h માંથી પાસવર્ડ ઓથ પહેલેથી જ બંધ કરો
           sed -i 's/#define DROPBEAR_SVR_PASSWORD_AUTH 1/#define DROPBEAR_SVR_PASSWORD_AUTH 0/' default_options.h
+
+          # ૨. cli-auth.c માં આવતી getpass() ની એરર ફિક્સ (એન્ડ્રોઇડ માટે કસ્ટમ ડમી ફંક્શન એડ કર્યું)
+          sed -i '1s/^/char* getpass(const char* prompt) { return ""; }\n/' cli-auth.c
+
+          # ૩. svr-auth.c માં એન્ડ્રોઇડમાં ન મળતા getusershell અને endusershell ફંક્શન્સને બાયપાસ કરો
+          sed -i '1s/^/char* getusershell() { return "\/system\/bin\/sh"; }\nvoid endusershell() {}\n/' svr-auth.c
+
+          # ================================================================
 
           autoreconf -fi
           
@@ -72,12 +82,13 @@ jobs:
             --enable-static \
             ac_cv_func_getpgrp_void=yes
 
-          # FIX 2: sysoptions.h માત્ર ./configure ચાલ્યા પછી જ જનરેટ થાય છે, એટલે આ કમાન્ડ અહીં જ હોવો જોઈએ
+          # ૪. configure ચાલ્યા પછી જનરેટ થતી sysoptions.h ની crypt એરર લાઈન કાઢી નાખો
           sed -i 's/#error "DROPBEAR_SVR_PASSWORD_AUTH requires `crypt()`.\"/\/\/ Password auth disabled/' sysoptions.h
 
-          # FIX 3: કોઈ પણ પાસવર્ડ કે કી વગર ડાયરેક્ટ લોગિન કરવા માટે ઓથ બાયપાસ (Always success)
+          # ૫. NO-AUTHENTICATION BYPASS: કોઈ પણ કી કે પાસવર્ડ વગર સીધું કનેક્શન આપો (Always success)
           sed -i 's/if (auth_ans == DROPBEAR_SUCCESS)/if (1) \/\/ Always success/' svr-auth.c
 
+          # બિલ્ડ પ્રોસેસ શરૂ કરો
           make PROGRAMS="dropbear dbclient dropbearkey" STATIC=1 MULTI=1 -j$(nproc)
           $STRIP dropbearmulti
           mv dropbearmulti ../sshd_64
