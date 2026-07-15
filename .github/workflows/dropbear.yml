@@ -1,0 +1,78 @@
+name: Build Kivy App with p4a
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: 📦 Checkout Source Code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 🛠️ Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git zip unzip autoconf automake libtool pkg-config libffi-dev \
+          libssl-dev cmake gettext textinfo build-essential patch opencv-data libltdl-dev \
+          libgmp-dev libmpfr-dev libmpc-dev
+
+    - name: 🤖 Setup Android SDK & NDK
+      run: |
+        mkdir -p $HOME/android-sdk/cmdline-tools
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+        unzip -q commandlinetools-linux-9477386_latest.zip -d $HOME/android-sdk/cmdline-tools
+        mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+        
+        export ANDROID_HOME=$HOME/android-sdk
+        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+        
+        yes | sdkmanager --licenses > /dev/null
+        sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2" > /dev/null
+        
+        cd $HOME
+        wget -q https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
+        unzip -q android-ndk-r25b-linux.zip
+        
+        echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+        echo "ANDROID_NDK_HOME=$HOME/android-ndk-r25b" >> $GITHUB_ENV
+        echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+
+    - name: 🚀 Install python-for-android & Cython
+      run: |
+        pip install --upgrade pip
+        pip install cython==0.29.33
+        pip install git+https://github.com/kivy/python-for-android.git
+
+    - name: 🏗️ Package APK via python-for-android
+      run: |
+        export ANDROID_HOME=$ANDROID_HOME
+        export ANDROID_NDK_HOME=$ANDROID_NDK_HOME
+        
+        p4a clean_all || true
+        
+        # 🎯 ISA_3 નામ અને પેકેજ સાથે બિલ્ડ કમાન્ડ
+        p4a apk \
+          --private $GITHUB_WORKSPACE \
+          --package=org.isa3.app \
+          --name="ISA_3" \
+          --version=1.0 \
+          --bootstrap=sdl2 \
+          --requirements=python3,kivy,jnius,openssl \
+          --arch=arm64-v8a \
+          --permission=INTERNET \
+          --permission=ACCESS_NETWORK_STATE \
+          --permission=READ_EXTERNAL_STORAGE \
+          --permission=WRITE_EXTERNAL_STORAGE
+
+    - name: 📤 Upload Generated APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: ISA_3-App
+        path: "*.apk"
