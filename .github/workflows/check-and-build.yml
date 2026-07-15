@@ -1,5 +1,9 @@
+# Copyright © 2021-2026 Matt Robinson
+# SPDX-License-Identifier: MIT
+
 name: Check and Build Android Dropbear
 on:
+  push:
   workflow_dispatch:
   schedule:
     - cron: '05 00 * * 1-5'
@@ -54,17 +58,14 @@ jobs:
       - name: Compile Cross-Platform Android Binary
         run: |
           cd dropbear-src
-          # Set up NDK Standalone Toolchain paths for aarch64 (ARM64 Android)
           export TOOLCHAIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64
           export TARGET=aarch64-linux-android
           export API=21
           export CC=$TOOLCHAIN/bin/$TARGET$API-clang
           
-          # Configure for a static, standalone Android binary
           ./configure --host=$TARGET --disable-zlib --enable-static
           make MULTI=1 dropbearmulti
           
-          # Move compiled binary to root
           cp dropbearmulti ../dropbear-android-aarch64
 
       - name: Create Update PR with Binary Asset
