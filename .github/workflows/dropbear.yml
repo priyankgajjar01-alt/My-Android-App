@@ -1,4 +1,3 @@
-
 name: Build Kivy App with p4a
 
 on:
@@ -7,21 +6,31 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
 
     steps:
     - name: 📦 Checkout Source Code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: 🐍 Set up Python 3.10
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
+    - name: ☕ Set up Java (JDK 17)
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
     - name: 🛠️ Install System Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y git zip unzip autoconf automake libtool pkg-config libffi-dev \
-          libssl-dev cmake gettext textinfo build-essential patch opencv-data libltdl-dev \
+          libssl-dev cmake gettext texinfo build-essential patch opencv-data libltdl-dev \
           libgmp-dev libmpfr-dev libmpc-dev
 
     - name: 🤖 Setup Android SDK & NDK
@@ -44,6 +53,7 @@ jobs:
         echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
         echo "ANDROID_NDK_HOME=$HOME/android-ndk-r25b" >> $GITHUB_ENV
         echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+        echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
 
     - name: 🚀 Install python-for-android & Cython
       run: |
@@ -53,12 +63,12 @@ jobs:
 
     - name: 🏗️ Package APK via python-for-android
       run: |
-        export ANDROID_HOME=$ANDROID_HOME
-        export ANDROID_NDK_HOME=$ANDROID_NDK_HOME
+        export ANDROID_HOME=${{ env.ANDROID_HOME }}
+        export ANDROID_NDK_HOME=${{ env.ANDROID_NDK_HOME }}
+        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
         
         p4a clean_all || true
         
-        # 🎯 ISA_3 નામ અને પેકેજ સાથે બિલ્ડ કમાન્ડ
         p4a apk \
           --private $GITHUB_WORKSPACE \
           --package=org.isa3.app \
@@ -72,8 +82,28 @@ jobs:
           --permission=READ_EXTERNAL_STORAGE \
           --permission=WRITE_EXTERNAL_STORAGE
 
-    - name: 📤 Upload Generated APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: ISA_3-App
-        path: "*.apk"
+    - name: 📤 Push APK directly to GitHub Repository
+      run: |
+        cd $GITHUB_WORKSPACE
+        mkdir -p output
+        
+        # 🎯 FIX: -maxdepth 1 કાઢી નાખ્યું જેથી સ્ક્રિપ્ટ તમામ સબ-ફોલ્ડર્સ ચેક કરીને એપીકે શોધી લેશે
+        # ! -path "./output/*" રાખ્યું છે જેથી લૂપ પ્રોબ્લેમ ન થાય
+        find . -name "*.apk" ! -path "./output/*" -exec cp {} output/ISA_3.apk \;
+        
+        if [ -f output/ISA_3.apk ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            
+            # રનટાઇમ પર સિક્યોરિટી ટોકન એક્સેસ કરવા માટે સિસ્ટમ URL સેટઅપ
+            git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+            
+            git add output/ISA_3.apk
+            git commit -m "🚀 Auto-update ISA_3.apk [$(date +%Y%m%d-%H%M)]" || true
+            git pull --rebase origin main || true
+            git push origin main
+            echo "🟢 APK Successfully pushed to repository inside 'output/' folder!"
+        else
+            echo "❌ APK build failed, target file not found!"
+            exit 1
+        fi
