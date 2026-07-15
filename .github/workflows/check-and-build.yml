@@ -42,12 +42,15 @@ jobs:
             const vars = { owner: process.env.SRC_OWNER, repo: process.env.SRC_REPO }
             const result = await github.graphql(query, vars)
             
-            // Safe array validation logic to prevent runtime exceptions
             if (result?.repository?.releases?.nodes?.length > 0) {
               return result.repository.releases.nodes[0].tagName;
             } else {
               throw new Error("Could not find any releases for this repository.");
             }
+
+      - name: Save Version to Environment
+        run: |
+          echo "DROPBEAR_VER=${{ steps.latest_release.outputs.result }}" >> $GITHUB_ENV
 
       - name: Set up Android NDK
         uses: nttld/setup-ndk@v1
@@ -56,10 +59,9 @@ jobs:
 
       - name: Download and Extract Dropbear Source
         run: |
-          VERSION="${{ steps.latest_release.outputs.result }}"
-          curl -L "https://github.com{VERSION}.tar.gz" -o dropbear.tar.gz
+          curl -L "https://github.com/mkj/dropbear/archive/refs/tags/${DROPBEAR_VER}.tar.gz" -o dropbear.tar.gz
           tar -xzf dropbear.tar.gz
-          mv "dropbear-${VERSION}" dropbear-src
+          mv "dropbear-${DROPBEAR_VER}" dropbear-src
 
       - name: Compile Cross-Platform Android Binary
         run: |
@@ -80,7 +82,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-          commit-message: "Update Dropbear Binary to ${{ steps.latest_release.outputs.result }}"
-          title: "Update Dropbear to ${{ steps.latest_release.outputs.result }}"
-          body: "Automated compile build for Android ARM64 utilizing version ${{ steps.latest_release.outputs.result }}."
+          commit-message: "Update Dropbear Binary to ${{ env.DROPBEAR_VER }}"
+          title: "Update Dropbear to ${{ env.DROPBEAR_VER }}"
+          body: "Automated compile build for Android ARM64 utilizing version ${{ env.DROPBEAR_VER }}."
           branch: update-version
