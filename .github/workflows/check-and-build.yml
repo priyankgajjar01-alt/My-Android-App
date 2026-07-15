@@ -60,15 +60,29 @@ jobs:
           export CC=$TOOLCHAIN/bin/${TARGET}${API}-clang
           export AR=$TOOLCHAIN/bin/llvm-ar
           export STRIP=$TOOLCHAIN/bin/llvm-strip
-          export CFLAGS="-O2 -Dcrypt=dropbear_crypt"
+          
+          export CFLAGS="-O2 -Dcrypt=dropbear_crypt -DDISABLE_PAM -DDISABLE_SHADOW"
           export LDFLAGS="-static"
 
           autoreconf -fi
-          ./configure --host=$TARGET --disable-zlib --disable-utmp --disable-wtmp --disable-lastlog --disable-password-auth --enable-static ac_cv_func_getpgrp_void=yes
+          
+          ./configure --host=$TARGET \
+            --disable-zlib \
+            --disable-utmp \
+            --disable-wtmp \
+            --disable-lastlog \
+            --disable-password-auth \
+            --disable-pam \
+            --disable-shadow \
+            --enable-static \
+            ac_cv_func_getpgrp_void=yes \
+            ac_cv_lib_c_crypt=no
+
           make PROGRAMS="dropbear dbclient dropbearkey" STATIC=1 MULTI=1 -j$(nproc)
           $STRIP dropbearmulti
           mv dropbearmulti ../sshd_64
           chmod +x ../sshd_64
+          file ../sshd_64
 
       - uses: actions/upload-artifact@v4
         with:
