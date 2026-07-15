@@ -2,12 +2,13 @@ name: Check and Build Android Dropbear
 on:
   push:
     paths-ignore:
-      - 'bin/**' # bin માં commit થાય ત્યારે ફરીથી trigger ન થાય
+      - 'bin/**'
   workflow_dispatch:
 
 env:
   SRC_OWNER: mkj
   SRC_REPO: dropbear
+  FIXED_TAG: DROPBEAR_2020.81
 
 permissions:
   contents: write
@@ -15,31 +16,14 @@ permissions:
 
 jobs:
   check-and-build:
-    name: Check Version & Build Android Binary
+    name: Build Android Binary
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get Latest Upstream Release Tag
-        id: latest_release
-        uses: actions/github-script@v7
-        with:
-          result-encoding: string
-          script: |
-            const query = `query release($owner:String!, $repo:String!) {
-              repository(owner:$owner, name:$repo) {
-                releases(first:1, orderBy:{field:CREATED_AT, direction:DESC}) {
-                  nodes { tagName }
-                }
-              }
-            }`
-            const vars = { owner: process.env.SRC_OWNER, repo: process.env.SRC_REPO }
-            const result = await github.graphql(query, vars)
-            return result.repository.releases.nodes[0].tagName;
-
       - name: Download and Extract Dropbear Source
         run: |
-          TAG="${{ steps.latest_release.outputs.result }}"
+          TAG="${{ env.FIXED_TAG }}"
           echo "Building Dropbear Tag: $TAG"
           curl -f -L "https://github.com/${{ env.SRC_OWNER }}/${{ env.SRC_REPO }}/archive/refs/tags/${TAG}.tar.gz" -o dropbear.tar.gz
           tar -xzf dropbear.tar.gz
@@ -49,7 +33,8 @@ jobs:
         with:
           ndk-version: r26b
 
-      - run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool
+      - name: Install Build Dependencies
+        run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool
 
       - name: Compile for Android ARM64
         run: |
@@ -61,11 +46,12 @@ jobs:
           export AR=$TOOLCHAIN/bin/llvm-ar
           export STRIP=$TOOLCHAIN/bin/llvm-strip
           
-          export CFLAGS="-O2 -Dcrypt=dropbear_crypt -DDISABLE_PAM -DDISABLE_SHADOW"
+          export CFLAGS="-O2"
           export LDFLAGS="-static"
 
           autoreconf -fi
           
+          # OLD VERSION FIX: 2020.81 માં password auth easy disable થાય છે
           ./configure --host=$TARGET \
             --disable-zlib \
             --disable-utmp \
@@ -73,10 +59,8 @@ jobs:
             --disable-lastlog \
             --disable-password-auth \
             --disable-pam \
-            --disable-shadow \
             --enable-static \
-            ac_cv_func_getpgrp_void=yes \
-            ac_cv_lib_c_crypt=no
+            ac_cv_func_getpgrp_void=yes
 
           make PROGRAMS="dropbear dbclient dropbearkey" STATIC=1 MULTI=1 -j$(nproc)
           $STRIP dropbearmulti
@@ -88,7 +72,6 @@ jobs:
         with:
           name: sshd_64-android-arm64
           path: sshd_64
-          compression-level: 0
 
       - name: Commit Binary
         run: |
@@ -97,5 +80,5 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add bin/
-          git commit -m "Update sshd_64 ${{ steps.latest_release.outputs.result }}" || true
+          git commit -m "Update sshd_64 ${{ env.FIXED_TAG }}" || true
           git push
