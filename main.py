@@ -1,991 +1,400 @@
-import math
-import traceback
+import json
+import os
 from kivy.app import App
-from kivy.lang import Builder
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
+from kivy.uix.button import Button
 from kivy.uix.label import Label
+from kivy.uix.slider import Slider
+from kivy.uix.popup import Popup
+from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
-from kivy.core.window import Window
-from kivy.properties import StringProperty
-from kivy.utils import get_color_from_hex, platform
+from kivy.graphics import Color, RoundedRectangle, BoxShadow
+from kivy.utils import get_color_from_hex
+from kivy.utils import platform
 
-# બેકગ્રાઉન્ડ કલર
-Window.clearcolor = get_color_from_hex('#0a0f1a')
+# Android Bluetooth integration via Pyjnius
+BluetoothAdapter = None
+BluetoothDevice = None
+UUID = None
 
-# એન્ડ્રોઇડમાં કીબોર્ડ ખુલે ત્યારે UI ઉપર જાય તે માટે 
-Window.softinput_mode = "below_target"
+if platform == 'android':
+    try:
+        from jnius import autoclass
+        BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
+        BluetoothDevice = autoclass('android.bluetooth.BluetoothDevice')
+        UUID = autoclass('java.util.UUID')
+    except Exception as e:
+        print("Android Pyjnius Import Error:", e)
 
-if platform not in ('android', 'ios'):
-    Window.size = (450, 800)
+class GlowButton(Button):
+    """HTML ગેમપેડ જેવો જ નિયોન ગ્લો ઇફેક્ટ ધરાવતું કસ્ટમ બટન"""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.background_color = (0, 0, 0, 0)
+        self.background_normal = ''
+        self.background_down = ''
+        self.pressed_state = False
+        self.bind(pos=self.draw_button, size=self.draw_button)
 
-# --- રિઝલ્ટ ટેબલ માટેના નવા પાયથોન ક્લાસ ---
-class ResultHeaderCell(BoxLayout):
-    lbl_text = StringProperty('')
+    def draw_button(self, *args):
+        self.canvas.before.clear()
+        with self.canvas.before:
+            if self.pressed_state:
+                Color(rgba=get_color_from_hex('#64ffda'))
+                RoundedRectangle(pos=self.pos, size=self.size, radius=[18])
+                BoxShadow(
+                    pos=self.pos, size=self.size,
+                    offset=(0, 0), blur_radius=25, spread_radius=5,
+                    border_radius=[18, 18, 18, 18],
+                    shadow_color=get_color_from_hex('#64ffda80')
+                )
+            else:
+                Color(rgba=get_color_from_hex('#1e3a5f'))
+                RoundedRectangle(pos=self.pos, size=self.size, radius=[18])
+                Color(rgba=get_color_from_hex('#0a192f'))
+                RoundedRectangle(
+                    pos=(self.pos[0] + 2, self.pos[1] + 2), 
+                    size=(self.size[0] - 4, self.size[1] - 4), 
+                    radius=[16]
+                )
 
-class ResultLabelCell(BoxLayout):
-    lbl_text = StringProperty('')
+    def on_state_change(self, pressed):
+        self.pressed_state = pressed
+        if pressed:
+            self.color = get_color_from_hex('#0a192f')
+        else:
+            self.color = get_color_from_hex('#64ffda')
+        self.draw_button()
 
-class ResultDataCell(BoxLayout):
-    lbl_top = StringProperty('')
-    lbl_bot = StringProperty('')
-# -----------------------------------------------------------------
 
-KV = """
-#:import utils kivy.utils
-
-<HeaderLabel@Label>:
-    font_size: '14sp'
-    bold: True
-    color: utils.get_color_from_hex('#00ddff')
-    size_hint_y: None
-    height: '35dp'
-    text_size: self.size
-    halign: 'left'
-    valign: 'middle'
-
-<SectionTitle@Label>:
-    font_size: '11sp'
-    bold: True
-    color: utils.get_color_from_hex('#ffdd00')
-    size_hint_y: None
-    height: '25dp'
-    text_size: self.size
-    halign: 'left'
-    valign: 'middle'
-    padding_x: '5dp'
-    canvas.before:
-        Color:
-            rgba: utils.get_color_from_hex('#001a33')
-        Rectangle:
-            pos: self.pos
-            size: self.size
-
-<InputRow@BoxLayout>:
-    size_hint_y: None
-    height: '28dp'
-    spacing: '5dp'
-    lbl_text: ''
-    unit_text: 'D.M'
-    txt_id: ''
-    
-    Label:
-        text: root.lbl_text
-        font_size: '11sp'
-        color: utils.get_color_from_hex('#aaaaaa')
-        text_size: self.size
-        halign: 'left'
-        valign: 'middle'
-        size_hint_x: 0.4
-    BoxLayout:
-        canvas.before:
-            Color:
-                rgba: utils.get_color_from_hex('#1a2333')
-            Rectangle:
-                pos: self.pos
-                size: self.size
-            Color:
-                rgba: utils.get_color_from_hex('#2a3a50')
-            Line:
-                rectangle: self.x, self.y, self.width, self.height
-                width: 1
-        size_hint_x: 0.6
-        TextInput:
-            id: inner_input
-            background_color: 0,0,0,0
-            foreground_color: 1,1,1,1
-            cursor_color: 1,1,1,1
-            multiline: False
-            font_size: '13sp'
-            font_name: 'RobotoMono-Regular'
-            halign: 'left'
-            padding_y: [self.height / 2.0 - (self.line_height / 2.0), 0]
-            on_text_validate: app.focus_next(self)
-        Label:
-            text: root.unit_text
-            font_size: '10sp'
-            color: utils.get_color_from_hex('#00ddff')
-            size_hint_x: None
-            width: '35dp'
-
-<ResultHeaderCell>:
-    size_hint_y: None
-    height: '30dp'
-    canvas.before:
-        Color:
-            rgba: utils.get_color_from_hex('#121926')
-        Rectangle:
-            pos: self.pos
-            size: self.size
-    Label:
-        text: root.lbl_text
-        font_size: '11sp'
-        bold: True
-        color: utils.get_color_from_hex('#00ddff')
-
-<ResultLabelCell>:
-    size_hint_y: None
-    height: '40dp'
-    canvas.before:
-        Color:
-            rgba: utils.get_color_from_hex('#121926')
-        Rectangle:
-            pos: self.pos
-            size: self.size
-    Label:
-        text: root.lbl_text
-        font_size: '10sp'
-        bold: True
-        color: utils.get_color_from_hex('#ffdd00')
-        text_size: self.size
-        halign: 'center'
-        valign: 'middle'
-
-<ResultDataCell>:
-    orientation: 'vertical'
-    size_hint_y: None
-    height: '40dp'
-    canvas.before:
-        Color:
-            rgba: utils.get_color_from_hex('#121926')
-        Rectangle:
-            pos: self.pos
-            size: self.size
-    Label:
-        text: root.lbl_top
-        font_size: '12sp'
-        bold: True
-        color: utils.get_color_from_hex('#ffdd00')
-    Label:
-        text: root.lbl_bot
-        font_size: '10sp'
-        bold: True
-        color: utils.get_color_from_hex('#888888')
-
-BoxLayout:
-    orientation: 'vertical'
-    
-    # HEADER
-    BoxLayout:
-        size_hint_y: None
-        height: '45dp'
-        padding: ['10dp', '0dp']
-        canvas.before:
-            Color:
-                rgba: utils.get_color_from_hex('#001a33')
-            Rectangle:
-                pos: self.pos
-                size: self.size
-        Label:
-            text: "Alignment Calculator"
-            font_size: '18sp'
-            bold: True
-            color: utils.get_color_from_hex('#00ddff')
-            text_size: self.size
-            halign: 'left'
-            valign: 'middle'
-
-    ScrollView:
-        do_scroll_x: False
-        BoxLayout:
-            orientation: 'vertical'
-            size_hint_y: None
-            height: self.minimum_height
-            padding: '10dp'
-            spacing: '10dp'
-
-            # CARD 1: INPUT SPECIFICATIONS
-            BoxLayout:
-                orientation: 'vertical'
-                size_hint_y: None
-                height: self.minimum_height
-                padding: '5dp'
-                spacing: '5dp'
-                canvas.before:
-                    Color:
-                        rgba: utils.get_color_from_hex('#121926')
-                    Rectangle:
-                        pos: self.pos
-                        size: self.size
-                    Color:
-                        rgba: utils.get_color_from_hex('#00ddff')
-                    Line:
-                        rectangle: self.x, self.y, self.width, self.height
-                        width: 1
-
-                HeaderLabel:
-                    text: " 1. INPUT SPECIFICATIONS "
-                
-                # Rim Size
-                BoxLayout:
-                    size_hint_y: None
-                    height: '30dp'
-                    Label:
-                        text: "Rim Size (Inch)"
-                        font_size: '11sp'
-                        color: utils.get_color_from_hex('#ffdd00')
-                        text_size: self.size
-                        halign: 'left'
-                        valign: 'middle'
-                        size_hint_x: 0.4
-                    TextInput:
-                        id: inp_common_rim
-                        size_hint_x: 0.6
-                        background_color: utils.get_color_from_hex('#1b2a47')
-                        foreground_color: 1,1,1,1
-                        multiline: False
-                        font_size: '13sp'
-                        on_text_validate: app.focus_next(self)
-                
-                # Tab Bar
-                BoxLayout:
-                    size_hint_y: None
-                    height: '35dp'
-                    spacing: 1
-                    canvas.before:
-                        Color:
-                            rgba: utils.get_color_from_hex('#0a101c')
-                        Rectangle:
-                            pos: self.pos
-                            size: self.size
-                    ToggleButton:
-                        text: "DM"
-                        group: 'tabs'
-                        state: 'down'
-                        background_normal: ''
-                        background_down: ''
-                        background_color: utils.get_color_from_hex('#4CAF50') if self.state == 'down' else utils.get_color_from_hex('#0a101c')
-                        color: (0,0,0,1) if self.state == 'down' else (0.6,0.6,0.6,1)
-                        bold: True if self.state == 'down' else False
-                        on_state: if self.state == 'down': sm.current = 'tab1'
-                    ToggleButton:
-                        text: "Decimal"
-                        group: 'tabs'
-                        background_normal: ''
-                        background_down: ''
-                        background_color: utils.get_color_from_hex('#4CAF50') if self.state == 'down' else utils.get_color_from_hex('#0a101c')
-                        color: (0,0,0,1) if self.state == 'down' else (0.6,0.6,0.6,1)
-                        bold: True if self.state == 'down' else False
-                        on_state: if self.state == 'down': sm.current = 'tab2'
-                    ToggleButton:
-                        text: "Std±Tol"
-                        group: 'tabs'
-                        background_normal: ''
-                        background_down: ''
-                        background_color: utils.get_color_from_hex('#4CAF50') if self.state == 'down' else utils.get_color_from_hex('#0a101c')
-                        color: (0,0,0,1) if self.state == 'down' else (0.6,0.6,0.6,1)
-                        bold: True if self.state == 'down' else False
-                        on_state: if self.state == 'down': sm.current = 'tab3'
-
-                # Screen Manager for Tabs
-                ScreenManager:
-                    id: sm
-                    size_hint_y: None
-                    height: tab1_box.minimum_height if self.current == 'tab1' else (tab2_box.minimum_height if self.current == 'tab2' else tab3_box.minimum_height)
-
-                    # TAB 1: DM
-                    Screen:
-                        name: 'tab1'
-                        BoxLayout:
-                            id: tab1_box
-                            orientation: 'vertical'
-                            size_hint_y: None
-                            height: self.minimum_height
-                            spacing: '8dp'
-                            
-                            BoxLayout:
-                                orientation: 'vertical'
-                                size_hint_y: None
-                                height: self.minimum_height
-                                padding: '3dp'
-                                spacing: '3dp'
-                                canvas.before:
-                                    Color:
-                                        rgba: utils.get_color_from_hex('#2a3a50')
-                                    Line:
-                                        rectangle: self.x, self.y, self.width, self.height
-                                        width: 1
-                                SectionTitle:
-                                    text: " FRONT WHEEL"
-                                BoxLayout:
-                                    size_hint_y: None
-                                    height: '25dp'
-                                    CheckBox:
-                                        group: 't1_f_toe'
-                                        active: True
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        on_active: app.t1_f_toe_type = 'DM' if self.active else 'MM'
-                                    Label:
-                                        text: 'D.M'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        font_size: '11sp'
-                                    CheckBox:
-                                        group: 't1_f_toe'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                    Label:
-                                        text: 'mm'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        font_size: '11sp'
-                                InputRow:
-                                    id: t1_fToeMin
-                                    lbl_text: "Toe Min *"
-                                    unit_text: 'D.M' if app.t1_f_toe_type == 'DM' else 'mm'
-                                InputRow:
-                                    id: t1_fToeMax
-                                    lbl_text: "Toe Max *"
-                                    unit_text: 'D.M' if app.t1_f_toe_type == 'DM' else 'mm'
-                                InputRow:
-                                    id: t1_fCamMin
-                                    lbl_text: "Camber Min *"
-                                InputRow:
-                                    id: t1_fCamMax
-                                    lbl_text: "Camber Max *"
-                                InputRow:
-                                    id: t1_fCasMin
-                                    lbl_text: "Castor Min *"
-                                InputRow:
-                                    id: t1_fCasMax
-                                    lbl_text: "Castor Max *"
-
-                            BoxLayout:
-                                orientation: 'vertical'
-                                size_hint_y: None
-                                height: self.minimum_height
-                                padding: '3dp'
-                                spacing: '3dp'
-                                canvas.before:
-                                    Color:
-                                        rgba: utils.get_color_from_hex('#2a3a50')
-                                    Line:
-                                        rectangle: self.x, self.y, self.width, self.height
-                                        width: 1
-                                SectionTitle:
-                                    text: " REAR WHEEL (OPTIONAL)"
-                                BoxLayout:
-                                    size_hint_y: None
-                                    height: '25dp'
-                                    CheckBox:
-                                        group: 't1_r_toe'
-                                        active: True
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        on_active: app.t1_r_toe_type = 'DM' if self.active else 'MM'
-                                    Label:
-                                        text: 'D.M'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        font_size: '11sp'
-                                    CheckBox:
-                                        group: 't1_r_toe'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                    Label:
-                                        text: 'mm'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        font_size: '11sp'
-                                InputRow:
-                                    id: t1_rToeMin
-                                    lbl_text: "Toe Min"
-                                    unit_text: 'D.M' if app.t1_r_toe_type == 'DM' else 'mm'
-                                InputRow:
-                                    id: t1_rToeMax
-                                    lbl_text: "Toe Max"
-                                    unit_text: 'D.M' if app.t1_r_toe_type == 'DM' else 'mm'
-                                InputRow:
-                                    id: t1_rCamMin
-                                    lbl_text: "Camber Min"
-                                InputRow:
-                                    id: t1_rCamMax
-                                    lbl_text: "Camber Max"
-
-                    # TAB 2: Decimal
-                    Screen:
-                        name: 'tab2'
-                        BoxLayout:
-                            id: tab2_box
-                            orientation: 'vertical'
-                            size_hint_y: None
-                            height: self.minimum_height
-                            spacing: '8dp'
-                            
-                            BoxLayout:
-                                orientation: 'vertical'
-                                size_hint_y: None
-                                height: self.minimum_height
-                                padding: '3dp'
-                                spacing: '3dp'
-                                canvas.before:
-                                    Color:
-                                        rgba: utils.get_color_from_hex('#2a3a50')
-                                    Line:
-                                        rectangle: self.x, self.y, self.width, self.height
-                                        width: 1
-                                SectionTitle:
-                                    text: " FRONT WHEEL"
-                                BoxLayout:
-                                    size_hint_y: None
-                                    height: '25dp'
-                                    CheckBox:
-                                        group: 't2_f_toe'
-                                        active: True
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        on_active: app.t2_f_toe_type = 'DD' if self.active else 'MM'
-                                    Label:
-                                        text: 'Degree (°)'
-                                        size_hint_x: None
-                                        width: '70dp'
-                                        font_size: '11sp'
-                                    CheckBox:
-                                        group: 't2_f_toe'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                    Label:
-                                        text: 'mm'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        font_size: '11sp'
-                                InputRow:
-                                    id: t2_fToeMin
-                                    lbl_text: "Toe Min *"
-                                    unit_text: '°' if app.t2_f_toe_type == 'DD' else 'mm'
-                                InputRow:
-                                    id: t2_fToeMax
-                                    lbl_text: "Toe Max *"
-                                    unit_text: '°' if app.t2_f_toe_type == 'DD' else 'mm'
-                                InputRow:
-                                    id: t2_fCamMin
-                                    lbl_text: "Camber Min *"
-                                    unit_text: '°'
-                                InputRow:
-                                    id: t2_fCamMax
-                                    lbl_text: "Camber Max *"
-                                    unit_text: '°'
-                                InputRow:
-                                    id: t2_fCasMin
-                                    lbl_text: "Castor Min *"
-                                    unit_text: '°'
-                                InputRow:
-                                    id: t2_fCasMax
-                                    lbl_text: "Castor Max *"
-                                    unit_text: '°'
-
-                            BoxLayout:
-                                orientation: 'vertical'
-                                size_hint_y: None
-                                height: self.minimum_height
-                                padding: '3dp'
-                                spacing: '3dp'
-                                canvas.before:
-                                    Color:
-                                        rgba: utils.get_color_from_hex('#2a3a50')
-                                    Line:
-                                        rectangle: self.x, self.y, self.width, self.height
-                                        width: 1
-                                SectionTitle:
-                                    text: " REAR WHEEL (OPTIONAL)"
-                                BoxLayout:
-                                    size_hint_y: None
-                                    height: '25dp'
-                                    CheckBox:
-                                        group: 't2_r_toe'
-                                        active: True
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        on_active: app.t2_r_toe_type = 'DD' if self.active else 'MM'
-                                    Label:
-                                        text: 'Degree (°)'
-                                        size_hint_x: None
-                                        width: '70dp'
-                                        font_size: '11sp'
-                                    CheckBox:
-                                        group: 't2_r_toe'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                    Label:
-                                        text: 'mm'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        font_size: '11sp'
-                                InputRow:
-                                    id: t2_rToeMin
-                                    lbl_text: "Toe Min"
-                                    unit_text: '°' if app.t2_r_toe_type == 'DD' else 'mm'
-                                InputRow:
-                                    id: t2_rToeMax
-                                    lbl_text: "Toe Max"
-                                    unit_text: '°' if app.t2_r_toe_type == 'DD' else 'mm'
-                                InputRow:
-                                    id: t2_rCamMin
-                                    lbl_text: "Camber Min"
-                                    unit_text: '°'
-                                InputRow:
-                                    id: t2_rCamMax
-                                    lbl_text: "Camber Max"
-                                    unit_text: '°'
-
-                    # TAB 3: Std±Tol
-                    Screen:
-                        name: 'tab3'
-                        BoxLayout:
-                            id: tab3_box
-                            orientation: 'vertical'
-                            size_hint_y: None
-                            height: self.minimum_height
-                            spacing: '8dp'
-                            BoxLayout:
-                                size_hint_y: None
-                                height: '30dp'
-                                canvas.before:
-                                    Color:
-                                        rgba: utils.get_color_from_hex('#111c30')
-                                    Rectangle:
-                                        pos: self.pos
-                                        size: self.size
-                                ToggleButton:
-                                    text: "DM Std ± Tol"
-                                    group: 't3_sub'
-                                    state: 'down'
-                                    background_normal: ''
-                                    background_down: ''
-                                    background_color: utils.get_color_from_hex('#4CAF50') if self.state == 'down' else utils.get_color_from_hex('#111c30')
-                                    color: (0,0,0,1) if self.state == 'down' else utils.get_color_from_hex('#ffdd00')
-                                    bold: True if self.state == 'down' else False
-                                    on_state: if self.state == 'down': app.t3_sub_mode = 'DM'
-                                ToggleButton:
-                                    text: "Decimal Std ± Tol"
-                                    group: 't3_sub'
-                                    background_normal: ''
-                                    background_down: ''
-                                    background_color: utils.get_color_from_hex('#4CAF50') if self.state == 'down' else utils.get_color_from_hex('#111c30')
-                                    color: (0,0,0,1) if self.state == 'down' else utils.get_color_from_hex('#ffdd00')
-                                    bold: True if self.state == 'down' else False
-                                    on_state: if self.state == 'down': app.t3_sub_mode = 'DD'
-                            
-                            BoxLayout:
-                                orientation: 'vertical'
-                                size_hint_y: None
-                                height: self.minimum_height
-                                padding: '3dp'
-                                spacing: '3dp'
-                                canvas.before:
-                                    Color:
-                                        rgba: utils.get_color_from_hex('#2a3a50')
-                                    Line:
-                                        rectangle: self.x, self.y, self.width, self.height
-                                        width: 1
-                                SectionTitle:
-                                    text: " FRONT WHEEL - STD/TOL"
-                                BoxLayout:
-                                    size_hint_y: None
-                                    height: '25dp'
-                                    CheckBox:
-                                        group: 't3_f_toe'
-                                        active: True
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        on_active: app.t3_f_toe_type = 'DEG' if self.active else 'MM'
-                                    Label:
-                                        text: 'Degree'
-                                        size_hint_x: None
-                                        width: '50dp'
-                                        font_size: '11sp'
-                                    CheckBox:
-                                        group: 't3_f_toe'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                    Label:
-                                        text: 'mm'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        font_size: '11sp'
-                                InputRow:
-                                    id: t3_fToeStd
-                                    lbl_text: "Toe Std *"
-                                    unit_text: 'Val' if app.t3_f_toe_type == 'DEG' else 'mm'
-                                InputRow:
-                                    id: t3_fToeTol
-                                    lbl_text: "Toe Tol *"
-                                    unit_text: 'Tol' if app.t3_f_toe_type == 'DEG' else 'mm'
-                                InputRow:
-                                    id: t3_fCamStd
-                                    lbl_text: "Camber Std *"
-                                    unit_text: 'Val'
-                                InputRow:
-                                    id: t3_fCamTol
-                                    lbl_text: "Camber Tol *"
-                                    unit_text: 'Tol'
-                                InputRow:
-                                    id: t3_fCasStd
-                                    lbl_text: "Castor Std *"
-                                    unit_text: 'Val'
-                                InputRow:
-                                    id: t3_fCasTol
-                                    lbl_text: "Castor Tol *"
-                                    unit_text: 'Tol'
-
-                            BoxLayout:
-                                orientation: 'vertical'
-                                size_hint_y: None
-                                height: self.minimum_height
-                                padding: '3dp'
-                                spacing: '3dp'
-                                canvas.before:
-                                    Color:
-                                        rgba: utils.get_color_from_hex('#2a3a50')
-                                    Line:
-                                        rectangle: self.x, self.y, self.width, self.height
-                                        width: 1
-                                SectionTitle:
-                                    text: " REAR WHEEL (OPTIONAL)"
-                                BoxLayout:
-                                    size_hint_y: None
-                                    height: '25dp'
-                                    CheckBox:
-                                        group: 't3_r_toe'
-                                        active: True
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        on_active: app.t3_r_toe_type = 'DEG' if self.active else 'MM'
-                                    Label:
-                                        text: 'Degree'
-                                        size_hint_x: None
-                                        width: '50dp'
-                                        font_size: '11sp'
-                                    CheckBox:
-                                        group: 't3_r_toe'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                    Label:
-                                        text: 'mm'
-                                        size_hint_x: None
-                                        width: '30dp'
-                                        font_size: '11sp'
-                                InputRow:
-                                    id: t3_rToeStd
-                                    lbl_text: "Toe Std"
-                                    unit_text: 'Val' if app.t3_r_toe_type == 'DEG' else 'mm'
-                                InputRow:
-                                    id: t3_rToeTol
-                                    lbl_text: "Toe Tol"
-                                    unit_text: 'Tol' if app.t3_r_toe_type == 'DEG' else 'mm'
-                                InputRow:
-                                    id: t3_rCamStd
-                                    lbl_text: "Camber Std"
-                                    unit_text: 'Val'
-                                InputRow:
-                                    id: t3_rCamTol
-                                    lbl_text: "Camber Tol"
-                                    unit_text: 'Tol'
-
-                Button:
-                    text: "CALCULATE"
-                    font_size: '14sp'
-                    bold: True
-                    size_hint_y: None
-                    height: '40dp'
-                    background_normal: ''
-                    background_color: utils.get_color_from_hex('#0055aa')
-                    on_release: app.calculate_results()
-
-            # CARD 2: RESULTS
-            BoxLayout:
-                orientation: 'vertical'
-                size_hint_y: None
-                height: self.minimum_height
-                padding: '5dp'
-                spacing: '5dp'
-                canvas.before:
-                    Color:
-                        rgba: utils.get_color_from_hex('#121926')
-                    Rectangle:
-                        pos: self.pos
-                        size: self.size
-                    Color:
-                        rgba: utils.get_color_from_hex('#00ddff')
-                    Line:
-                        rectangle: self.x, self.y, self.width, self.height
-                        width: 1
-
-                HeaderLabel:
-                    text: " 2. CALCULATION RESULTS "
-                
-                BoxLayout:
-                    id: results_container
-                    orientation: 'vertical'
-                    size_hint_y: None
-                    height: self.minimum_height
-                    spacing: 1
-                    canvas.before:
-                        Color:
-                            rgba: utils.get_color_from_hex('#1a2333')
-                        Rectangle:
-                            pos: self.pos
-                            size: self.size
-"""
-
-class AlignmentApp(App):
-    t1_f_toe_type = StringProperty('DM')
-    t1_r_toe_type = StringProperty('DM')
-    t2_f_toe_type = StringProperty('DD')
-    t2_r_toe_type = StringProperty('DD')
-    t3_sub_mode = StringProperty('DM')
-    t3_f_toe_type = StringProperty('DEG')
-    t3_r_toe_type = StringProperty('DEG')
-
+class HC05GamepadApp(App):
     def build(self):
-        root = Builder.load_string(KV)
-        self.show_placeholder(root.ids.results_container)
-        return root
+        self.title = "HC-05 Pro Gamepad"
+        self.btn_state = {'brake': False, 'park': False, 'head': False}
+        self.pressed_keys = set()
+        self.speed = 4
+        self.bt_socket = None
+        self.bt_writer = None
 
-    def get_all_textinputs(self, parent):
-        inputs = []
-        if not parent: return inputs
-        for child in reversed(parent.children):
-            if isinstance(child, TextInput):
-                inputs.append(child)
-            else:
-                inputs.extend(self.get_all_textinputs(child))
-        return inputs
+        self.load_settings()
 
-    def focus_next(self, current_input):
-        rim_input = self.root.ids.inp_common_rim
-        active_tab = self.root.ids.sm.current_screen
-        all_inputs = [rim_input] + self.get_all_textinputs(active_tab)
+        self.main_layout = BoxLayout(orientation='vertical')
+        with self.main_layout.canvas.before:
+            Color(rgba=get_color_from_hex('#0a192f'))
+            RoundedRectangle(pos=(0, 0), size=(10000, 10000))
+
+        # ૧. Status Bar
+        self.status_bar = Label(
+            text="Disconnected", size_hint_y=None, height=35,
+            color=get_color_from_hex('#ffffff'), font_size='14sp', bold=True
+        )
+        self.update_status_bar(False)
+        self.main_layout.add_widget(self.status_bar)
+
+        # ૨. Top Action Bar (ઊંચાઈ ડબલ કરી, લેબલ હટાવી આખી સ્ક્રીનમાં ફિટ કર્યું)
+        top_bar = BoxLayout(size_hint_y=None, height=90, padding=8, spacing=8)
+        with top_bar.canvas.before:
+            Color(rgba=get_color_from_hex('#112240'))
+            RoundedRectangle(pos=top_bar.pos, size=top_bar.size)
+
+        # એક્શન બટન્સ (બધાને આખી જગ્યા સરખે ભાગે મળશે)
+        self.btn_brake = Button(text="BRAKE", font_size='16sp', bold=True, background_color=get_color_from_hex('#1e3a5f'), color=get_color_from_hex('#ccd6f6'))
+        self.btn_brake.bind(on_release=lambda x: self.toggle_btn('brake', 'K', self.btn_brake))
+        top_bar.add_widget(self.btn_brake)
+
+        self.btn_park = Button(text="PARK", font_size='16sp', bold=True, background_color=get_color_from_hex('#1e3a5f'), color=get_color_from_hex('#ccd6f6'))
+        self.btn_park.bind(on_release=lambda x: self.toggle_btn('park', 'P', self.btn_park))
+        top_bar.add_widget(self.btn_park)
+
+        self.btn_head = Button(text="HEAD", font_size='16sp', bold=True, background_color=get_color_from_hex('#1e3a5f'), color=get_color_from_hex('#ccd6f6'))
+        self.btn_head.bind(on_release=lambda x: self.toggle_btn('head', 'H', self.btn_head))
+        top_bar.add_widget(self.btn_head)
+
+        self.btn_horn = Button(
+            text="HORN", font_size='16sp', bold=True,
+            background_normal='', background_color=get_color_from_hex('#ff6d00'),
+            color=get_color_from_hex('#ffffff')
+        )
+        self.btn_horn.bind(on_press=lambda x: self.send_momentary('O', self.btn_horn))
+        self.btn_horn.bind(on_release=lambda x: self.release_momentary(self.btn_horn))
+        top_bar.add_widget(self.btn_horn)
+
+        # સેટીંગ્સ બટન (થોડું નાનું રાખ્યું છે જેથી બીજા બટન મોટા દેખાય)
+        btn_setting = Button(text="⚙", font_size='26sp', size_hint_x=0.5, background_color=get_color_from_hex('#64ffda'), color=get_color_from_hex('#0a192f'))
+        btn_setting.bind(on_release=lambda x: self.show_settings_popup())
+        top_bar.add_widget(btn_setting)
+
+        self.main_layout.add_widget(top_bar)
+
+        # ૩. Slider & Connect Box (આની ઊંચાઈ પણ વધારી દીધી)
+        slider_box = BoxLayout(size_hint_y=None, height=75, padding=10, spacing=10)
         
-        try:
-            idx = all_inputs.index(current_input)
-            if idx + 1 < len(all_inputs):
-                all_inputs[idx + 1].focus = True
-            else:
-                self.calculate_results()
-        except ValueError:
-            pass
+        self.lbl_speed = Label(text=f"Speed {self.speed}/9:", font_size='16sp', bold=True, color=get_color_from_hex('#8892b0'), size_hint_x=0.3)
+        slider_box.add_widget(self.lbl_speed)
 
-    def show_placeholder(self, container, text_msg="Click 'CALCULATE' to see results.", color_hex='#888888'):
-        container.clear_widgets()
-        container.add_widget(Label(
-            text=text_msg,
-            font_size='12sp',
-            italic=True,
-            bold=True if color_hex != '#888888' else False,
-            color=get_color_from_hex(color_hex),
-            size_hint_y=None, height='40dp'
-        ))
+        self.speed_slider = Slider(min=0, max=9, value=self.speed, step=1, size_hint_x=0.5)
+        self.speed_slider.bind(value=self.on_slider_change)
+        slider_box.add_widget(self.speed_slider)
 
-    def write_table_header(self, container):
-        grid = GridLayout(cols=4, size_hint_y=None, height='30dp', spacing=1)
-        headers = ["Param", "Min", "Max", "Std ± Tol"]
-        for text in headers:
-            grid.add_widget(ResultHeaderCell(lbl_text=text))
-        container.add_widget(grid)
+        self.btn_connect = Button(text="Connect", font_size='16sp', bold=True, size_hint_x=0.3, background_color=get_color_from_hex('#2962ff'), color=get_color_from_hex('#ffffff'))
+        self.btn_connect.bind(on_release=lambda x: self.toggle_bluetooth())
+        slider_box.add_widget(self.btn_connect)
 
-    def write_table_row(self, container, label, std, tol, min_val, max_val):
-        if min_val == "-" or min_val is None: return
+        self.main_layout.add_widget(slider_box)
 
-        grid = GridLayout(cols=4, size_hint_y=None, height='40dp', spacing=1)
+        # ૪. Main Controls Wrapper
+        control_wrap = BoxLayout(orientation='horizontal', padding=12, spacing=15)
+
+        # ડાબી બાજુ
+        left_side = BoxLayout(orientation='vertical', size_hint_x=0.4, spacing=15)
+        # તીરના નિશાન ની જગ્યાએ ટેક્સ્ટ યુઝ કર્યું છે જેથી [X] બોક્સ ના આવે
+        self.btn_f = GlowButton(text="UP", font_size='28sp', bold=True)
+        self.btn_f.bind(on_press=lambda x: self.press_key('F', self.btn_f))
+        self.btn_f.bind(on_release=lambda x: self.release_key('F', self.btn_f))
         
-        grid.add_widget(ResultLabelCell(lbl_text=label))
-        
-        grid.add_widget(ResultDataCell(
-            lbl_top=self.dd_to_dm_str(min_val), 
-            lbl_bot=f"({min_val:.2f}°)" if min_val != "-" else "-"
-        ))
-        
-        grid.add_widget(ResultDataCell(
-            lbl_top=self.dd_to_dm_str(max_val), 
-            lbl_bot=f"({max_val:.2f}°)" if max_val != "-" else "-"
-        ))
-        
-        dm_std = self.dd_to_dm_str(std)
-        dm_tol = self.dd_to_dm_str(tol)
-        grid.add_widget(ResultDataCell(
-            lbl_top=f"{dm_std} ± {dm_tol}", 
-            lbl_bot=f"({std:.2f}°±{tol:.2f}°)"
-        ))
-        
-        container.add_widget(grid)
+        self.btn_b = GlowButton(text="DOWN", font_size='28sp', bold=True)
+        self.btn_b.bind(on_press=lambda x: self.press_key('B', self.btn_b))
+        self.btn_b.bind(on_release=lambda x: self.release_key('B', self.btn_b))
 
-    def dm_to_dd(self, val_str):
-        if not val_str or str(val_str).strip() == "": return None
-        try:
-            num = float(val_str)
-            sign = -1.0 if num < 0 or math.copysign(1.0, num) < 0 else 1.0
-            abs_v = abs(num)
-            deg = math.floor(abs_v)
-            m = (abs_v - deg) * 100.0
-            return sign * (deg + m/60.0)
-        except: return None
+        left_side.add_widget(self.btn_f)
+        left_side.add_widget(self.btn_b)
+        control_wrap.add_widget(left_side)
 
-    def mm_to_dd(self, mm_val, rim_inch):
-        if not mm_val or not rim_inch or rim_inch <= 0: return 0.0
-        try:
-            r_mm = rim_inch * 25.4
-            return math.asin(float(mm_val) / r_mm) * (180.0 / math.pi)
-        except: return 0.0
+        # જમણી બાજુ
+        right_side = BoxLayout(orientation='horizontal', size_hint_x=0.6, spacing=15)
+        self.btn_l = GlowButton(text="LEFT", font_size='28sp', bold=True)
+        self.btn_l.bind(on_press=lambda x: self.press_key('L', self.btn_l))
+        self.btn_l.bind(on_release=lambda x: self.release_key('L', self.btn_l))
 
-    def dd_to_dm_str(self, dd_val):
-        if dd_val == "-" or dd_val is None or isinstance(dd_val, str): return "-"
-        neg = dd_val < 0 or math.copysign(1.0, dd_val) < 0
-        abs_v = abs(dd_val)
-        d = math.floor(abs_v)
-        m = round((abs_v - d) * 60.0)
-        if m >= 60: 
-            d += 1
-            m = 0
-        return f"{'-' if neg else ''}{d}°{m:02d}'"
+        self.btn_r = GlowButton(text="RIGHT", font_size='28sp', bold=True)
+        self.btn_r.bind(on_press=lambda x: self.press_key('R', self.btn_r))
+        self.btn_r.bind(on_release=lambda x: self.release_key('R', self.btn_r))
 
-    def safe_float(self, s):
-        try: return float(s) if str(s).strip()!="" else None
-        except: return None
+        right_side.add_widget(self.btn_l)
+        right_side.add_widget(self.btn_r)
+        control_wrap.add_widget(right_side)
 
-    def get_val(self, id_name):
-        return self.root.ids[id_name].ids.inner_input.text
+        self.main_layout.add_widget(control_wrap)
+        return self.main_layout
 
-    def calculate_results(self):
-        common_rim = self.safe_float(self.root.ids.inp_common_rim.text)
-        current_tab = self.root.ids.sm.current
-        container = self.root.ids.results_container
-        
-        # --- 1. Rim Size ની Compulsory ચકાસણી (Validation) ---
-        is_mm_selected = False
-        if current_tab == 'tab1' and (self.t1_f_toe_type == 'MM' or self.t1_r_toe_type == 'MM'):
-            is_mm_selected = True
-        elif current_tab == 'tab2' and (self.t2_f_toe_type == 'MM' or self.t2_r_toe_type == 'MM'):
-            is_mm_selected = True
-        elif current_tab == 'tab3' and (self.t3_f_toe_type == 'MM' or self.t3_r_toe_type == 'MM'):
-            is_mm_selected = True
-            
-        if is_mm_selected and (common_rim is None or common_rim <= 0):
-            self.show_placeholder(container, "Please enter ream size to calculate", color_hex='#ff3333')
-            return # ગણતરી અટકાવી દો 
-        # --------------------------------------------------------
+    def toggle_bluetooth(self):
+        if self.bt_socket:
+            self.disconnect_bluetooth()
+            return
 
-        fToeMin, fToeMax, fToeStd, fToeTol = "-", "-", "-", "-"
-        fCamMin, fCamMax, fCamStd, fCamTol = "-", "-", "-", "-"
-        fCasMin, fCasMax, fCasStd, fCasTol = "-", "-", "-", "-"
-        rToeMin, rToeMax, rToeStd, rToeTol = "-", "-", "-", "-"
-        rCamMin, rCamMax, rCamStd, rCamTol = "-", "-", "-", "-"
+        if platform != 'android' or BluetoothAdapter is None:
+            self.update_status_bar(True)
+            self.btn_connect.text = "Disconnect"
+            self.btn_connect.background_color = get_color_from_hex('#d32f2f')
+            self.bt_socket = "PC_DUMMY_CONNECTION"
+            return
 
         try:
-            if current_tab == 'tab1':
-                t_min, t_max = self.get_val('t1_fToeMin'), self.get_val('t1_fToeMax')
-                fToeMin = self.mm_to_dd(t_min, common_rim) if self.t1_f_toe_type=="MM" else self.dm_to_dd(t_min)
-                fToeMax = self.mm_to_dd(t_max, common_rim) if self.t1_f_toe_type=="MM" else self.dm_to_dd(t_max)
-                if fToeMin is not None and fToeMax is not None:
-                    fToeStd = (fToeMax + fToeMin)/2; fToeTol = abs(fToeMax - fToeMin)/2
-                
-                c_min, c_max = self.get_val('t1_fCamMin'), self.get_val('t1_fCamMax')
-                fCamMin = self.dm_to_dd(c_min); fCamMax = self.dm_to_dd(c_max)
-                if fCamMin is not None and fCamMax is not None:
-                    fCamStd = (fCamMax+fCamMin)/2; fCamTol = abs(fCamMax-fCamMin)/2
-                
-                ca_min, ca_max = self.get_val('t1_fCasMin'), self.get_val('t1_fCasMax')
-                fCasMin = self.dm_to_dd(ca_min); fCasMax = self.dm_to_dd(ca_max)
-                if fCasMin is not None and fCasMax is not None:
-                    fCasStd = (fCasMax+fCasMin)/2; fCasTol = abs(fCasMax-fCasMin)/2
+            adapter = BluetoothAdapter.getDefaultAdapter()
+            if not adapter:
+                messagebox_kivy("Error", "બ્લૂટૂથ હાર્ડવેર સપોર્ટ કરતું નથી!")
+                return
+            if not adapter.isEnabled():
+                messagebox_kivy("Bluetooth Disabled", "કૃપા કરીને પહેલા મોબાઈલનું બ્લૂટૂથ ચાલુ કરો!")
+                return
 
-                rt_min, rt_max = self.get_val('t1_rToeMin'), self.get_val('t1_rToeMax')
-                if rt_min and rt_max:
-                    rToeMin = self.mm_to_dd(rt_min, common_rim) if self.t1_r_toe_type=="MM" else self.dm_to_dd(rt_min)
-                    rToeMax = self.mm_to_dd(rt_max, common_rim) if self.t1_r_toe_type=="MM" else self.dm_to_dd(rt_max)
-                    rToeStd = (rToeMax+rToeMin)/2; rToeTol = abs(rToeMax-rToeMin)/2
-                    
-                rc_min, rc_max = self.get_val('t1_rCamMin'), self.get_val('t1_rCamMax')
-                if rc_min and rc_max:
-                    rCamMin = self.dm_to_dd(rc_min); rCamMax = self.dm_to_dd(rc_max)
-                    rCamStd = (rCamMax+rCamMin)/2; rCamTol = abs(rCamMax-rCamMin)/2
+            paired_devices = adapter.getBondedDevices().toArray()
+            hc05_device = None
+            for device in paired_devices:
+                if "HC-05" in device.getName() or "HC-06" in device.getName():
+                    hc05_device = device
+                    break
 
-            elif current_tab == 'tab2':
-                t_min, t_max = self.safe_float(self.get_val('t2_fToeMin')), self.safe_float(self.get_val('t2_fToeMax'))
-                fToeMin = self.mm_to_dd(t_min, common_rim) if self.t2_f_toe_type=="MM" else t_min
-                fToeMax = self.mm_to_dd(t_max, common_rim) if self.t2_f_toe_type=="MM" else t_max
-                if fToeMin is not None and fToeMax is not None:
-                    fToeStd = (fToeMax+fToeMin)/2; fToeTol = abs(fToeMax-fToeMin)/2
-                
-                fCamMin = self.safe_float(self.get_val('t2_fCamMin')); fCamMax = self.safe_float(self.get_val('t2_fCamMax'))
-                if fCamMin is not None and fCamMax is not None:
-                    fCamStd = (fCamMax+fCamMin)/2; fCamTol = abs(fCamMax-fCamMin)/2
-                
-                fCasMin = self.safe_float(self.get_val('t2_fCasMin')); fCasMax = self.safe_float(self.get_val('t2_fCasMax'))
-                if fCasMin is not None and fCasMax is not None:
-                    fCasStd = (fCasMax+fCasMin)/2; fCasTol = abs(fCasMax-fCasMin)/2
+            if not hc05_device:
+                messagebox_kivy("HC-05 Not Found", "તમારા ફોનમાં HC-05 બ્લૂટૂથ પેર કરેલું હોવું જોઈએ!")
+                return
 
-                rt_min, rt_max = self.safe_float(self.get_val('t2_rToeMin')), self.safe_float(self.get_val('t2_rToeMax'))
-                if rt_min is not None and rt_max is not None:
-                    rToeMin = self.mm_to_dd(rt_min, common_rim) if self.t2_r_toe_type=="MM" else rt_min
-                    rToeMax = self.mm_to_dd(rt_max, common_rim) if self.t2_r_toe_type=="MM" else rt_max
-                    rToeStd = (rToeMax+rToeMin)/2; rToeTol = abs(rToeMax-rToeMin)/2
-                    
-                rc_min, rc_max = self.safe_float(self.get_val('t2_rCamMin')), self.safe_float(self.get_val('t2_rCamMax'))
-                if rc_min is not None and rc_max is not None:
-                    rCamMin = rc_min; rCamMax = rc_max; rCamStd = (rc_max+rc_min)/2; rCamTol = abs(rc_max-rc_min)/2
+            s_uuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb")
+            self.bt_socket = hc05_device.createRfcommSocketToServiceRecord(s_uuid)
+            self.bt_socket.connect()
+            self.bt_writer = self.bt_socket.getOutputStream()
 
-            elif current_tab == 'tab3':
-                std_raw, tol_raw = self.get_val('t3_fToeStd'), self.get_val('t3_fToeTol')
-                if self.t3_sub_mode == "DM":
-                    fToeStd = self.mm_to_dd(std_raw, common_rim) if self.t3_f_toe_type=="MM" else self.dm_to_dd(std_raw)
-                    fToeTol = self.mm_to_dd(tol_raw, common_rim) if self.t3_f_toe_type=="MM" else abs(self.dm_to_dd(tol_raw) or 0)
-                    fCamStd = self.dm_to_dd(self.get_val('t3_fCamStd')); fCamTol = abs(self.dm_to_dd(self.get_val('t3_fCamTol')) or 0)
-                    fCasStd = self.dm_to_dd(self.get_val('t3_fCasStd')); fCasTol = abs(self.dm_to_dd(self.get_val('t3_fCasTol')) or 0)
-                else:
-                    fToeStd = self.mm_to_dd(std_raw, common_rim) if self.t3_f_toe_type=="MM" else self.safe_float(std_raw)
-                    fToeTol = self.mm_to_dd(tol_raw, common_rim) if self.t3_f_toe_type=="MM" else abs(self.safe_float(tol_raw) or 0)
-                    fCamStd = self.safe_float(self.get_val('t3_fCamStd')); fCamTol = abs(self.safe_float(self.get_val('t3_fCamTol')) or 0)
-                    fCasStd = self.safe_float(self.get_val('t3_fCasStd')); fCasTol = abs(self.safe_float(self.get_val('t3_fCasTol')) or 0)
-                
-                if fToeStd is not None and fToeTol is not None:
-                    fToeMin = fToeStd - fToeTol; fToeMax = fToeStd + fToeTol
-                if fCamStd is not None and fCamTol is not None:
-                    fCamMin = fCamStd - fCamTol; fCamMax = fCamStd + fCamTol
-                if fCasStd is not None and fCasTol is not None:
-                    fCasMin = fCasStd - fCasTol; fCasMax = fCasStd + fCasTol
-
-                r_std, r_tol = self.get_val('t3_rToeStd'), self.get_val('t3_rToeTol')
-                if r_std and r_tol:
-                    if self.t3_sub_mode == "DM":
-                        rToeStd = self.mm_to_dd(r_std, common_rim) if self.t3_r_toe_type=="MM" else self.dm_to_dd(r_std)
-                        rToeTol = self.mm_to_dd(r_tol, common_rim) if self.t3_r_toe_type=="MM" else abs(self.dm_to_dd(r_tol) or 0)
-                    else:
-                        rToeStd = self.mm_to_dd(r_std, common_rim) if self.t3_r_toe_type=="MM" else self.safe_float(r_std)
-                        rToeTol = self.mm_to_dd(r_tol, common_rim) if self.t3_r_toe_type=="MM" else abs(self.safe_float(r_tol) or 0)
-                    if rToeStd is not None and rToeTol is not None:
-                        rToeMin = rToeStd - rToeTol; rToeMax = rToeStd + rToeTol
-
-                rc_std, rc_tol = self.get_val('t3_rCamStd'), self.get_val('t3_rCamTol')
-                if rc_std and rc_tol:
-                    rCamStd = self.dm_to_dd(rc_std) if self.t3_sub_mode=="DM" else self.safe_float(rc_std)
-                    rCamTol = abs(self.dm_to_dd(rc_tol) or 0) if self.t3_sub_mode=="DM" else abs(self.safe_float(rc_tol) or 0)
-                    if rCamStd is not None and rCamTol is not None:
-                        rCamMin = rCamStd - rCamTol; rCamMax = rCamStd + rCamTol
-
-            container.clear_widgets()
-            self.write_table_header(container)
-
-            row_added = False
-            if fToeMin != "-" and fToeMin is not None: 
-                self.write_table_row(container, "Front Toe", fToeStd, fToeTol, fToeMin, fToeMax); row_added = True
-            if fCamMin != "-" and fCamMin is not None: 
-                self.write_table_row(container, "Front Camber", fCamStd, fCamTol, fCamMin, fCamMax); row_added = True
-            if fCasMin != "-" and fCasMin is not None: 
-                self.write_table_row(container, "Front Castor", fCasStd, fCasTol, fCasMin, fCasMax); row_added = True
-            if rToeMin != "-" and rToeMin is not None: 
-                self.write_table_row(container, "Rear Toe", rToeStd, rToeTol, rToeMin, rToeMax); row_added = True
-            if rCamMin != "-" and rCamMin is not None: 
-                self.write_table_row(container, "Rear Camber", rCamStd, rCamTol, rCamMin, rCamMax); row_added = True
-
-            if not row_added:
-                self.show_placeholder(container, "કોઈ માહિતી દાખલ કરેલ નથી!")
+            self.update_status_bar(True)
+            self.btn_connect.text = "Disconnect"
+            self.btn_connect.background_color = get_color_from_hex('#d32f2f')
+            self.send_data(self.btn_map['S'] + "\n")
 
         except Exception as e:
-            container.clear_widgets()
-            container.add_widget(Label(text=f"Error: ખોટી કિંમત!\n{str(e)}", color=(1,0,0,1), font_size='12sp'))
-            print("Traceback:", traceback.format_exc())
+            self.disconnect_bluetooth()
+            messagebox_kivy("Connection Failed", f"કનેક્શન નિષ્ફળ: Pydroid માં બ્લૂટૂથ પરમિશન આપો. {str(e)}")
+
+    def disconnect_bluetooth(self):
+        try:
+            if self.bt_writer:
+                self.bt_writer.close()
+            if self.bt_socket and hasattr(self.bt_socket, 'close'):
+                self.bt_socket.close()
+        except:
+            pass
+        self.bt_socket = None
+        self.bt_writer = None
+        self.update_status_bar(False)
+        self.btn_connect.text = "Connect"
+        self.btn_connect.background_color = get_color_from_hex('#2962ff')
+
+    def send_data(self, data):
+        if not self.bt_socket or not self.bt_writer:
+            print(f"[No connection] Data not sent: {repr(data)}")
+            return
+            
+        try:
+            self.bt_writer.write(bytearray(data, 'utf-8'))
+        except Exception as e:
+            print("BT Send Error:", e)
+            self.disconnect_bluetooth()
+
+    def update_status_bar(self, connected):
+        if connected:
+            self.status_bar.text = "Connected via Bluetooth Serial Mode!"
+            with self.status_bar.canvas.before:
+                Color(rgba=get_color_from_hex('#00c853'))
+                RoundedRectangle(pos=self.status_bar.pos, size=self.status_bar.size)
+        else:
+            self.status_bar.text = "Disconnected"
+            with self.status_bar.canvas.before:
+                Color(rgba=get_color_from_hex('#d32f2f'))
+                RoundedRectangle(pos=self.status_bar.pos, size=self.status_bar.size)
+
+    def press_key(self, key, widget):
+        widget.on_state_change(True)
+        if key == 'F' and 'B' in self.pressed_keys: self.pressed_keys.remove('B')
+        if key == 'B' and 'F' in self.pressed_keys: self.pressed_keys.remove('F')
+        if key == 'L' and 'R' in self.pressed_keys: self.pressed_keys.remove('R')
+        if key == 'R' and 'L' in self.pressed_keys: self.pressed_keys.remove('L')
+
+        self.pressed_keys.add(key)
+        self.check_and_send_combo()
+
+    def release_key(self, key, widget):
+        widget.on_state_change(False)
+        if key in self.pressed_keys:
+            self.pressed_keys.remove(key)
+        self.send_data(self.btn_map['S'] + "\n")
+
+    def check_and_send_combo(self):
+        cmd = self.btn_map['S']
+        if 'F' in self.pressed_keys and 'L' in self.pressed_keys:
+            cmd = self.btn_map['FL']
+        elif 'F' in self.pressed_keys and 'R' in self.pressed_keys:
+            cmd = self.btn_map['FR']
+        elif 'B' in self.pressed_keys and 'L' in self.pressed_keys:
+            cmd = self.btn_map['BL']
+        elif 'B' in self.pressed_keys and 'R' in self.pressed_keys:
+            cmd = self.btn_map['BR']
+        elif 'F' in self.pressed_keys:
+            cmd = self.btn_map['F']
+        elif 'B' in self.pressed_keys:
+            cmd = self.btn_map['B']
+        elif 'L' in self.pressed_keys:
+            cmd = self.btn_map['L']
+        elif 'R' in self.pressed_keys:
+            cmd = self.btn_map['R']
+            
+        self.send_data(cmd + "\n")
+
+    def send_momentary(self, key, widget):
+        self.send_data(self.btn_map[key] + "\n")
+        widget.background_color = get_color_from_hex('#ffab40')
+
+    def release_momentary(self, widget):
+        widget.background_color = get_color_from_hex('#ff6d00')
+
+    def on_slider_change(self, instance, value):
+        self.speed = int(value)
+        self.lbl_speed.text = f"Speed {self.speed}/9:"
+        self.send_data(self.btn_map[f'S{self.speed}'] + "\n")
+
+    def toggle_btn(self, type_name, key, widget):
+        self.btn_state[type_name] = not self.btn_state[type_name]
+        if self.btn_state[type_name]:
+            widget.background_color = get_color_from_hex('#64ffda')
+            widget.color = get_color_from_hex('#0a192f')
+            state = '1'
+        else:
+            widget.background_color = get_color_from_hex('#1e3a5f')
+            widget.color = get_color_from_hex('#ccd6f6')
+            state = '0'
+        self.send_data(self.btn_map[key] + state + "\n")
+
+    def show_settings_popup(self):
+        popup_layout = BoxLayout(orientation='vertical', padding=10, spacing=8)
+        scroll_view = ScrollView()
+        grid = GridLayout(cols=2, spacing=10, size_hint_y=None)
+        grid.bind(minimum_height=grid.setter('height'))
+
+        self.inputs = {}
+        keys_to_show = [
+            ('Forward (F)', 'F'), ('Backward (B)', 'B'), ('Left (L)', 'L'), ('Right (R)', 'R'),
+            ('Stop (S)', 'S'), ('Brake (K)', 'K'), ('Park Light (P)', 'P'), ('Head Light (H)', 'H'),
+            ('Horn (O)', 'O'), ('F + L Combo', 'FL'), ('F + R Combo', 'FR'), ('B + L Combo', 'BL'), ('B + R Combo', 'BR')
+        ]
+        for i in range(10):
+            keys_to_show.append((f'Speed {i}', f'S{i}'))
+
+        for label_text, map_key in keys_to_show:
+            lbl = Label(text=label_text, size_hint_y=None, height=30, color=get_color_from_hex('#ccd6f6'))
+            txt_input = TextInput(
+                text=self.btn_map[map_key], size_hint_y=None, height=35,
+                multiline=False, background_color=get_color_from_hex('#0a192f'),
+                foreground_color=get_color_from_hex('#64ffda'), cursor_color=get_color_from_hex('#64ffda')
+            )
+            grid.add_widget(lbl)
+            grid.add_widget(txt_input)
+            self.inputs[map_key] = txt_input
+
+        scroll_view.add_widget(grid)
+        popup_layout.add_widget(scroll_view)
+
+        btn_save = Button(text="Save & Close", size_hint_y=None, height=50, font_size='16sp', background_color=get_color_from_hex('#00c853'), color=get_color_from_hex('#0a192f'), bold=True)
+        popup_layout.add_widget(btn_save)
+
+        popup = Popup(
+            title="Button Value Settings", content=popup_layout,
+            size_hint=(0.95, 0.9), background_color=get_color_from_hex('#112240')
+        )
+        btn_save.bind(on_release=lambda x: self.save_settings(popup))
+        popup.open()
+
+    def save_settings(self, popup):
+        for key, text_widget in self.inputs.items():
+            self.btn_map[key] = text_widget.text.strip()
+        
+        with open('btn_settings.json', 'w') as f:
+            json.dump(self.btn_map, f)
+        
+        popup.dismiss()
+
+    def load_settings(self):
+        self.btn_map = {
+            'F': 'F', 'B': 'B', 'L': 'L', 'R': 'R', 'S': 'S',
+            'K': 'K', 'P': 'P', 'H': 'H', 'O': 'O',
+            'FL': 'A', 'FR': 'C', 'BL': 'D', 'BR': 'E',
+            'S0': '0', 'S1': '1', 'S2': '2', 'S3': '3', 'S4': '4',
+            'S5': '5', 'S6': '6', 'S7': '7', 'S8': '8', 'S9': '9'
+        }
+        if os.path.exists('btn_settings.json'):
+            try:
+                with open('btn_settings.json', 'r') as f:
+                    self.btn_map.update(json.load(f))
+            except:
+                pass
+
+
+def messagebox_kivy(title, text):
+    box = BoxLayout(orientation='vertical', padding=10, spacing=10)
+    box.add_widget(Label(text=text, color=get_color_from_hex('#ccd6f6')))
+    btn_ok = Button(text="OK", size_hint_y=None, height=45, bold=True, background_color=get_color_from_hex('#64ffda'), color=get_color_from_hex('#0a192f'))
+    box.add_widget(btn_ok)
+    popup = Popup(title=title, content=box, size_hint=(0.8, 0.4))
+    btn_ok.bind(on_release=popup.dismiss)
+    popup.open()
+
 
 if __name__ == "__main__":
-    AlignmentApp().run()
+    HC05GamepadApp().run()
