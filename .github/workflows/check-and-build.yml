@@ -1,6 +1,8 @@
 name: Check and Build Android Dropbear
 on:
   push:
+    paths-ignore:
+      - 'bin/**' # bin માં commit થાય ત્યારે ફરીથી trigger ન થાય
   workflow_dispatch:
 
 env:
@@ -38,6 +40,7 @@ jobs:
       - name: Download and Extract Dropbear Source
         run: |
           TAG="${{ steps.latest_release.outputs.result }}"
+          echo "Building Dropbear Tag: $TAG"
           curl -f -L "https://github.com/${{ env.SRC_OWNER }}/${{ env.SRC_REPO }}/archive/refs/tags/${TAG}.tar.gz" -o dropbear.tar.gz
           tar -xzf dropbear.tar.gz
           mv "dropbear-${TAG}" dropbear-src
@@ -61,7 +64,7 @@ jobs:
           export LDFLAGS="-static"
 
           autoreconf -fi
-          ./configure --host=$TARGET --disable-zlib --disable-utmp --disable-wtmp --disable-lastlog --enable-static ac_cv_func_getpgrp_void=yes
+          ./configure --host=$TARGET --disable-zlib --disable-utmp --disable-wtmp --disable-lastlog --disable-password-auth --enable-static ac_cv_func_getpgrp_void=yes
           make PROGRAMS="dropbear dbclient dropbearkey" STATIC=1 MULTI=1 -j$(nproc)
           $STRIP dropbearmulti
           mv dropbearmulti ../sshd_64
