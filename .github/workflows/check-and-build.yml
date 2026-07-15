@@ -59,7 +59,7 @@ jobs:
 
       - name: Download and Extract Dropbear Source
         run: |
-          curl -L "https://github.com/mkj/dropbear/archive/refs/tags/${DROPBEAR_VER}.tar.gz" -o dropbear.tar.gz
+          curl -L "https://github.com{DROPBEAR_VER}.tar.gz" -o dropbear.tar.gz
           tar -xzf dropbear.tar.gz
           mv "dropbear-${DROPBEAR_VER}" dropbear-src
 
@@ -71,8 +71,13 @@ jobs:
           export API=21
           export CC=$TOOLCHAIN/bin/$TARGET$API-clang
           
-          ./configure --host=$TARGET --disable-zlib --enable-static
-          make MULTI=1 dropbearmulti
+          # Fix Android NDK compatibility breaks
+          export CFLAGS="-O2 -Dcrypt=dropbear_crypt"
+          
+          ./configure --host=$TARGET --disable-zlib --disable-utmp --disable-wtmp --disable-lastlog --enable-static
+          
+          # Explicit compilation targets for multicall binaries
+          make PROGRAM=dropbearmulti dropbearmulti
           
           cp dropbearmulti ../dropbear-android-aarch64
 
@@ -80,8 +85,8 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          author: github-actions[bot] <41898282+github-actions[bot]@://github.com>
+          committer: github-actions[bot] <41898282+github-actions[bot]@://github.com>
           commit-message: "Update Dropbear Binary to ${{ env.DROPBEAR_VER }}"
           title: "Update Dropbear to ${{ env.DROPBEAR_VER }}"
           body: "Automated compile build for Android ARM64 utilizing version ${{ env.DROPBEAR_VER }}."
