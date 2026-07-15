@@ -1,0 +1,9 @@
+name: Test Workflow
+on: [push, workflow_dispatch]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Say Hello
+        run: echo "GitHub Actions કામ કરી રહ્યું છે!"
