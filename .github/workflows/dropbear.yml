@@ -20,8 +20,8 @@ jobs:
     - uses: actions/setup-java@v4
       with: { distribution: 'temurin', java-version: '17' }
 
-    # 🛠️ સ્ટેપ ૧: FORCE CLEAN
-    - name: 🧹 FORCE CLEAN: Wipe All Runner Cache
+    # 🛠️ સ્ટેપ ૧: FORCE CLEAN (અહીં સિન્ટેક્સ એરર હતી, ડબલ ક્વોટ્સ ઉમેર્યા છે)
+    - name: "🧹 FORCE CLEAN: Wipe All Runner Cache"
       run: |
         echo "🧼 Starting Force Clean..."
         rm -rf .buildozer/ .pytest_cache/ __pycache__/
@@ -73,7 +73,7 @@ jobs:
         python3 -m pip install --upgrade pip setuptools wheel
         python3 -m pip install --upgrade cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
-    # 🛠️ સ્ટેપ ૫: [તમારો સુધારો] - અહીં ડાયરેક્ટ Explicit Export ઉમેરી દીધું
+    # 🛠️ સ્ટેપ ૫: અહીં ડાયરેક્ટ Explicit Export ઉમેરી દીધું
     - name: Build APK
       run: |
         export ANDROID_SDK_ROOT=$HOME/android/sdk
