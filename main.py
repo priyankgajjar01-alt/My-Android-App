@@ -1,4 +1,4 @@
-#!/usr/bin/env python3. 
+#!/usr/bin/env python3
 import random
 import string
 import time
@@ -14,9 +14,10 @@ from threading import Thread
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
-from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
+from kivy.uix.anchorlayout import AnchorLayout
 from kivy.clock import Clock
+from kivy.graphics import Color, Rectangle
 from kivy.utils import platform
 
 try:
@@ -27,60 +28,82 @@ try:
 except ImportError:
     ANDROID = False
 
-class ATSStorageApp(App):
+class BoxLabel(Label):
+    def __init__(self, **kwargs):
+        super(BoxLabel, self).__init__(**kwargs)
+        self.font_size = '15sp'
+        self.color = (0, 0, 0, 1)
+        self.bold = True
+        self.halign = 'center'
+        self.valign = 'middle'
+        self.line_height = 1.3
+        self.size_hint_y = None
+        self.height = 55
+        self.bind(size=self._update_canvas, pos=self._update_canvas)
+
+    def _update_canvas(self, *args):
+        self.canvas.before.clear()
+        with self.canvas.before:
+            Color(0.92, 0.92, 0.92, 1)
+            Rectangle(pos=self.pos, size=self.size)
+        self.text_size = self.size
+
+class ISAClientApp(App):
     def build(self):
         self.title = "INTERNET STORAGE ACCESS"
         self.is_running = False  
         self.ssh_process = None
         
-        # ઓટો-જનરેટેડ 6-ડિજિટલ ID અને પાસવર્ડ
-        self.generated_id = "".join(random.choices(string.digits, k=6))
-        self.generated_password = "".join(random.choices(string.ascii_letters + string.digits, k=6))
-        
-        # મેઈન લેઆઉટ (Vertical)
-        self.root = BoxLayout(orientation='vertical', padding=25, spacing=15)
+        main_container = AnchorLayout(anchor_x='center', anchor_y='center', padding=30)
 
-        # 1. Title
-        self.root.add_widget(Label(
-            text="INTERNET STORAGE ACCESS", 
-            font_size='24sp', 
-            bold=True, 
-            size_hint_y=None, 
-            height=50
-        ))
+        self.root = BoxLayout(orientation='vertical', spacing=40, size_hint=(1, None))
+        self.root.bind(minimum_height=self.root.setter('height'))
 
-        # 2. Connection Status
-        self.lbl_conn = Label(
-            text="Connection - Offline", 
-            color=(1, 0, 0, 1), 
-            font_size='18sp', 
-            bold=True,
-            size_hint_y=None, 
-            height=40
-        )
+        # Title
+        lbl_title = Label(text="INTERNET STORAGE ACCESS", font_size='22sp', bold=True, size_hint_y=None, height=60, halign="center", valign="middle")
+        lbl_title.bind(size=lbl_title.setter('text_size'))
+        self.root.add_widget(lbl_title)
+
+        # Connection Status
+        self.lbl_conn = Label(text="Connection - Offline", color=(1, 0, 0, 1), font_size='18sp', bold=True, size_hint_y=None, height=45, halign="center", valign="middle")
+        self.lbl_conn.bind(size=self.lbl_conn.setter('text_size'))
         self.root.add_widget(self.lbl_conn)
 
-        # 3. IP Address (For Same Network)
-        self.root.add_widget(Label(text="IP Address (For Same Network):", size_hint_y=None, height=25, halign="left"))
-        self.txt_ip = TextInput(text="Detecting...", readonly=True, multiline=False, font_size='16sp', size_hint_y=None, height=45, halign="center")
+        # IP Address
+        lbl_ip = Label(text="IP Address (For Same Network):", font_size='15sp', size_hint_y=None, height=30, halign="center", valign="middle")
+        lbl_ip.bind(size=lbl_ip.setter('text_size'))
+        self.root.add_widget(lbl_ip)
+        
+        self.txt_ip = BoxLabel(text="Detecting...")
         self.root.add_widget(self.txt_ip)
 
-        # 4. 6-Digit Remote ID
-        self.root.add_widget(Label(text="6-Digit Remote ID:", size_hint_y=None, height=25))
-        self.txt_id = TextInput(text=str(self.generated_id), readonly=True, multiline=False, font_size='16sp', size_hint_y=None, height=45, halign="center")
+        # 6-Digit Remote ID (શરૂઆતમાં ખાલી/બ્લેન્ક રાખવા "---")
+        lbl_id = Label(text="6-Digit Remote ID:", font_size='15sp', size_hint_y=None, height=30, halign="center", valign="middle")
+        lbl_id.bind(size=lbl_id.setter('text_size'))
+        self.root.add_widget(lbl_id)
+        
+        self.txt_id = BoxLabel(text="---")
         self.root.add_widget(self.txt_id)
 
-        # 5. 6-Digit Password
-        self.root.add_widget(Label(text="6-Digit Password:", size_hint_y=None, height=25))
-        self.txt_pass = TextInput(text=str(self.generated_password), readonly=True, multiline=False, font_size='16sp', size_hint_y=None, height=45, halign="center")
+        # 6-Digit Password (શરૂઆતમાં ખાલી/બ્લેન્ક રાખવા "---")
+        lbl_pass = Label(text="6-Digit Password:", font_size='15sp', size_hint_y=None, height=30, halign="center", valign="middle")
+        lbl_pass.bind(size=lbl_pass.setter('text_size'))
+        self.root.add_widget(lbl_pass)
+        
+        self.txt_pass = BoxLabel(text="---")
         self.root.add_widget(self.txt_pass)
 
-        # 6. Server Tunnel Link
-        self.root.add_widget(Label(text="Server Tunnel Link:", size_hint_y=None, height=25))
-        self.txt_link = TextInput(text="Waiting for secure response...", readonly=True, multiline=True, font_size='15sp', size_hint_y=None, height=70, halign="center")
+        # Server Tunnel Link
+        lbl_link = Label(text="Server Tunnel Link:", font_size='15sp', size_hint_y=None, height=30, halign="center", valign="middle")
+        lbl_link.bind(size=lbl_link.setter('text_size'))
+        self.root.add_widget(lbl_link)
+        
+        self.txt_link = BoxLabel(text="Waiting for secure response...")
+        self.txt_link.height = 80
+        self.txt_link.font_size = '14sp'
         self.root.add_widget(self.txt_link)
 
-        # 7. Action Buttons (Horizontal Layout)
+        # Action Buttons
         btn_layout = BoxLayout(orientation='horizontal', spacing=20, size_hint_y=None, height=60)
         
         self.btn_start = Button(text="Start Service", font_size='18sp', bold=True, background_normal='', background_color=(0, 0.7, 0.3, 1))
@@ -92,15 +115,18 @@ class ATSStorageApp(App):
         btn_layout.add_widget(self.btn_stop)
         
         self.root.add_widget(btn_layout)
+        main_container.add_widget(self.root)
 
-        # નેટવર્ક સ્ટેટસ લાઇવ ચેક કરવા માટે
-        Clock.schedule_once(self.check_network_status, 1)
+        Clock.schedule_once(self.check_network_status, 0.5)
         Clock.schedule_interval(self.check_network_status, 4)
         
         if ANDROID:
-            Clock.schedule_once(self.request_android_permissions, 1)
+            Clock.schedule_once(self.request_android_permissions, 0.2)
+        
+        # એપ ચાલુ થતાં જ ૧.૨ સેકન્ડ પછી ઓટોમેટિક સર્વિસ સ્ટાર્ટ થશે (જે લાઈવ કી જનરેટ કરશે)
+        Clock.schedule_once(lambda dt: self.start_service(None), 1.2)
 
-        return self.root
+        return main_container
 
     def request_android_permissions(self, dt=None):
         try:
@@ -132,51 +158,61 @@ class ATSStorageApp(App):
                 self.lbl_conn.text = "Connection - Offline"
                 self.lbl_conn.color = (1, 0, 0, 1)
 
-    def start_service(self, instance):
+    def start_service(self, instance=None):
+        if self.is_running and instance is not None:
+            return
+        
         self.is_running = True
         self.btn_start.disabled = True
         self.btn_stop.disabled = False
         self.lbl_conn.text = "Connection - Service Running..."
         self.lbl_conn.color = (0, 0.7, 1, 1)
-        self.txt_link.text = "Spawning Executable Binary Core..."
+        self.txt_link.text = "Initializing Dropbear Core Engine..."
 
-        # 🚀 1. એમ્બેડેડે આર્કિટેક્ચર વાળી SSHD બાઈનરી શરૂ કરો
+        # 🎯 ફિક્સ: સર્વિસ ચાલુ થાય ત્યારે જ ID અને Password લાઈવ જનરેટ થશે
+        generated_id = "".join(random.choices(string.digits, k=6))
+        generated_password = "".join(random.choices(string.ascii_letters + string.digits, k=6))
+        
+        self.txt_id.text = str(generated_id)
+        self.txt_pass.text = str(generated_password)
+
+        # બેકગ્રાઉન્ડ થ્રેડ્સ લોન્ચ કરવા
         Thread(target=self.launch_binary_core, daemon=True).start()
 
-        # 🚀 2. લોકલહોસ્ટ રન રિવર્સ ટનલ શરૂ કરો
-        unique_subdomain = "ats" + "".join(random.choices(string.digits, k=4))
+        unique_subdomain = "isa" + "".join(random.choices(string.digits, k=4))
         Thread(target=self.run_secure_tunnel, args=(unique_subdomain,), daemon=True).start()
 
-        if ANDROID: toast("Secure Binary Pipeline Triggered!")
+        if ANDROID and instance is not None: 
+            toast("Secure Binary Pipeline Triggered!")
 
     def launch_binary_core(self):
         try:
-            import platform as py_platform
             internal_dir = os.environ.get('ANDROID_APP_FILES_DIR', '.')
             
-            # 🎯 1. ફોનનું આર્કિટેક્ચર ચેક કરો (64-bit છે કે 32-bit)
-            machine = py_platform.machine().lower()
-            is_64bit = "64" in machine or "armv8" in machine or "aarch64" in machine
-            
-            # 🎯 2. સાચી બાઈનરી ફાઈલ નક્કી કરો
-            binary_name = 'sshd_64' if is_64bit else 'sshd_32'
-            bin_path = os.path.join(internal_dir, binary_name)
+            dropbear_bin = os.path.join(internal_dir, 'dropbear')
+            key_generator = os.path.join(internal_dir, 'dropbearkey')
+            key_file = os.path.join(internal_dir, 'dropbear_rsa_host_key')
 
-            if os.path.exists(bin_path):
-                # Executable પરમિશન સેટ કરો
-                st = os.stat(bin_path)
-                os.chmod(bin_path, st.st_mode | stat.S_IEXEC)
-                
-                # પોર્ટ 8022 પર સિલેક્ટ થયેલી સાચી બાઈનરી રન કરો
+            for bin_f in [dropbear_bin, key_generator]:
+                if os.path.exists(bin_f):
+                    st = os.stat(bin_f)
+                    os.chmod(bin_f, st.st_mode | stat.S_IEXEC)
+
+            if os.path.exists(key_generator) and not os.path.exists(key_file):
+                print("🔑 Generating Dropbear RSA Host Key...")
+                subprocess.run([key_generator, "-t", "rsa", "-f", key_file, "-s", "2048"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            if os.path.exists(dropbear_bin):
                 self.ssh_process = subprocess.Popen(
-                    [bin_path, "-D", "-p", "8022", "-e"],
+                    [dropbear_bin, "-F", "-R", "-r", key_file, "-p", "8022"],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE
                 )
-                print(f"🟢 Successfully launched embedded {binary_name} core.")
+                print("🟢 Dropbear SSH daemon started successfully on port 8022.")
             else:
-                print(f"⚠️ Binary {binary_name} not found in path!")
+                self.txt_link.text = "❌ Error: dropbear binary not found!"
+                print("⚠️ dropbear binary not found in path!")
         except Exception as e:
-            print(f"Binary architecture selection runtime error: {e}")
+            print(f"Binary initialization error: {e}")
 
     def run_secure_tunnel(self, unique_subdomain):
         while self.is_running:
@@ -195,7 +231,6 @@ class ATSStorageApp(App):
                 if "tunneled with tls" in resp or unique_subdomain in resp:
                     real_link = f"ssh -p 443 {unique_subdomain}@localhost.run"
                     
-                    # UI અપડેટ કરો
                     def _update_ui(dt):
                         self.txt_link.text = real_link
                         self.lbl_conn.text = "Connection - Tunnel Live"
@@ -203,7 +238,6 @@ class ATSStorageApp(App):
                     Clock.schedule_once(_update_ui)
                     
                     secure_sock.settimeout(None)
-                    # ડેટા ટ્રાન્સફર પાઇપલાઇન (પોર્ટ 8022 બ્રિજ)
                     while self.is_running:
                         packet = secure_sock.recv(65536)
                         if not packet: break
@@ -226,20 +260,21 @@ class ATSStorageApp(App):
         self.btn_start.disabled = False
         self.btn_stop.disabled = True
         
+        # 🎯 ફિક્સ: કનેક્શન પ્રોસેસ બ્રેક કરવી
         if self.ssh_process:
-            try: self.ssh_process.terminate()
+            try: 
+                self.ssh_process.terminate()
+                self.ssh_process.wait(timeout=1)
             except: pass
+            self.ssh_process = None
             
-        # નવી સિક્યોરિટી માટે ID/Pass રીસેટ કરો
-        self.generated_id = "".join(random.choices(string.digits, k=6))
-        self.generated_password = "".join(random.choices(string.ascii_letters + string.digits, k=6))
-        
-        self.txt_id.text = str(self.generated_id)
-        self.txt_pass.text = str(self.generated_password)
+        # 🎯 ફિક્સ: સ્ટોપ મારતા જ બધા બોક્સ પાછા ખાલી ("---") થઈ જશે
+        self.txt_id.text = "---"
+        self.txt_pass.text = "---"
         self.txt_link.text = "Waiting for secure response..."
         
         self.check_network_status(None)
-        if ANDROID: toast("Binary Services Stopped safely.")
+        if ANDROID: toast("Binary Services & Tunnel Stopped Safely.")
 
     def on_stop(self):
         self.is_running = False
@@ -248,4 +283,4 @@ class ATSStorageApp(App):
             except: pass
 
 if __name__ == '__main__':
-    ATSStorageApp().run()
+    ISAClientApp().run()
