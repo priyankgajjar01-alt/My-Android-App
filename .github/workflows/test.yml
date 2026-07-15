@@ -1,41 +1,40 @@
-
-name: Build Dropbear (Final Verified)
+name: Build Dropbear Final
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-dropbear:
+  build:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
 
     steps:
-    - name: 📦 Checkout Repo
+    - name: Checkout Repo
       uses: actions/checkout@v4
 
-    - name: 📦 Install Dependencies
+    - name: Install Tools
       run: |
         sudo apt-get update
         sudo apt-get install -y git build-essential autoconf automake libtool pkg-config curl unzip file
 
-    - name: 🤖 Install Android NDK
+    - name: Download NDK
       run: |
         cd $HOME
         wget -q https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
         unzip -q android-ndk-r27c-linux.zip
 
-    - name: 📥 Clone and Build Dropbear
+    - name: Run Build
       run: |
         git clone --depth 1 https://github.com/ribbons/android-dropbear.git $HOME/ribbons-build
         cd $HOME/ribbons-build
         
-        # લાઈવ NDK પાથ સેટઅપ
-        DETECTED_NDK=$(find "$HOME" -maxdepth 1 -type d -name "android-ndk-r27*" | head -n1)
-        export NDK=$DETECTED_NDK
-        export ANDROID_NDK_HOME=$DETECTED_NDK
+        # NDK પાથ સેટઅપ
+        MY_NDK=$(find "$HOME" -maxdepth 1 -type d -name "android-ndk-r27*" | head -n1)
+        export NDK=$MY_NDK
+        export ANDROID_NDK_HOME=$MY_NDK
         
-        # બિલ્ડ સ્ક્રિપ્ટ રન કરવાનું લોજિક
+        # બિલ્ડ પ્રોસેસ
         chmod +x build* 2>/dev/null || true
         if [ -f ./build.sh ]; then
             TARGET=aarch64-linux-android ./build.sh
@@ -47,12 +46,12 @@ jobs:
             make PROGRAMS="dropbear" MULTI=1 -j$(nproc)
         fi
 
-    - name: 📤 Process and Commit Binary
+    - name: Push Binary
       run: |
         cd $GITHUB_WORKSPACE
         mkdir -p bin
         
-        # કમ્પાઈલ થયેલી બાઈનરી શોધીને કોપી કરો
+        # બાઈનરી કોપી કરવાનું લોજિક
         find $HOME/ribbons-build -name "dropbearmulti" -o -name "dropbear" -o -name "sshd" | head -n 1 | xargs -I {} cp {} bin/sshd_64 || true
         
         if [ -f bin/sshd_64 ]; then
@@ -60,11 +59,11 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add bin/sshd_64
-            git diff-index --quiet HEAD || git commit -m "Update sshd_64 via build [$(date +%Y%m%d-%H%M)]"
+            git diff-index --quiet HEAD || git commit -m "Update sshd_64 via action [$(date +%Y%m%d-%H%M)]"
             git pull --rebase origin main || true
             git push origin main
-            echo "✅ Success! Binary pushed to repo."
+            echo "🟢 Done!"
         else
-            echo "❌ Binary compilation failed!"
+            echo "❌ Failed to generate binary!"
             exit 1
         fi
