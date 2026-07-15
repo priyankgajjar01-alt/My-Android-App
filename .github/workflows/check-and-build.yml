@@ -48,14 +48,9 @@ jobs:
 
       - name: Download and Extract Dropbear Source
         run: |
-          # Fetch the clean variable string output directly from the script token
-          DROPBEAR_VER="${{ steps.latest_release.outputs.result }}"
-          echo "Building Dropbear Version: $DROPBEAR_VER"
-          
-          # Clean download structure using explicitly isolated variables
-          curl -L "https://github.com{DROPBEAR_VER}.tar.gz" -o dropbear.tar.gz
+          curl -f -L "https://github.com{{ steps.latest_release.outputs.result }}.tar.gz" -o dropbear.tar.gz
           tar -xzf dropbear.tar.gz
-          mv "dropbear-${DROPBEAR_VER}" dropbear-src
+          mv "dropbear-${{ steps.latest_release.outputs.result }}" dropbear-src
 
       - name: Set up Android NDK
         uses: nttld/setup-ndk@v1
@@ -69,16 +64,10 @@ jobs:
           export TARGET=aarch64-linux-android
           export API=21
           export CC=$TOOLCHAIN/bin/$TARGET$API-clang
-          
-          # Override Android Bionic C-Library differences
           export CFLAGS="-O2 -Dcrypt=dropbear_crypt"
           
           ./configure --host=$TARGET --disable-zlib --disable-utmp --disable-wtmp --disable-lastlog --enable-static
-          
-          # Build standard multicall binary execution blocks
           make PROGRAM=dropbearmulti dropbearmulti
-          
-          # Move compiled file outside of workspace source tree
           cp dropbearmulti ../dropbear-android-aarch64
 
       - name: Upload Binary to Action Summary Page
