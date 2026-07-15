@@ -1,4 +1,4 @@
-name: Build WA Calc9 APK
+name: Build BT Car APK
 on:
   workflow_dispatch:
   push:
@@ -39,7 +39,7 @@ jobs:
           git zip unzip autoconf automake libtool pkg-config \
           zlib1g-dev libffi-dev libssl-dev cmake build-essential
 
-    # 🛠️ સ્ટેપ ૩: સેફ Unzip અને GITHUB_PATH સેટઅપ (100% Matched Versions)
+    # 🛠️ સ્ટેપ ૩: Fresh Setup SDK & NDK 25.1
     - name: 🤖 Fresh Setup SDK & NDK 25.1
       run: |
         export ANDROID_SDK_ROOT=$HOME/android/sdk
@@ -67,14 +67,14 @@ jobs:
         yes | sdkmanager --licenses
         sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
-    # 🛠️ સ્ટેપ ૪: પાયથોન પેકેજીસ (Cython 0.29.33 is strictly required for Kivy stability)
+    # 🛠️ સ્ટેપ ૪: Python packages
     - name: 📚 Fresh Install Python packages
       run: |
         python3 -m pip install --upgrade pip setuptools wheel
         python3 -m pip install --upgrade cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
-    # 🛠️ સ્ટેપ ૫: Build WA Calc9 APK
-    - name: Build APK
+# 🛠️ સ્ટેપ ૫: Build BT Car APK (સુધારેલું સ્ટેપ)
+    - name: Build BT Car APK
       run: |
         export ANDROID_SDK_ROOT=$HOME/android/sdk
         export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/25.1.8937393
@@ -82,19 +82,24 @@ jobs:
         export PATH=$JAVA_HOME/bin:$PATH
         
         python3 -m pythonforandroid.toolchain apk --debug --private . \
-          --package=com.gai.wacalc9 \
-          --name="WA Calc9" \
+          --package=com.gai.btcar \
+          --name="BT Car" \
           --version=1.0 \
           --bootstrap=sdl2 \
-          --dist_name=wa_calc9_dist \
-          --requirements=hostpython3,python3,kivy \
+          --dist_name=bt_car_dist \
+          --requirements=hostpython3,python3,kivy,pyjnius \
+          --permission=BLUETOOTH \
+          --permission=BLUETOOTH_ADMIN \
+          --permission=BLUETOOTH_CONNECT \
+          --permission=BLUETOOTH_SCAN \
           --arch=arm64-v8a \
           --android-api=34 \
           --sdk-dir=$ANDROID_SDK_ROOT \
           --ndk-dir=$ANDROID_NDK_ROOT \
           --ndk-version=25.1.8937393
 
-    # 🛠️ સ્ટેપ ૬: સેફ APK કોપી (નવા નામ સાથે)
+
+    # 🛠️ સ્ટેપ ૬: APK કોપી
     - name: Copy APK
       run: |
         mkdir -p APK
@@ -102,7 +107,7 @@ jobs:
         
         if [ ! -z "$NEW_APK" ]; then
           echo "🎯 નવી APK મળી ગઈ: $NEW_APK"
-          OUTPUT_NAME="APK/WA-Calc9-$(date +%Y%m%d-%H%M).apk"
+          OUTPUT_NAME="APK/BT-Car-$(date +%Y%m%d-%H%M).apk"
           cp "$NEW_APK" "$OUTPUT_NAME"
           echo "✅ નવી APK આ નામે સેવ થઈ: $OUTPUT_NAME"
         else
@@ -111,7 +116,7 @@ jobs:
           exit 1
         fi
 
-    # 🛠️ સ્ટેપ ૭: સેફ ગિટ કમિટ અને પુશ
+    # 🛠️ સ્ટેપ ૭: GitHub રિપોઝિટરીમાં પુશ
     - name: Push to Repo
       run: |
         git config user.name "github-actions"
@@ -119,4 +124,4 @@ jobs:
         git pull origin main --rebase || true
         git add APK/
         
-        git diff --cached --quiet || (git commit -m "Add New WA Calc9 APK Version" && git push origin main)
+        git diff --cached --quiet || (git commit -m "Add New BT Car APK Version" && git push origin main)
