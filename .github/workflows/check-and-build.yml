@@ -85,8 +85,8 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          author: github-actions[bot] <41898282+github-actions[bot]@://github.com>
-          committer: github-actions[bot] <41898282+github-actions[bot]@://github.com>
+          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           commit-message: "Update Dropbear Binary to ${{ env.DROPBEAR_VER }}"
           title: "Update Dropbear to ${{ env.DROPBEAR_VER }}"
           body: "Automated compile build for Android ARM64 utilizing version ${{ env.DROPBEAR_VER }}."
