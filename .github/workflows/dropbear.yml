@@ -3,7 +3,9 @@ name: Build Kivy App with p4a
 
 on:
   workflow_dispatch:
-
+  push:
+    branches: [ main ]
+    
 jobs:
   build:
     runs-on: ubuntu-22.04
