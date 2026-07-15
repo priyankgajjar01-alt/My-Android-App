@@ -1,4 +1,4 @@
-name: Build Dropbear ARM64 Binary
+name: Build Dropbear (Ribbons Method)
 
 on:
   workflow_dispatch:
@@ -9,86 +9,44 @@ on:
 jobs:
   build-dropbear:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
-
     permissions:
       contents: write
 
-    steps:  
-    - uses: actions/checkout@v4  
+    steps:
+    - name: 📦 Checkout Current Repo
+      uses: actions/checkout@v4
 
-    - name: 📦 Install build dependencies  
-      run: |  
-        sudo apt-get update  
-        sudo apt-get install -y git build-essential autoconf automake libtool pkg-config curl unzip file  
+    - name: 📥 Clone Ribbons Project
+      run: git clone --depth 1 https://github.com/ribbons/android-dropbear.git $HOME/ribbons-build
 
-    - name: 🤖 Install Android NDK r27c  
-      run: |  
-        cd $HOME  
-        wget -q https://dl.google.com/android/repository/android-ndk-r27c-linux.zip  
-        unzip -q android-ndk-r27c-linux.zip  
-        # 🎯 ફિક્સ: ડાયનેમિક પાથ ડિટેક્શન
-        echo "NDK_PATH=$(find "$HOME" -maxdepth 1 -type d -name "android-ndk-r27*" | head -n1)" >> $GITHUB_ENV  
+    - name: 🤖 Setup NDK
+      run: |
+        wget -q https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
+        unzip -q android-ndk-r27c-linux.zip
+        echo "ANDROID_NDK_HOME=$(find "$HOME" -maxdepth 1 -type d -name "android-ndk-r27*" | head -n1)" >> $GITHUB_ENV
 
-    - name: 📥 Download & Compile Dropbear ARM64  
-      run: |  
-        git clone --depth 1 https://github.com/mkj/dropbear.git  
-        cd dropbear  
+    - name: 🏗️ Execute Build Script
+      run: |
+        # Ribbons નો બિલ્ડ સ્ક્રિપ્ટ સીધો જ NDK નો ઉપયોગ કરે છે
+        cd $HOME/ribbons-build
+        chmod +x build
+        # બિલ્ડ સ્ક્રિપ્ટ ARM64 માટે TARGET સેટ કરવો જરૂરી છે
+        TARGET=aarch64-linux-android ./build
 
-        export NDK=$NDK_PATH  
-        export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64  
-        export PATH=$TOOLCHAIN/bin:$PATH  
-        export TARGET=aarch64-linux-android34  
-
-        export CC=$TOOLCHAIN/bin/$TARGET-clang  
-        export CXX=$TOOLCHAIN/bin/$TARGET-clang++  
-        export AR=$TOOLCHAIN/bin/llvm-ar  
-        export STRIP=$TOOLCHAIN/bin/llvm-strip  
-        export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
-        export CC_FOR_BUILD=gcc
-
-        export CFLAGS="-fPIC -O2"  
-        # ⚠️ સાવચેતી: જો સ્ટેટિક લિંકિંગમાં Bionic libc error આપે, તો આ line ખાલી કરી દેવી (LDFLAGS="")
-        export LDFLAGS="-static"  
-
-        if [ ! -f configure ]; then
-            autoreconf -fi  
-        fi
-
-        ./configure --host=aarch64-linux-android \
-                    --build=x86_64-pc-linux-gnu \
-                    --disable-zlib \
-                    --enable-static \
-                    ac_cv_func_getpgrp_void=yes  
-                    
-        make PROGRAMS="dropbear dbclient dropbearkey" STATIC=1 MULTI=1 -j$(nproc)  
-
-        cd ..
+    - name: 📤 Process Binaries
+      run: |
         mkdir -p bin
-        
-        # 🎯 મલ્ટિ-બાઈનરી ફોલબેક લોજિક
-        if [ -f dropbear/dropbearmulti ]; then
-            $STRIP dropbear/dropbearmulti  
-            cp dropbear/dropbearmulti bin/sshd_64  
-        elif [ -f dropbear/dropbear ]; then
-            $STRIP dropbear/dropbear  
-            cp dropbear/dropbear bin/sshd_64  
-        else
-            echo "❌ No valid binaries found!"
-            exit 1
-        fi
+        # બિલ્ડ થયા પછી bin/ માં ફાઈલ ક્યાં છે તે શોધીને કોપી કરો
+        # Ribbons પ્રોજેક્ટ સામાન્ય રીતે build/ યા target/ માં આઉટપુટ આપે છે
+        find $HOME/ribbons-build -name "dropbearmulti" -o -name "dropbear" | xargs -I {} cp {} bin/sshd_64
+        chmod +x bin/sshd_64
 
-        chmod +x bin/sshd_64  
-        file bin/sshd_64  
-
-    - name: 📤 Commit Binary to Repo  
-      run: |  
-        git config user.name "github-actions[bot]"  
-        git config user.email "github-actions[bot]@users.noreply.github.com"  
+    - name: 📤 Commit & Push
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add bin/sshd_64
+        git diff-index --quiet HEAD || git commit -m "Update sshd_64 via Ribbons build [$(date +%Y%m%d-%H%M)]"
+        git pull --rebase origin main || true
+        git push origin main
         
-        if [ -f bin/sshd_64 ]; then
-            git add bin/sshd_64  
-            git diff-index --quiet HEAD || git commit -m "Update sshd_64 [$(date +%Y%m%d-%H%M)]"
-            git pull --rebase origin main || true
-            git push origin main
-        fi
