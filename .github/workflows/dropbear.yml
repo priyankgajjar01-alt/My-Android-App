@@ -1,108 +1,126 @@
-name: Build Kivy App with p4a
-
+name: Build Photon Clint APK
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 120
     permissions:
       contents: write
 
     steps:
-    - name: 📦 Checkout Source Code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+    - uses: actions/checkout@v4
+      with: { fetch-depth: 0 }
+      
+    - uses: actions/setup-python@v5
+      with: { python-version: '3.10' }
+    - uses: actions/setup-java@v4
+      with: { distribution: 'temurin', java-version: '17' }
 
-    - name: 🐍 Set up Python (Strict 3.10.13)
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10.13'
+    # 🛠️ સ્ટેપ ૧: FORCE CLEAN
+    - name: 🧹 FORCE CLEAN: Wipe All Runner Cache
+      run: |
+        echo "🧼 Starting Force Clean..."
+        rm -rf .buildozer/ .pytest_cache/ __pycache__/
+        rm -rf $HOME/.local/share/python-for-android/
+        rm -rf $HOME/.cache/pip/
+        rm -rf $HOME/.gradle/
+        sudo rm -rf /usr/local/lib/android/sdk/ndk/27* /usr/local/lib/android/sdk/ndk/28* /usr/local/lib/android/sdk/ndk/29*
+        echo "✨ Runner is 100% clean!"
 
-    - name: ☕ Set up Java (Strict JDK 17)
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
-
-    - name: 🛠️ Install System Dependencies
+    # 🛠️ સ્ટેપ ૨: સિસ્ટમ ડિપેન્ડન્સીસ
+    - name: 📦 Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y git zip unzip autoconf automake libtool pkg-config libffi-dev \
-          libssl-dev cmake gettext texinfo build-essential patch opencv-data libltdl-dev \
-          libgmp-dev libmpfr-dev libmpc-dev
+        sudo apt-get install -y \
+          git zip unzip autoconf automake libtool pkg-config \
+          zlib1g-dev libffi-dev libssl-dev cmake build-essential
 
-    - name: 🤖 Setup Android SDK & NDK (Strict r25c)
+    # 🛠️ સ્ટેપ ૩: સેફ Unzip અને GITHUB_PATH સેટઅપ
+    - name: 🤖 Fresh Setup SDK & NDK 25.1
       run: |
-        mkdir -p $HOME/android-sdk/cmdline-tools
-        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
-        unzip -q commandlinetools-linux-9477386_latest.zip -d $HOME/android-sdk/cmdline-tools
-        mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+        export ANDROID_SDK_ROOT=$HOME/android/sdk
+        echo "ANDROID_SDK_ROOT=$HOME/android/sdk" >> $GITHUB_ENV
         
-        export ANDROID_HOME=$HOME/android-sdk
-        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+        mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
+        cd $ANDROID_SDK_ROOT/cmdline-tools
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
         
-        yes | sdkmanager --licenses > /dev/null
-        sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2" > /dev/null
+        rm -rf latest
+        unzip -q commandlinetools-linux-11076708_latest.zip
+        mv cmdline-tools latest
         
-        cd $HOME
-        wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
-        unzip -q android-ndk-r25c-linux.zip
+        if [ -d "$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin" ]; then
+          BIN_PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin"
+        else
+          BIN_PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin"
+        fi
         
-        echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
-        echo "ANDROID_NDK_HOME=$HOME/android-ndk-r25c" >> $GITHUB_ENV
-        echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
-        echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+        echo "$BIN_PATH" >> $GITHUB_PATH
+        echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
+        
+        export PATH="$BIN_PATH:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+        
+        yes | sdkmanager --licenses
+        sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
-    - name: 🚀 Install python-for-android & Cython (Perfect Match)
+    # 🛠️ સ્ટેપ ૪: પાયથોન પેકેજીસ
+    - name: 📚 Fresh Install Python packages
       run: |
-        pip install --upgrade pip virtualenv
-        pip install cython==0.29.33
-        pip install python-for-android==2024.1.21
+        python3 -m pip install --upgrade pip setuptools wheel
+        python3 -m pip install --upgrade cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
-    - name: 🏗️ Package APK via python-for-android
+    # 🛠️ સ્ટેપ ૫: [તમારો સુધારો] - અહીં ડાયરેક્ટ Explicit Export ઉમેરી દીધું
+    - name: Build APK
       run: |
-        export ANDROID_HOME=${{ env.ANDROID_HOME }}
-        export ANDROID_NDK_HOME=${{ env.ANDROID_NDK_HOME }}
-        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+        export ANDROID_SDK_ROOT=$HOME/android/sdk
+        export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/25.1.8937393
+        export JAVA_HOME=$JAVA_HOME_17_X64
+        export PATH=$JAVA_HOME/bin:$PATH
         
-        p4a clean_all || true
-        
-        p4a apk \
-          --private $GITHUB_WORKSPACE \
-          --package=org.isa3.app \
-          --name="ISA_3" \
+        python3 -m pythonforandroid.toolchain apk --debug --private . \
+          --package=org.ats.remote \
+          --name="Photon Clint" \
           --version=1.0 \
           --bootstrap=sdl2 \
-          --requirements=python3,kivy==2.2.1,jnius,openssl \
-          --arch=arm64-v8a \
-          --ndk-api=21 \
+          --dist_name=photon_clint_fresh_dist \
+          --requirements=hostpython3,python3,kivy,openssl,android \
           --permission=INTERNET \
-          --permission=ACCESS_NETWORK_STATE \
           --permission=READ_EXTERNAL_STORAGE \
-          --permission=WRITE_EXTERNAL_STORAGE
+          --permission=WRITE_EXTERNAL_STORAGE \
+          --permission=ACCESS_NETWORK_STATE \
+          --arch=arm64-v8a \
+          --android-api=34 \
+          --sdk-dir=$ANDROID_SDK_ROOT \
+          --ndk-dir=$ANDROID_NDK_ROOT \
+          --ndk-version=25.1.8937393
 
-    - name: 📤 Push APK directly to GitHub Repository
+    # 🛠️ સ્ટેપ ૬: સેફ APK કોપી (ફક્ત ફાઈલ ટાઈપ)
+    - name: Copy APK
       run: |
-        cd $GITHUB_WORKSPACE
-        mkdir -p output
+        mkdir -p APK
+        NEW_APK=$(find . -type f -name "*.apk" 2>/dev/null | grep -v "APK/" | grep -v "gradle" | head -n 1)
         
-        find . -name "*.apk" ! -path "./output/*" -exec cp {} output/ISA_3.apk \;
-        
-        if [ -f output/ISA_3.apk ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-            
-            git add output/ISA_3.apk
-            git commit -m "🚀 Auto-update ISA_3.apk [$(date +%Y%m%d-%H%M)]" || true
-            git pull --rebase origin main || true
-            git push origin main
-            echo "🟢 APK Successfully pushed to repository inside 'output/' folder!"
+        if [ ! -z "$NEW_APK" ]; then
+          echo "🎯 નવી APK મળી ગઈ: $NEW_APK"
+          OUTPUT_NAME="APK/Photon-Clint-$(date +%Y%m%d-%H%M).apk"
+          cp "$NEW_APK" "$OUTPUT_NAME"
+          echo "✅ નવી APK આ નામે સેવ થઈ: $OUTPUT_NAME"
         else
-            echo "❌ APK build failed, target file not found!"
-            exit 1
+          echo "❌ એપીકે બની નથી. લોગ્સ ચેક કરો:"
+          ls -la
+          exit 1
         fi
+
+    # 🛠️ સ્ટેપ ૭: સેફ ગિટ કમિટ અને પુશ
+    - name: Push to Repo
+      run: |
+        git config user.name "github-actions"
+        git config user.email "actions@github.com"
+        git pull origin main --rebase || true
+        git add APK/
+        
+        git diff --cached --quiet || (git commit -m "Add New Photon Clint APK Version" && git push origin main)
