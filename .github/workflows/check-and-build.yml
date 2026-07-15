@@ -31,14 +31,11 @@ jobs:
 
       - name: Download and Extract Dropbear Source
         run: |
-          TAG="${{ env.FIXED_TAG }}"
-          OWNER="${{ env.SRC_OWNER }}"
-          REPO="${{ env.SRC_REPO }}"
-          echo "Building Dropbear Tag: $TAG"
-          # URL વેરિએબલ ફિક્સ: હવે કોઈ નેસ્ટેડ બ્રેસ એરર નહીં આવે
-          curl -f -L "https://github.com{OWNER}/${REPO}/archive/refs/tags/${TAG}.tar.gz" -o dropbear.tar.gz
+          echo "Building Dropbear Tag: ${{ env.FIXED_TAG }}"
+          # URL FIX: ગીતહબના પરફેક્ટ વેરિએબલ સેટિંગ સાથે કોઈ બ્રેસ એરર નહીં આવે
+          curl -f -L "https://github.com{{ env.SRC_OWNER }}/${{ env.SRC_REPO }}/archive/refs/tags/${{ env.FIXED_TAG }}.tar.gz" -o dropbear.tar.gz
           tar -xzf dropbear.tar.gz
-          mv "dropbear-${TAG}" dropbear-src
+          mv "dropbear-${{ env.FIXED_TAG }}" dropbear-src
 
       - uses: nttld/setup-ndk@v1
         with:
