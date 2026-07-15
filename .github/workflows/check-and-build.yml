@@ -41,7 +41,13 @@ jobs:
             }`
             const vars = { owner: process.env.SRC_OWNER, repo: process.env.SRC_REPO }
             const result = await github.graphql(query, vars)
-            return result.repository.releases.nodes[0].tagName
+            
+            // Safe array validation logic to prevent runtime exceptions
+            if (result?.repository?.releases?.nodes?.length > 0) {
+              return result.repository.releases.nodes[0].tagName;
+            } else {
+              throw new Error("Could not find any releases for this repository.");
+            }
 
       - name: Set up Android NDK
         uses: nttld/setup-ndk@v1
@@ -53,7 +59,7 @@ jobs:
           VERSION="${{ steps.latest_release.outputs.result }}"
           curl -L "https://github.com{VERSION}.tar.gz" -o dropbear.tar.gz
           tar -xzf dropbear.tar.gz
-          mv dropbear-${VERSION} dropbear-src
+          mv "dropbear-${VERSION}" dropbear-src
 
       - name: Compile Cross-Platform Android Binary
         run: |
@@ -71,6 +77,7 @@ jobs:
       - name: Create Update PR with Binary Asset
         uses: peter-evans/create-pull-request@v6
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           commit-message: "Update Dropbear Binary to ${{ steps.latest_release.outputs.result }}"
