@@ -73,7 +73,7 @@ jobs:
         python3 -m pip install --upgrade pip setuptools wheel
         python3 -m pip install --upgrade cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
-# 🛠️ સ્ટેપ ૫: Build BT Car APK (સુધારેલું સ્ટેપ)
+    # 🛠️ સ્ટેપ ૫: Build BT Car APK (સુધારેલું સ્ટેપ)
     - name: Build BT Car APK
       run: |
         export ANDROID_SDK_ROOT=$HOME/android/sdk
@@ -92,12 +92,14 @@ jobs:
           --permission=BLUETOOTH_ADMIN \
           --permission=BLUETOOTH_CONNECT \
           --permission=BLUETOOTH_SCAN \
+          --permission=ACCESS_FINE_LOCATION \
+          --permission=ACCESS_COARSE_LOCATION \
+          --permission=INTERNET \
           --arch=arm64-v8a \
           --android-api=34 \
           --sdk-dir=$ANDROID_SDK_ROOT \
           --ndk-dir=$ANDROID_NDK_ROOT \
           --ndk-version=25.1.8937393
-
 
     # 🛠️ સ્ટેપ ૬: APK કોપી
     - name: Copy APK
