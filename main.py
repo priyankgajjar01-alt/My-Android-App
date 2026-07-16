@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
@@ -161,26 +162,43 @@ class HC05GamepadApp(App):
             self.btn_connect.background_color = get_color_from_hex('#d32f2f')
             self.bt_socket = "PC_DUMMY_CONNECTION"
             return
+            
         try:
             adapter = BluetoothAdapter.getDefaultAdapter()
             if not adapter or not adapter.isEnabled():
                 self.messagebox_kivy("Bluetooth Disabled", "કૃપા કરીને પહેલા મોબાઈલનું બ્લૂટૂથ ચાલુ કરો!")
                 return
+                
             paired_devices = adapter.getBondedDevices().toArray()
             hc05_device = next((d for d in paired_devices if "HC-05" in d.getName() or "HC-06" in d.getName()), None)
             
             if not hc05_device:
                 self.messagebox_kivy("HC-05 Not Found", "તમારા ફોનમાં HC-05 બ્લૂટૂથ પેર કરેલું હોવું જોઈએ!")
                 return
+                
             s_uuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb")
-            self.bt_socket = hc05_device.createRfcommSocketToServiceRecord(s_uuid)
-            self.bt_socket.connect()
+            
+            # --- Android 14+ માટે Secure + Insecure નો ડબલ પ્રયાસ ---
+            time.sleep(0.5) # પરમિશન સેટ થવા માટે થોડો સમય 
+            try:
+                self.bt_socket = hc05_device.createRfcommSocketToServiceRecord(s_uuid)
+                self.bt_socket.connect()
+            except Exception as e:
+                print("Secure connection failed, trying Insecure...", e)
+                try:
+                    self.bt_socket = hc05_device.createInsecureRfcommSocketToServiceRecord(s_uuid)
+                    self.bt_socket.connect()
+                except Exception as e2:
+                    raise Exception(f"Failed to connect (Secure & Insecure): {e2}")
+            # ---------------------------------------------------------
+
             self.bt_writer = self.bt_socket.getOutputStream()
 
             self.update_status_bar(True)
             self.btn_connect.text = "Disconnect"
             self.btn_connect.background_color = get_color_from_hex('#d32f2f')
             self.send_data(self.btn_map.get('S', 'S') + "\n")
+            
         except Exception as e:
             self.disconnect_bluetooth()
             self.messagebox_kivy("Connection Failed", str(e))
@@ -346,5 +364,3 @@ class HC05GamepadApp(App):
 
 if __name__ == "__main__":
     HC05GamepadApp().run()
-
-
