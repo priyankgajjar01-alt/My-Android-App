@@ -102,7 +102,8 @@ class HC05GamepadApp(App):
         btn_setting = Button(text="⚙", font_size='26sp', size_hint_x=0.5, background_color=get_color_from_hex('#64ffda'), color=get_color_from_hex('#0a192f'))
         btn_setting.bind(on_release=lambda x: self.show_settings_popup())
         
-        for b in [self.btn_brake, self.btn_park, self.btn_head, self.btn_horn, btn_setting]: top_bar.add_widget(b)
+        for b in [self.btn_brake, self.btn_park, self.btn_head, self.btn_horn, btn_setting]: 
+            top_bar.add_widget(b)
         self.main_layout.add_widget(top_bar)
 
         slider_box = BoxLayout(size_hint_y=None, height=75, padding=10, spacing=10)
@@ -111,18 +112,31 @@ class HC05GamepadApp(App):
         self.speed_slider.bind(value=self.on_slider_change)
         self.btn_connect = Button(text="Connect", font_size='16sp', bold=True, size_hint_x=0.3, background_color=get_color_from_hex('#2962ff'), color=get_color_from_hex('#ffffff'))
         self.btn_connect.bind(on_release=lambda x: self.toggle_bluetooth())
-        slider_box.add_widget(self.lbl_speed); slider_box.add_widget(self.speed_slider); slider_box.add_widget(self.btn_connect)
+        
+        slider_box.add_widget(self.lbl_speed)
+        slider_box.add_widget(self.speed_slider)
+        slider_box.add_widget(self.btn_connect)
         self.main_layout.add_widget(slider_box)
 
         control_wrap = BoxLayout(orientation='horizontal', padding=12, spacing=15)
         left_side = BoxLayout(orientation='vertical', size_hint_x=0.4, spacing=15)
-        self.btn_f = GlowButton(text="UP", font_size='28sp', bold=True); self.btn_f.bind(on_press=lambda x: self.press_key('F', self.btn_f), on_release=lambda x: self.release_key('F', self.btn_f))
-        self.btn_b = GlowButton(text="DOWN", font_size='28sp', bold=True); self.btn_b.bind(on_press=lambda x: self.press_key('B', self.btn_b), on_release=lambda x: self.release_key('B', self.btn_b))
-        left_side.add_widget(self.btn_f); left_side.add_widget(self.btn_b); control_wrap.add_widget(left_side)
+        self.btn_f = GlowButton(text="UP", font_size='28sp', bold=True)
+        self.btn_f.bind(on_press=lambda x: self.press_key('F', self.btn_f), on_release=lambda x: self.release_key('F', self.btn_f))
+        self.btn_b = GlowButton(text="DOWN", font_size='28sp', bold=True)
+        self.btn_b.bind(on_press=lambda x: self.press_key('B', self.btn_b), on_release=lambda x: self.release_key('B', self.btn_b))
+        left_side.add_widget(self.btn_f)
+        left_side.add_widget(self.btn_b)
+        control_wrap.add_widget(left_side)
+        
         right_side = BoxLayout(orientation='horizontal', size_hint_x=0.6, spacing=15)
-        self.btn_l = GlowButton(text="LEFT", font_size='28sp', bold=True); self.btn_l.bind(on_press=lambda x: self.press_key('L', self.btn_l), on_release=lambda x: self.release_key('L', self.btn_l))
-        self.btn_r = GlowButton(text="RIGHT", font_size='28sp', bold=True); self.btn_r.bind(on_press=lambda x: self.press_key('R', self.btn_r), on_release=lambda x: self.release_key('R', self.btn_r))
-        right_side.add_widget(self.btn_l); right_side.add_widget(self.btn_r); control_wrap.add_widget(right_side)
+        self.btn_l = GlowButton(text="LEFT", font_size='28sp', bold=True)
+        self.btn_l.bind(on_press=lambda x: self.press_key('L', self.btn_l), on_release=lambda x: self.release_key('L', self.btn_l))
+        self.btn_r = GlowButton(text="RIGHT", font_size='28sp', bold=True)
+        self.btn_r.bind(on_press=lambda x: self.press_key('R', self.btn_r), on_release=lambda x: self.release_key('R', self.btn_r))
+        right_side.add_widget(self.btn_l)
+        right_side.add_widget(self.btn_r)
+        control_wrap.add_widget(right_side)
+        
         self.main_layout.add_widget(control_wrap)
         
         return self.main_layout
@@ -180,7 +194,8 @@ class HC05GamepadApp(App):
         self.btn_connect_now.color = get_color_from_hex('#0a192f')
 
     def start_connection_thread(self):
-        if self.device_popup: self.device_popup.dismiss()
+        if self.device_popup: 
+            self.device_popup.dismiss()
         self.status_bar.text = "Connecting... Please wait"
         with self.status_bar.canvas.before:
             Color(rgba=get_color_from_hex('#ffab40'))
@@ -190,7 +205,8 @@ class HC05GamepadApp(App):
     def connect_task(self, device):
         try:
             adapter = BluetoothAdapter.getDefaultAdapter()
-            if adapter.isDiscovering(): adapter.cancelDiscovery()
+            if adapter.isDiscovering(): 
+                adapter.cancelDiscovery()
             s_uuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb")
             
             # Direct Insecure Connection
@@ -213,18 +229,24 @@ class HC05GamepadApp(App):
 
     def disconnect_bluetooth(self):
         try:
-            if self.bt_writer: self.bt_writer.close()
-            if self.bt_socket and hasattr(self.bt_socket, 'close'): self.bt_socket.close()
-        except: pass
-        self.bt_socket = None; self.bt_writer = None
+            if self.bt_writer: 
+                self.bt_writer.close()
+            if self.bt_socket and hasattr(self.bt_socket, 'close'): 
+                self.bt_socket.close()
+        except: 
+            pass
+        self.bt_socket = None
+        self.bt_writer = None
         self.update_status_bar(False)
         self.btn_connect.text = "Connect"
         self.btn_connect.background_color = get_color_from_hex('#2962ff')
 
     def send_data(self, data):
         if self.bt_socket and self.bt_writer:
-            try: self.bt_writer.write(data.encode('utf-8'))
-            except Exception as e: self.disconnect_bluetooth()
+            try: 
+                self.bt_writer.write(data.encode('utf-8'))
+            except Exception as e: 
+                self.disconnect_bluetooth()
 
     def update_status_bar(self, connected):
         self.status_bar.text = "Connected via Bluetooth!" if connected else "Disconnected"
@@ -233,17 +255,33 @@ class HC05GamepadApp(App):
             RoundedRectangle(pos=self.status_bar.pos, size=self.status_bar.size)
 
     def press_key(self, key, widget):
-        if key == 'F' and 'B' in self.pressed_keys: self.pressed_keys.discard('B'); self.btn_b.on_state_change(False)
-        elif key == 'B' and 'F' in self.pressed_keys: self.pressed_keys.discard('F'); self.btn_f.on_state_change(False)
-        if key == 'L' and 'R' in self.pressed_keys: self.pressed_keys.discard('R'); self.btn_r.on_state_change(False)
-        elif key == 'R' and 'L' in self.pressed_keys: self.pressed_keys.discard('L'); self.btn_l.on_state_change(False)
-        widget.on_state_change(True); self.pressed_keys.add(key); self.check_and_send_combo()
+        if key == 'F' and 'B' in self.pressed_keys: 
+            self.pressed_keys.discard('B')
+            self.btn_b.on_state_change(False)
+        elif key == 'B' and 'F' in self.pressed_keys: 
+            self.pressed_keys.discard('F')
+            self.btn_f.on_state_change(False)
+            
+        if key == 'L' and 'R' in self.pressed_keys: 
+            self.pressed_keys.discard('R')
+            self.btn_r.on_state_change(False)
+        elif key == 'R' and 'L' in self.pressed_keys: 
+            self.pressed_keys.discard('L')
+            self.btn_l.on_state_change(False)
+            
+        widget.on_state_change(True)
+        self.pressed_keys.add(key)
+        self.check_and_send_combo()
 
     def release_key(self, key, widget):
         widget.on_state_change(False)
-        if key in self.pressed_keys: self.pressed_keys.remove(key)
-        if not self.pressed_keys: self.send_data(self.btn_map.get('S', 'S') + "\n")
-        else: self.check_and_send_combo()
+        if key in self.pressed_keys: 
+            self.pressed_keys.remove(key)
+            
+        if not self.pressed_keys: 
+            self.send_data(self.btn_map.get('S', 'S') + "\n")
+        else: 
+            self.check_and_send_combo()
 
     def check_and_send_combo(self):
         cmd = self.btn_map.get('S', 'S')
@@ -265,7 +303,8 @@ class HC05GamepadApp(App):
         widget.background_color = get_color_from_hex('#ff6d00')
 
     def on_slider_change(self, instance, value):
-        self.speed = int(value); self.lbl_speed.text = f"Speed {self.speed}/9:"
+        self.speed = int(value)
+        self.lbl_speed.text = f"Speed {self.speed}/9:"
         self.send_data(self.btn_map.get(f'S{self.speed}', str(self.speed)) + "\n")
 
     def toggle_btn(self, type_name, key, widget):
@@ -277,33 +316,62 @@ class HC05GamepadApp(App):
 
     def show_settings_popup(self):
         popup_layout = BoxLayout(orientation='vertical', padding=10, spacing=8)
-        scroll_view = ScrollView(); grid = GridLayout(cols=2, spacing=10, size_hint_y=None); grid.bind(minimum_height=grid.setter('height'))
+        scroll_view = ScrollView()
+        grid = GridLayout(cols=2, spacing=10, size_hint_y=None)
+        grid.bind(minimum_height=grid.setter('height'))
+        
         self.inputs = {}
         keys_to_show = [('Forward (F)', 'F'), ('Backward (B)', 'B'), ('Left (L)', 'L'), ('Right (R)', 'R'), ('Stop (S)', 'S'), ('Brake (K)', 'K'), ('Park Light (P)', 'P'), ('Head Light (H)', 'H'), ('Horn (O)', 'O'), ('F + L Combo', 'FL'), ('F + R Combo', 'FR'), ('B + L Combo', 'BL'), ('B + R Combo', 'BR')]
-        for i in range(10): keys_to_show.append((f'Speed {i}', f'S{i}'))
+        for i in range(10): 
+            keys_to_show.append((f'Speed {i}', f'S{i}'))
+            
         for label_text, map_key in keys_to_show:
-            lbl = Label(text=label_text, size_hint=(0.6, None), height=45, color=get_color_from_hex('#ccd6f6'), font_size='15sp'); grid.add_widget(lbl)
-            txt_input = TextInput(text=self.btn_map.get(map_key, ''), size_hint=(0.4, None), height=45, multiline=False, background_color=get_color_from_hex('#0a192f'), foreground_color=get_color_from_hex('#64ffda'), cursor_color=get_color_from_hex('#64ffda'), font_size='16sp', halign='center'); grid.add_widget(txt_input); self.inputs[map_key] = txt_input
-        scroll_view.add_widget(grid); popup_layout.add_widget(scroll_view)
+            lbl = Label(text=label_text, size_hint=(0.6, None), height=45, color=get_color_from_hex('#ccd6f6'), font_size='15sp')
+            grid.add_widget(lbl)
+            txt_input = TextInput(text=self.btn_map.get(map_key, ''), size_hint=(0.4, None), height=45, multiline=False, background_color=get_color_from_hex('#0a192f'), foreground_color=get_color_from_hex('#64ffda'), cursor_color=get_color_from_hex('#64ffda'), font_size='16sp', halign='center')
+            grid.add_widget(txt_input)
+            self.inputs[map_key] = txt_input
+            
+        scroll_view.add_widget(grid)
+        popup_layout.add_widget(scroll_view)
+        
         btn_save = Button(text="Save & Close", size_hint_y=None, height=55, font_size='16sp', background_color=get_color_from_hex('#00c853'), color=get_color_from_hex('#0a192f'), bold=True)
-        popup_layout.add_widget(btn_save); popup = Popup(title="Button Value Settings", content=popup_layout, size_hint=(0.95, 0.9)); btn_save.bind(on_release=lambda x: self.save_settings(popup)); popup.open()
+        popup_layout.add_widget(btn_save)
+        
+        popup = Popup(title="Button Value Settings", content=popup_layout, size_hint=(0.95, 0.9))
+        btn_save.bind(on_release=lambda x: self.save_settings(popup))
+        popup.open()
 
     def save_settings(self, popup):
-        for key, text_widget in self.inputs.items(): self.btn_map[key] = text_widget.text.strip()
-        with open('btn_settings.json', 'w') as f: json.dump(self.btn_map, f)
+        for key, text_widget in self.inputs.items(): 
+            self.btn_map[key] = text_widget.text.strip()
+        with open('btn_settings.json', 'w') as f: 
+            json.dump(self.btn_map, f)
         popup.dismiss()
 
     def load_settings(self):
         self.btn_map = {'F':'F', 'B':'B', 'L':'L', 'R':'R', 'S':'S', 'K':'K', 'P':'P', 'H':'H', 'O':'O', 'FL':'A', 'FR':'C', 'BL':'D', 'BR':'E'}
-        for i in range(10): self.btn_map[f'S{i}'] = str(i)
+        for i in range(10): 
+            self.btn_map[f'S{i}'] = str(i)
+            
         if os.path.exists('btn_settings.json'):
-            try: with open('btn_settings.json', 'r') as f: self.btn_map.update(json.load(f))
-            except: pass
+            try: 
+                with open('btn_settings.json', 'r') as f: 
+                    self.btn_map.update(json.load(f))
+            except Exception as e: 
+                print(e)
 
     def messagebox_kivy(self, title, text):
-        box = BoxLayout(orientation='vertical', padding=10, spacing=10); lbl = Label(text=text, color=get_color_from_hex('#ccd6f6'), halign='center', valign='middle'); box.add_widget(lbl)
-        btn_ok = Button(text="OK", size_hint_y=None, height=45, bold=True, background_color=get_color_from_hex('#64ffda'), color=get_color_from_hex('#0a192f')); box.add_widget(btn_ok)
-        popup = Popup(title=title, content=box, size_hint=(0.85, 0.5)); btn_ok.bind(on_release=popup.dismiss); popup.open()
+        box = BoxLayout(orientation='vertical', padding=10, spacing=10)
+        lbl = Label(text=text, color=get_color_from_hex('#ccd6f6'), halign='center', valign='middle')
+        box.add_widget(lbl)
+        
+        btn_ok = Button(text="OK", size_hint_y=None, height=45, bold=True, background_color=get_color_from_hex('#64ffda'), color=get_color_from_hex('#0a192f'))
+        box.add_widget(btn_ok)
+        
+        popup = Popup(title=title, content=box, size_hint=(0.85, 0.5))
+        btn_ok.bind(on_release=popup.dismiss)
+        popup.open()
 
 if __name__ == "__main__":
     HC05GamepadApp().run()
