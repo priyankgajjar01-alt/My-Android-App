@@ -1,377 +1,360 @@
-import json
-import os
-import threading
+import threading, socket, random, os, shutil
+import websocket
+from kivy.config import Config
+Config.set('graphics', 'resizable', '0')
+
 from kivy.app import App
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.gridlayout import GridLayout
-from kivy.uix.button import Button
-from kivy.uix.label import Label
-from kivy.uix.slider import Slider
-from kivy.uix.popup import Popup
-from kivy.uix.scrollview import ScrollView
-from kivy.uix.textinput import TextInput
-from kivy.graphics import Color, RoundedRectangle
-from kivy.utils import get_color_from_hex
-from kivy.utils import platform
 from kivy.clock import Clock
+from kivy.lang import Builder
+from kivy.properties import StringProperty, BooleanProperty
+from kivy.uix.anchorlayout import AnchorLayout
+from kivy.core.window import Window
 
-# Android Bluetooth integration
-BluetoothAdapter = None
-BluetoothDevice = None
-UUID = None
+Window.clearcolor = (0.13, 0.20, 0.38, 1)
 
-if platform == 'android':
-    try:
-        from jnius import autoclass
-        BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
-        BluetoothDevice = autoclass('android.bluetooth.BluetoothDevice')
-        UUID = autoclass('java.util.UUID')
-        
-        try:
-            from android.permissions import request_permissions
-            request_permissions([
-                'android.permission.BLUETOOTH_CONNECT',
-                'android.permission.BLUETOOTH_SCAN',
-                'android.permission.ACCESS_FINE_LOCATION'
-            ])
-        except ImportError:
-            print("Pydroid 3 માં પરમિશન પોપઅપ ની જરૂર નથી.")
-    except Exception as e:
-        print("Android Pyjnius Import Error:", e)
+KV = r"""
+<RootWidget>:
+    anchor_x: 'center'
+    anchor_y: 'center'
+    ScrollView:
+        size_hint: (0.95, 0.9)
+        do_scroll_x: False
+        bar_width: 8
+        GridLayout:
+            id: main_grid
+            cols: 1
+            size_hint_y: None
+            height: self.minimum_height
+            padding: dp(10)
+            spacing: dp(16)
 
-class GlowButton(Button):
+            Label:
+                text: "Android Tunnel Receiver"
+                color: (1, 0.84, 0.00, 1)
+                bold: True
+                font_size: '22sp'
+                size_hint_y: None
+                height: dp(48)
+                halign: "center"
+                valign: "middle"
+            
+            BoxLayout:
+                orientation: "horizontal"
+                size_hint_y: None
+                height: dp(60)
+                spacing: dp(10)
+                Label:
+                    text: "ID :"
+                    color: (1, 0.84, 0.00, 1)
+                    bold: True
+                    font_size: '18sp'
+                    size_hint_x: 0.35
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+                TextInput:
+                    id: etId
+                    text: app.id_value
+                    readonly: True  
+                    multiline: False
+                    size_hint_x: 0.65
+                    font_size: '21sp'
+                    bold: True
+                    halign: 'center'
+                    padding: [dp(10), (self.height - self.line_height) / 2.0, dp(10), 0]
+            
+            BoxLayout:
+                orientation: "horizontal"
+                size_hint_y: None
+                height: dp(60)
+                spacing: dp(10)
+                Label:
+                    text: "Password :"
+                    color: (1, 0.84, 0.00, 1)
+                    bold: True
+                    font_size: '18sp'
+                    size_hint_x: 0.35
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+                TextInput:
+                    id: etPass
+                    text: app.pass_value
+                    readonly: True  
+                    multiline: False
+                    size_hint_x: 0.65
+                    font_size: '21sp'
+                    bold: True
+                    halign: 'center'
+                    padding: [dp(10), (self.height - self.line_height) / 2.0, dp(10), 0]
+
+            BoxLayout:
+                orientation: "horizontal"
+                size_hint_y: None
+                height: dp(60)
+                spacing: dp(10)
+                Label:
+                    text: "Target IP :"
+                    color: (1, 0.84, 0.00, 1)
+                    bold: True
+                    font_size: '18sp'
+                    size_hint_x: 0.35
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+                TextInput:
+                    id: etIp
+                    text: app.local_ip
+                    hint_text: "Enter PC IP..."
+                    multiline: False
+                    size_hint_x: 0.65
+                    font_size: '21sp'
+                    bold: True
+                    halign: 'center'
+                    padding: [dp(10), (self.height - self.line_height) / 2.0, dp(10), 0]
+
+            BoxLayout:
+                orientation: "horizontal"
+                size_hint_y: None
+                height: dp(60)
+                spacing: dp(10)
+                Label:
+                    text: "Tunnel :"
+                    color: (1, 0.84, 0.00, 1)
+                    bold: True
+                    font_size: '18sp'
+                    size_hint_x: 0.35
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+                TextInput:
+                    id: etTunnel
+                    text: app.tunnel_link
+                    hint_text: "e.g. https://link.com"
+                    multiline: False
+                    size_hint_x: 0.65
+                    font_size: '21sp'
+                    bold: True
+                    halign: 'center'
+                    padding: [dp(10), (self.height - self.line_height) / 2.0, dp(10), 0]
+
+            BoxLayout:
+                orientation: "horizontal"
+                size_hint_y: None
+                height: dp(60)
+                spacing: dp(10)
+                Label:
+                    text: "Port :"
+                    color: (1, 0.84, 0.00, 1)
+                    bold: True
+                    font_size: '18sp'
+                    size_hint_x: 0.35
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+                Spinner:
+                    id: etPort
+                    text: app.port_value
+                    values: ["80", "443", "5000", "8888", "9090"]
+                    size_hint_x: 0.65
+                    font_size: '21sp'
+                    bold: True
+                    halign: 'center'
+                    valign: 'middle'
+
+            BoxLayout:
+                orientation: "horizontal"
+                size_hint_y: None
+                height: dp(60)
+                spacing: dp(14)
+                padding: [0, dp(10), 0, 0]
+                Button:
+                    text: "START"
+                    bold: True
+                    font_size: '20sp'
+                    color: (0, 0, 0, 1) 
+                    background_color: (0.4, 1, 0.4, 1) 
+                    on_release: app.on_start()
+                Button:
+                    text: "STOP"
+                    bold: True
+                    font_size: '20sp'
+                    color: (0, 0, 0, 1) 
+                    background_color: (1.0, 0.23, 0.19, 1) 
+                    on_release: app.on_stop()
+
+            Label:
+                id: statusLabel
+                text: app.status_text
+                color: (1, 0.84, 0.00, 1)
+                bold: True
+                font_size: '18sp'
+                size_hint_y: None
+                height: dp(50)
+                halign: "center"
+                valign: "middle"
+                text_size: self.width, None
+"""
+
+class RootWidget(AnchorLayout):
+    pass
+
+class MainApp(App):
+    id_value = StringProperty("")
+    pass_value = StringProperty("")
+    local_ip = StringProperty("0.0.0.0")
+    tunnel_link = StringProperty("")
+    port_value = StringProperty("5000") 
+    status_text = StringProperty("Status: idle")
+    running = BooleanProperty(False)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.background_color = (0, 0, 0, 0)
-        self.background_normal = ''
-        self.background_down = ''
-        self.pressed_state = False
-        self.bind(pos=self.draw_button, size=self.draw_button)
+        self.stop_flag = threading.Event()
+        self.ws_client = None
 
-    def draw_button(self, *args):
-        self.canvas.before.clear()
-        with self.canvas.before:
-            if self.pressed_state:
-                Color(rgba=get_color_from_hex('#64ffda40')) 
-                RoundedRectangle(pos=(self.pos[0] - 5, self.pos[1] - 5), size=(self.size[0] + 10, self.size[1] + 10), radius=[22])
-                Color(rgba=get_color_from_hex('#64ffda'))
-                RoundedRectangle(pos=self.pos, size=self.size, radius=[18])
-            else:
-                Color(rgba=get_color_from_hex('#1e3a5f'))
-                RoundedRectangle(pos=self.pos, size=self.size, radius=[18])
-                Color(rgba=get_color_from_hex('#0a192f'))
-                RoundedRectangle(pos=(self.pos[0] + 2, self.pos[1] + 2), size=(self.size[0] - 4, self.size[1] - 4), radius=[16])
-
-    def on_state_change(self, pressed):
-        self.pressed_state = pressed
-        self.color = get_color_from_hex('#0a192f') if pressed else get_color_from_hex('#64ffda')
-        self.draw_button()
-
-class HC05GamepadApp(App):
     def build(self):
-        self.title = "HC-05 Pro Gamepad"
-        self.btn_state = {'brake': False, 'park': False, 'head': False}
-        self.pressed_keys = set()
-        self.speed = 4
-        self.bt_socket = None
-        self.bt_writer = None
-        self.device_popup = None
-        self.device_buttons = []
-        self.temp_selected_device = None
+        Builder.load_string(KV)
+        self.id_value = self.generate_6digit()
+        self.pass_value = self.generate_6digit()
+        self.local_ip = self.get_local_ipv4() or "0.0.0.0"
+        self.status_text = "Status: idle"
+        return RootWidget()
 
-        self.load_settings()
+    def generate_6digit(self):
+        return str(random.randint(100000, 999999))
 
-        self.main_layout = BoxLayout(orientation='vertical')
-        with self.main_layout.canvas.before:
-            Color(rgba=get_color_from_hex('#0a192f'))
-            RoundedRectangle(pos=(0, 0), size=(10000, 10000))
+    def get_local_ipv4(self):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return None
 
-        self.status_bar = Label(text="Disconnected", size_hint_y=None, height=35, color=get_color_from_hex('#ffffff'), font_size='14sp', bold=True)
-        self.update_status_bar(False)
-        self.main_layout.add_widget(self.status_bar)
+    def on_start(self):
+        if self.running: return
 
-        top_bar = BoxLayout(size_hint_y=None, height=90, padding=8, spacing=8)
-        self.btn_brake = Button(text="BRAKE", font_size='16sp', bold=True, background_color=get_color_from_hex('#1e3a5f'), color=get_color_from_hex('#ccd6f6'))
-        self.btn_brake.bind(on_release=lambda x: self.toggle_btn('brake', 'K', self.btn_brake))
-        self.btn_park = Button(text="PARK", font_size='16sp', bold=True, background_color=get_color_from_hex('#1e3a5f'), color=get_color_from_hex('#ccd6f6'))
-        self.btn_park.bind(on_release=lambda x: self.toggle_btn('park', 'P', self.btn_park))
-        self.btn_head = Button(text="HEAD", font_size='16sp', bold=True, background_color=get_color_from_hex('#1e3a5f'), color=get_color_from_hex('#ccd6f6'))
-        self.btn_head.bind(on_release=lambda x: self.toggle_btn('head', 'H', self.btn_head))
-        self.btn_horn = Button(text="HORN", font_size='16sp', bold=True, background_normal='', background_color=get_color_from_hex('#ff6d00'), color=get_color_from_hex('#ffffff'))
-        self.btn_horn.bind(on_press=lambda x: self.send_momentary('O', self.btn_horn), on_release=lambda x: self.release_momentary(self.btn_horn))
-        btn_setting = Button(text="⚙", font_size='26sp', size_hint_x=0.5, background_color=get_color_from_hex('#64ffda'), color=get_color_from_hex('#0a192f'))
-        btn_setting.bind(on_release=lambda x: self.show_settings_popup())
-        
-        for b in [self.btn_brake, self.btn_park, self.btn_head, self.btn_horn, btn_setting]: 
-            top_bar.add_widget(b)
-        self.main_layout.add_widget(top_bar)
+        expected_id = self.root.ids.etId.text.strip() if self.root else self.id_value
+        expected_pass = self.root.ids.etPass.text.strip() if self.root else self.pass_value
+        tunnel_url = self.root.ids.etTunnel.text.strip()
 
-        slider_box = BoxLayout(size_hint_y=None, height=75, padding=10, spacing=10)
-        self.lbl_speed = Label(text=f"Speed {self.speed}/9:", font_size='16sp', bold=True, color=get_color_from_hex('#8892b0'), size_hint_x=0.3)
-        self.speed_slider = Slider(min=0, max=9, value=self.speed, step=1, size_hint_x=0.5)
-        self.speed_slider.bind(value=self.on_slider_change)
-        self.btn_connect = Button(text="Connect", font_size='16sp', bold=True, size_hint_x=0.3, background_color=get_color_from_hex('#2962ff'), color=get_color_from_hex('#ffffff'))
-        self.btn_connect.bind(on_release=lambda x: self.toggle_bluetooth())
-        
-        slider_box.add_widget(self.lbl_speed)
-        slider_box.add_widget(self.speed_slider)
-        slider_box.add_widget(self.btn_connect)
-        self.main_layout.add_widget(slider_box)
+        if tunnel_url:
+            ws_url = tunnel_url.replace("https://", "wss://").replace("http://", "ws://")
+            if not ws_url.startswith("ws"): ws_url = f"wss://{tunnel_url}"
+        else:
+            host = self.root.ids.etIp.text.strip() or "127.0.0.1"
+            port_text = self.root.ids.etPort.text.strip().split()[0]
+            ws_url = f"ws://{host}:{port_text}"
 
-        control_wrap = BoxLayout(orientation='horizontal', padding=12, spacing=15)
-        left_side = BoxLayout(orientation='vertical', size_hint_x=0.4, spacing=15)
-        self.btn_f = GlowButton(text="UP", font_size='28sp', bold=True)
-        self.btn_f.bind(on_press=lambda x: self.press_key('F', self.btn_f), on_release=lambda x: self.release_key('F', self.btn_f))
-        self.btn_b = GlowButton(text="DOWN", font_size='28sp', bold=True)
-        self.btn_b.bind(on_press=lambda x: self.press_key('B', self.btn_b), on_release=lambda x: self.release_key('B', self.btn_b))
-        left_side.add_widget(self.btn_f)
-        left_side.add_widget(self.btn_b)
-        control_wrap.add_widget(left_side)
-        
-        right_side = BoxLayout(orientation='horizontal', size_hint_x=0.6, spacing=15)
-        self.btn_l = GlowButton(text="LEFT", font_size='28sp', bold=True)
-        self.btn_l.bind(on_press=lambda x: self.press_key('L', self.btn_l), on_release=lambda x: self.release_key('L', self.btn_l))
-        self.btn_r = GlowButton(text="RIGHT", font_size='28sp', bold=True)
-        self.btn_r.bind(on_press=lambda x: self.press_key('R', self.btn_r), on_release=lambda x: self.release_key('R', self.btn_r))
-        right_side.add_widget(self.btn_l)
-        right_side.add_widget(self.btn_r)
-        control_wrap.add_widget(right_side)
-        
-        self.main_layout.add_widget(control_wrap)
-        
-        return self.main_layout
+        self.running = True
+        self.stop_flag.clear()
+        self.status_text = f"Connecting to {ws_url}..."
+        threading.Thread(target=self.client_loop, args=(ws_url, expected_id, expected_pass), daemon=True).start()
 
-    def toggle_bluetooth(self):
-        if self.bt_socket:
-            self.disconnect_bluetooth()
-            return
+    def _set_status(self, t):
+        self.status_text = t
+
+    def on_stop(self):
+        if not self.running: return
+        self.stop_flag.set()
+        self.running = False
+        self.status_text = "Status: stopped"
+        if self.ws_client:
+            try: self.ws_client.close()
+            except: pass
+        if self.root:
+            self.root.ids.etId.text = self.generate_6digit()
+            self.root.ids.etPass.text = self.generate_6digit()
+
+    def client_loop(self, ws_url, expected_id, expected_pass):
+        try:
+            self.ws_client = websocket.WebSocket()
+            self.ws_client.settimeout(15.0) 
+            self.ws_client.connect(ws_url)
+            self.ws_client.settimeout(None) 
             
-        adapter = BluetoothAdapter.getDefaultAdapter()
-        if not adapter or not adapter.isEnabled():
-            self.messagebox_kivy("Bluetooth Disabled", "કૃપા કરીને પહેલા મોબાઈલનું બ્લૂટૂથ ચાલુ કરો!")
-            return
+            Clock.schedule_once(lambda dt: self._set_status("Connected! Waiting for Auth..."), 0)
+
+            auth_msg = self.ws_client.recv()
+            if isinstance(auth_msg, bytes): auth_msg = auth_msg.decode('utf-8')
+            
+            if auth_msg.strip() == f"AUTH|{expected_id}|{expected_pass}":
+                self.ws_client.send("OK|ACCESS_GRANTED")
+                Clock.schedule_once(lambda dt: self._set_status("Auth Success! PC Controlled."), 0)
+            else:
+                self.ws_client.send("DENY|INVALID_CREDENTIALS")
+                self.ws_client.close()
+                Clock.schedule_once(lambda dt: self._set_status("Auth Failed. Disconnected."), 0)
+                self.running = False
+                return
+
+            # Main Command Loop (FUSE API)
+            while not self.stop_flag.is_set():
+                data = self.ws_client.recv()
+                if not data: break
+                if isinstance(data, bytes): data = data.decode('utf-8')
                 
-        paired_devices = adapter.getBondedDevices().toArray()
-        if not paired_devices:
-            self.messagebox_kivy("No Devices", "કોઈ પેર કરેલું બ્લૂટૂથ ડિવાઇસ મળ્યું નથી.")
-            return
+                parts = data.strip().split("|")
+                cmd = parts[0].upper()
 
-        self.device_buttons = []
-        box = BoxLayout(orientation='vertical', padding=10, spacing=10)
-        scroll = ScrollView(size_hint=(1, 1))
-        grid = GridLayout(cols=1, spacing=10, size_hint_y=None)
-        grid.bind(minimum_height=grid.setter('height'))
+                try:
+                    if cmd == "LS":
+                        path = parts[1]
+                        if os.path.isdir(path):
+                            items_info = []
+                            for name in os.listdir(path):
+                                full_p = os.path.join(path, name)
+                                if os.path.isdir(full_p):
+                                    items_info.append(f"{name}:DIR:0")
+                                else:
+                                    try: sz = os.path.getsize(full_p)
+                                    except: sz = 0
+                                    items_info.append(f"{name}:FILE:{sz}")
+                            self.ws_client.send("OK|" + ",".join(items_info))
+                        else:
+                            self.ws_client.send("ERROR|Folder not found")
 
-        for d in paired_devices:
-            device_name = d.getName() or "Unknown"
-            btn = Button(
-                text=f"{device_name}\n({d.getAddress()})", 
-                size_hint_y=None, height=70, font_size='16sp',
-                background_normal='', background_color=get_color_from_hex('#1e3a5f')
-            )
-            btn.bind(on_release=lambda instance, dev=d, b=btn: self.on_select_device(dev, b))
-            self.device_buttons.append(btn)
-            grid.add_widget(btn)
+                    # ૨. Raw Binary મોકલવાનું લોજીક (No Base64!)
+                    elif cmd == "READ":
+                        path = parts[1]
+                        offset = int(parts[2])
+                        length = int(parts[3])
+                        if os.path.isfile(path):
+                            with open(path, 'rb') as f:
+                                f.seek(offset)
+                                chunk = f.read(length) # ઓરિજિનલ Bytes
+                            
+                            # પહેલા Text Frame (કન્ફર્મેશન)
+                            self.ws_client.send("OK|BINARY_FOLLOWS") 
+                            
+                            # તરત જ બીજો મેસેજ (Raw Binary Frame) મોકલો
+                            self.ws_client.send(chunk)
+                        else:
+                            self.ws_client.send("ERROR|File not found")
 
-        scroll.add_widget(grid)
-        box.add_widget(scroll)
+                    elif cmd == "DELETE":
+                        path = parts[1]
+                        if os.path.isdir(path): shutil.rmtree(path)
+                        else: os.remove(path)
+                        self.ws_client.send("OK|Deleted")
 
-        self.btn_connect_now = Button(text="Select Device First", size_hint_y=None, height=55, bold=True, background_color=get_color_from_hex('#757575'), disabled=True)
-        self.btn_connect_now.bind(on_release=lambda x: self.start_connection_thread())
-        box.add_widget(self.btn_connect_now)
+                    elif cmd == "RENAME":
+                        os.rename(parts[1], parts[2])
+                        self.ws_client.send("OK|Renamed")
 
-        self.device_popup = Popup(title="Select Bluetooth Device", content=box, size_hint=(0.9, 0.7), background_color=get_color_from_hex('#112240'))
-        self.device_popup.open()
+                except Exception as e:
+                    self.ws_client.send(f"ERROR|{str(e)}")
 
-    def on_select_device(self, device, clicked_btn):
-        self.temp_selected_device = device
-        for btn in self.device_buttons:
-            btn.background_color = get_color_from_hex('#1e3a5f')
-        clicked_btn.background_color = get_color_from_hex('#00c853')
-        self.btn_connect_now.disabled = False
-        self.btn_connect_now.text = "Connect Now"
-        self.btn_connect_now.background_color = get_color_from_hex('#64ffda')
-        self.btn_connect_now.color = get_color_from_hex('#0a192f')
-
-    def start_connection_thread(self):
-        if self.device_popup: 
-            self.device_popup.dismiss()
-        self.status_bar.text = "Connecting... Please wait"
-        with self.status_bar.canvas.before:
-            Color(rgba=get_color_from_hex('#ffab40'))
-            RoundedRectangle(pos=self.status_bar.pos, size=self.status_bar.size)
-        threading.Thread(target=self.connect_task, args=(self.temp_selected_device,), daemon=True).start()
-
-    def connect_task(self, device):
-        try:
-            adapter = BluetoothAdapter.getDefaultAdapter()
-            if adapter.isDiscovering(): 
-                adapter.cancelDiscovery()
-            s_uuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb")
-            
-            # Direct Insecure Connection
-            self.bt_socket = device.createInsecureRfcommSocketToServiceRecord(s_uuid)
-            self.bt_socket.connect()
-            self.bt_writer = self.bt_socket.getOutputStream()
-            Clock.schedule_once(lambda dt: self.on_connection_success())
         except Exception as e:
-            Clock.schedule_once(lambda dt, err=str(e): self.on_connection_fail(err))
-
-    def on_connection_success(self):
-        self.update_status_bar(True)
-        self.btn_connect.text = "Disconnect"
-        self.btn_connect.background_color = get_color_from_hex('#d32f2f')
-        self.send_data(self.btn_map.get('S', 'S') + "\n")
-
-    def on_connection_fail(self, error_msg):
-        self.disconnect_bluetooth()
-        self.messagebox_kivy("Connection Failed", "કનેક્શન નિષ્ફળ ગયું.\n" + error_msg)
-
-    def disconnect_bluetooth(self):
-        try:
-            if self.bt_writer: 
-                self.bt_writer.close()
-            if self.bt_socket and hasattr(self.bt_socket, 'close'): 
-                self.bt_socket.close()
-        except: 
-            pass
-        self.bt_socket = None
-        self.bt_writer = None
-        self.update_status_bar(False)
-        self.btn_connect.text = "Connect"
-        self.btn_connect.background_color = get_color_from_hex('#2962ff')
-
-    def send_data(self, data):
-        if self.bt_socket and self.bt_writer:
-            try: 
-                self.bt_writer.write(data.encode('utf-8'))
-            except Exception as e: 
-                self.disconnect_bluetooth()
-
-    def update_status_bar(self, connected):
-        self.status_bar.text = "Connected via Bluetooth!" if connected else "Disconnected"
-        with self.status_bar.canvas.before:
-            Color(rgba=get_color_from_hex('#00c853' if connected else '#d32f2f'))
-            RoundedRectangle(pos=self.status_bar.pos, size=self.status_bar.size)
-
-    def press_key(self, key, widget):
-        if key == 'F' and 'B' in self.pressed_keys: 
-            self.pressed_keys.discard('B')
-            self.btn_b.on_state_change(False)
-        elif key == 'B' and 'F' in self.pressed_keys: 
-            self.pressed_keys.discard('F')
-            self.btn_f.on_state_change(False)
-            
-        if key == 'L' and 'R' in self.pressed_keys: 
-            self.pressed_keys.discard('R')
-            self.btn_r.on_state_change(False)
-        elif key == 'R' and 'L' in self.pressed_keys: 
-            self.pressed_keys.discard('L')
-            self.btn_l.on_state_change(False)
-            
-        widget.on_state_change(True)
-        self.pressed_keys.add(key)
-        self.check_and_send_combo()
-
-    def release_key(self, key, widget):
-        widget.on_state_change(False)
-        if key in self.pressed_keys: 
-            self.pressed_keys.remove(key)
-            
-        if not self.pressed_keys: 
-            self.send_data(self.btn_map.get('S', 'S') + "\n")
-        else: 
-            self.check_and_send_combo()
-
-    def check_and_send_combo(self):
-        cmd = self.btn_map.get('S', 'S')
-        if 'F' in self.pressed_keys and 'L' in self.pressed_keys: cmd = self.btn_map.get('FL', 'A')
-        elif 'F' in self.pressed_keys and 'R' in self.pressed_keys: cmd = self.btn_map.get('FR', 'C')
-        elif 'B' in self.pressed_keys and 'L' in self.pressed_keys: cmd = self.btn_map.get('BL', 'D')
-        elif 'B' in self.pressed_keys and 'R' in self.pressed_keys: cmd = self.btn_map.get('BR', 'E')
-        elif 'F' in self.pressed_keys: cmd = self.btn_map.get('F', 'F')
-        elif 'B' in self.pressed_keys: cmd = self.btn_map.get('B', 'B')
-        elif 'L' in self.pressed_keys: cmd = self.btn_map.get('L', 'L')
-        elif 'R' in self.pressed_keys: cmd = self.btn_map.get('R', 'R')
-        self.send_data(cmd + "\n")
-
-    def send_momentary(self, key, widget):
-        self.send_data(self.btn_map.get(key, key) + "\n")
-        widget.background_color = get_color_from_hex('#ffab40')
-
-    def release_momentary(self, widget):
-        widget.background_color = get_color_from_hex('#ff6d00')
-
-    def on_slider_change(self, instance, value):
-        self.speed = int(value)
-        self.lbl_speed.text = f"Speed {self.speed}/9:"
-        self.send_data(self.btn_map.get(f'S{self.speed}', str(self.speed)) + "\n")
-
-    def toggle_btn(self, type_name, key, widget):
-        self.btn_state[type_name] = not self.btn_state[type_name]
-        state = '1' if self.btn_state[type_name] else '0'
-        widget.background_color = get_color_from_hex('#64ffda') if self.btn_state[type_name] else get_color_from_hex('#1e3a5f')
-        widget.color = get_color_from_hex('#0a192f') if self.btn_state[type_name] else get_color_from_hex('#ccd6f6')
-        self.send_data(self.btn_map.get(key, key) + state + "\n")
-
-    def show_settings_popup(self):
-        popup_layout = BoxLayout(orientation='vertical', padding=10, spacing=8)
-        scroll_view = ScrollView()
-        grid = GridLayout(cols=2, spacing=10, size_hint_y=None)
-        grid.bind(minimum_height=grid.setter('height'))
-        
-        self.inputs = {}
-        keys_to_show = [('Forward (F)', 'F'), ('Backward (B)', 'B'), ('Left (L)', 'L'), ('Right (R)', 'R'), ('Stop (S)', 'S'), ('Brake (K)', 'K'), ('Park Light (P)', 'P'), ('Head Light (H)', 'H'), ('Horn (O)', 'O'), ('F + L Combo', 'FL'), ('F + R Combo', 'FR'), ('B + L Combo', 'BL'), ('B + R Combo', 'BR')]
-        for i in range(10): 
-            keys_to_show.append((f'Speed {i}', f'S{i}'))
-            
-        for label_text, map_key in keys_to_show:
-            lbl = Label(text=label_text, size_hint=(0.6, None), height=45, color=get_color_from_hex('#ccd6f6'), font_size='15sp')
-            grid.add_widget(lbl)
-            txt_input = TextInput(text=self.btn_map.get(map_key, ''), size_hint=(0.4, None), height=45, multiline=False, background_color=get_color_from_hex('#0a192f'), foreground_color=get_color_from_hex('#64ffda'), cursor_color=get_color_from_hex('#64ffda'), font_size='16sp', halign='center')
-            grid.add_widget(txt_input)
-            self.inputs[map_key] = txt_input
-            
-        scroll_view.add_widget(grid)
-        popup_layout.add_widget(scroll_view)
-        
-        btn_save = Button(text="Save & Close", size_hint_y=None, height=55, font_size='16sp', background_color=get_color_from_hex('#00c853'), color=get_color_from_hex('#0a192f'), bold=True)
-        popup_layout.add_widget(btn_save)
-        
-        popup = Popup(title="Button Value Settings", content=popup_layout, size_hint=(0.95, 0.9))
-        btn_save.bind(on_release=lambda x: self.save_settings(popup))
-        popup.open()
-
-    def save_settings(self, popup):
-        for key, text_widget in self.inputs.items(): 
-            self.btn_map[key] = text_widget.text.strip()
-        with open('btn_settings.json', 'w') as f: 
-            json.dump(self.btn_map, f)
-        popup.dismiss()
-
-    def load_settings(self):
-        self.btn_map = {'F':'F', 'B':'B', 'L':'L', 'R':'R', 'S':'S', 'K':'K', 'P':'P', 'H':'H', 'O':'O', 'FL':'A', 'FR':'C', 'BL':'D', 'BR':'E'}
-        for i in range(10): 
-            self.btn_map[f'S{i}'] = str(i)
-            
-        if os.path.exists('btn_settings.json'):
-            try: 
-                with open('btn_settings.json', 'r') as f: 
-                    self.btn_map.update(json.load(f))
-            except Exception as e: 
-                print(e)
-
-    def messagebox_kivy(self, title, text):
-        box = BoxLayout(orientation='vertical', padding=10, spacing=10)
-        lbl = Label(text=text, color=get_color_from_hex('#ccd6f6'), halign='center', valign='middle')
-        box.add_widget(lbl)
-        
-        btn_ok = Button(text="OK", size_hint_y=None, height=45, bold=True, background_color=get_color_from_hex('#64ffda'), color=get_color_from_hex('#0a192f'))
-        box.add_widget(btn_ok)
-        
-        popup = Popup(title=title, content=box, size_hint=(0.85, 0.5))
-        btn_ok.bind(on_release=popup.dismiss)
-        popup.open()
+            Clock.schedule_once(lambda dt: self._set_status(f"Error: Connection Failed"), 0)
+        finally:
+            self.running = False
+            if self.ws_client:
+                try: self.ws_client.close()
+                except: pass
 
 if __name__ == "__main__":
-    HC05GamepadApp().run()
+    MainApp().run()
