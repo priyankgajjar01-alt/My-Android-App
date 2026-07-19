@@ -1,4 +1,4 @@
-Name: Build Android Tunnel Receiver APK
+name: Build Android Tunnel Receiver APK
 
 on:
   workflow_dispatch:
