@@ -1,4 +1,4 @@
-name: Build Android Tunnel Receiver APK
+Name: Build Android Tunnel Receiver APK
 
 on:
   workflow_dispatch:
@@ -162,6 +162,7 @@ jobs:
 
         export PATH=$JAVA_HOME/bin:$PATH
 
+        # અહીંયા --permission=WAKE_LOCK ઉમેરવામાં આવ્યું છે 
         python3 -m pythonforandroid.toolchain apk \
           --debug \
           --private app_source \
@@ -177,6 +178,7 @@ jobs:
           --permission=MANAGE_EXTERNAL_STORAGE \
           --permission=READ_EXTERNAL_STORAGE \
           --permission=WRITE_EXTERNAL_STORAGE \
+          --permission=WAKE_LOCK \
           --arch=arm64-v8a \
           --android-api=34 \
           --sdk-dir=$ANDROID_SDK_ROOT \
