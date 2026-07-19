@@ -564,6 +564,10 @@ class MainApp(App):
         self.ws_client = None
 
         self.permission_check_done = False
+        
+        # WAKELOCK OBJECTS
+        self.wake_lock = None
+        self.wifi_lock = None
 
 
     # ========================================================
@@ -582,7 +586,6 @@ class MainApp(App):
 
         self.status_text = "Checking storage permission..."
 
-        # Android permission check
         if ANDROID:
 
             Clock.schedule_once(
@@ -674,6 +677,57 @@ class MainApp(App):
 
 
     # ========================================================
+    # BACKGROUND WAKELOCK (NEW FEATURE)
+    # ========================================================
+
+    def acquire_background_locks(self):
+        """
+        જ્યારે એપ START થાય ત્યારે CPU અને Wi-Fi ને સૂવા નહિ દે.
+        """
+        if not ANDROID:
+            return
+
+        try:
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            activity = PythonActivity.mActivity
+
+            # 1. CPU WakeLock (Screen બંધ થાય તો પણ એપ ચાલુ રહે)
+            pm = activity.getSystemService("power")
+            # 1 = PARTIAL_WAKE_LOCK
+            self.wake_lock = pm.newWakeLock(1, "AndroidTunnel::CPUWakeLock")
+            self.wake_lock.acquire()
+
+            # 2. Wi-Fi Lock (Wi-Fi ડીસકનેક્ટ થવા નહિ દે)
+            wm = activity.getSystemService("wifi")
+            # 3 = WIFI_MODE_FULL_HIGH_PERF
+            self.wifi_lock = wm.createWifiLock(3, "AndroidTunnel::WiFiLock")
+            self.wifi_lock.acquire()
+
+            print("Background Locks Acquired: CPU and Wi-Fi will stay awake!")
+
+        except Exception as e:
+            print("Failed to acquire wake locks:", e)
+
+    def release_background_locks(self):
+        """
+        જ્યારે એપ STOP થાય ત્યારે બેટરી બચાવવા માટે Locks છોડી દેશે.
+        """
+        if not ANDROID:
+            return
+
+        try:
+            if self.wake_lock and self.wake_lock.isHeld():
+                self.wake_lock.release()
+            
+            if self.wifi_lock and self.wifi_lock.isHeld():
+                self.wifi_lock.release()
+                
+            print("Background Locks Released.")
+        except Exception as e:
+            print("Failed to release wake locks:", e)
+
+
+    # ========================================================
     # STORAGE PERMISSION CHECK
     # Android 7 to Android 15
     # ========================================================
@@ -689,11 +743,6 @@ class MainApp(App):
 
         sdk = self.get_android_sdk()
 
-
-        # ====================================================
-        # Android 11+ (API 30 to 35)
-        # MANAGE_EXTERNAL_STORAGE
-        # ====================================================
 
         if sdk >= 30:
 
@@ -763,19 +812,12 @@ class MainApp(App):
                 return False
 
 
-        # ====================================================
-        # Android 7 to Android 10
-        # API 24 to 29
-        # ====================================================
-
         else:
 
             try:
 
                 permissions = []
 
-
-                # READ permission
 
                 if not check_permission(
 
@@ -789,8 +831,6 @@ class MainApp(App):
 
                     )
 
-
-                # WRITE permission
 
                 if not check_permission(
 
@@ -900,7 +940,6 @@ class MainApp(App):
 
     # ========================================================
     # OPEN ALL FILES ACCESS SETTINGS
-    # Android 11+
     # ========================================================
 
     def open_all_files_settings(self):
@@ -977,7 +1016,6 @@ class MainApp(App):
             )
 
 
-            # Settingsમાંથી પાછા આવ્યા પછી ફરી check
             Clock.schedule_once(
 
                 lambda dt:
@@ -999,8 +1037,6 @@ class MainApp(App):
 
             )
 
-
-            # Fallback: General All Files settings
 
             try:
 
@@ -1061,7 +1097,6 @@ class MainApp(App):
             return
 
 
-        # Storage permission check
         if ANDROID and not self.permission_check_done:
 
             if not self.check_storage_permission():
@@ -1075,10 +1110,6 @@ class MainApp(App):
 
         tunnel_url = self.root.ids.etTunnel.text.strip()
 
-
-        # ====================================================
-        # TUNNEL URL
-        # ====================================================
 
         if tunnel_url:
 
@@ -1122,10 +1153,6 @@ class MainApp(App):
                 )
 
 
-        # ====================================================
-        # LOCAL IP
-        # ====================================================
-
         else:
 
             host = self.root.ids.etIp.text.strip()
@@ -1150,9 +1177,9 @@ class MainApp(App):
             )
 
 
-        # ====================================================
-        # LOCK BUTTONS
-        # ====================================================
+        # LOCKS ચાલુ કરો (Screen Lock થાય તો કનેક્શન ના તૂટે)
+        self.acquire_background_locks()
+
 
         self.running = True
 
@@ -1202,6 +1229,8 @@ class MainApp(App):
 
         self.stop_flag.set()
 
+        # LOCKS છોડી દો
+        self.release_background_locks()
 
         self.running = False
 
@@ -1231,7 +1260,6 @@ class MainApp(App):
             self.ws_client = None
 
 
-        # New credentials
         self.id_value = self.generate_6digit()
 
         self.pass_value = self.generate_6digit()
@@ -1258,7 +1286,9 @@ class MainApp(App):
     # ========================================================
 
     def connection_failed(self):
-
+        
+        self.release_background_locks()
+        
         self.running = False
 
         self.start_disabled = False
@@ -1289,10 +1319,6 @@ class MainApp(App):
     ):
 
         try:
-
-            # =================================================
-            # CONNECT
-            # =================================================
 
             self.ws_client = websocket.WebSocket()
 
@@ -1329,10 +1355,6 @@ class MainApp(App):
 
             )
 
-
-            # =================================================
-            # AUTH
-            # =================================================
 
             auth_msg = self.ws_client.recv()
 
@@ -1422,10 +1444,6 @@ class MainApp(App):
                 return
 
 
-            # =================================================
-            # COMMAND LOOP
-            # =================================================
-
             while not self.stop_flag.is_set():
 
 
@@ -1459,11 +1477,6 @@ class MainApp(App):
 
 
                 try:
-
-
-                    # =========================================
-                    # LS
-                    # =========================================
 
                     if cmd == "LS":
 
@@ -1558,10 +1571,6 @@ class MainApp(App):
                             )
 
 
-                    # =========================================
-                    # READ
-                    # =========================================
-
                     elif cmd == "READ":
 
 
@@ -1640,10 +1649,6 @@ class MainApp(App):
                             )
 
 
-                    # =========================================
-                    # DELETE
-                    # =========================================
-
                     elif cmd == "DELETE":
 
 
@@ -1673,10 +1678,6 @@ class MainApp(App):
 
                         )
 
-
-                    # =========================================
-                    # RENAME
-                    # =========================================
 
                     elif cmd == "RENAME":
 
@@ -1712,10 +1713,6 @@ class MainApp(App):
 
                         )
 
-
-                    # =========================================
-                    # UNKNOWN
-                    # =========================================
 
                     else:
 
@@ -1767,7 +1764,7 @@ class MainApp(App):
 
         finally:
 
-
+            self.release_background_locks()
             self.running = False
 
 
