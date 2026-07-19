@@ -25,7 +25,7 @@ jobs:
 
 
     # ============================================================
-    # 2. SETUP PYTHON
+    # 2. SETUP PYTHON 3.10
     # ============================================================
     - name: Setup Python
       uses: actions/setup-python@v5
@@ -48,7 +48,6 @@ jobs:
     # ============================================================
     - name: FORCE CLEAN
       run: |
-
         echo "Cleaning old build files..."
 
         rm -rf .buildozer/
@@ -71,7 +70,6 @@ jobs:
     # ============================================================
     - name: Install system dependencies
       run: |
-
         sudo apt-get update
 
         sudo apt-get install -y \
@@ -96,22 +94,16 @@ jobs:
     # ============================================================
     - name: Setup Android SDK and NDK
       run: |
-
         export ANDROID_SDK_ROOT=$HOME/android/sdk
-
         echo "ANDROID_SDK_ROOT=$HOME/android/sdk" >> $GITHUB_ENV
 
         mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-
         cd "$ANDROID_SDK_ROOT/cmdline-tools"
 
-        wget -q \
-          https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
 
         rm -rf latest
-
         unzip -q commandlinetools-linux-11076708_latest.zip
-
         mv cmdline-tools latest
 
         if [ -d "$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin" ]; then
@@ -139,7 +131,6 @@ jobs:
     # ============================================================
     - name: Install Python packages
       run: |
-
         python3 -m pip install --upgrade pip
         python3 -m pip install --upgrade setuptools wheel
 
@@ -155,6 +146,15 @@ jobs:
     # ============================================================
     - name: Build Android Tunnel Receiver APK
       run: |
+        # ખાસ કરીને main.py ને જ કોપી કરો 
+        mkdir -p app_source
+        
+        if [ ! -f "main.py" ]; then
+          echo "Error: main.py not found in the repository root!"
+          exit 1
+        fi
+        
+        cp main.py app_source/
 
         export ANDROID_SDK_ROOT=$HOME/android/sdk
         export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/25.1.8937393
@@ -164,7 +164,7 @@ jobs:
 
         python3 -m pythonforandroid.toolchain apk \
           --debug \
-          --private . \
+          --private app_source \
           --package=com.gai.androidtunnelreceiver \
           --name="Android Tunnel Receiver" \
           --version=1.0 \
@@ -174,9 +174,9 @@ jobs:
           --permission=INTERNET \
           --permission=ACCESS_NETWORK_STATE \
           --permission=ACCESS_WIFI_STATE \
+          --permission=MANAGE_EXTERNAL_STORAGE \
           --permission=READ_EXTERNAL_STORAGE \
           --permission=WRITE_EXTERNAL_STORAGE \
-          --permission=MANAGE_EXTERNAL_STORAGE \
           --arch=arm64-v8a \
           --android-api=34 \
           --sdk-dir=$ANDROID_SDK_ROOT \
@@ -189,7 +189,6 @@ jobs:
     # ============================================================
     - name: Copy APK
       run: |
-
         mkdir -p APK
 
         NEW_APK=$(find . \
@@ -201,27 +200,21 @@ jobs:
           | head -n 1)
 
         if [ -n "$NEW_APK" ]; then
-
           echo "APK found:"
           echo "$NEW_APK"
 
           OUTPUT_NAME="APK/Android-Tunnel-Receiver-$(date +%Y%m%d-%H%M).apk"
-
           cp "$NEW_APK" "$OUTPUT_NAME"
 
           echo "APK saved as:"
           echo "$OUTPUT_NAME"
-
         else
-
           echo "APK build failed."
-
-          echo "Searching for files..."
-
+          echo "Searching for APK files..."
+          find . -type f -name "*.apk" -print
+          echo "Searching all files..."
           find . -maxdepth 5 -type f | sort
-
           exit 1
-
         fi
 
 
@@ -230,7 +223,6 @@ jobs:
     # ============================================================
     - name: Push APK to repository
       run: |
-
         git config user.name "github-actions"
         git config user.email "actions@github.com"
 
