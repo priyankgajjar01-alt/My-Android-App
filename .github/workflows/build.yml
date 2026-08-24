@@ -1,4 +1,4 @@
-name: Build Android Tunnel Receiver APK
+name: Build Alignment Calculator APK
 
 on:
   workflow_dispatch:
@@ -67,7 +67,8 @@ jobs:
     - name: Install Python packages
       run: |
         python3 -m pip install --upgrade pip setuptools wheel
-        python3 -m pip install cython==0.29.33 kivy[base] python-for-android==2024.1.21 websocket-client
+        # વધારાના પેકેજ કાઢી નાખ્યા છે, ફક્ત kivy રાખ્યું છે
+        python3 -m pip install cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
     - name: Prepare app source
       run: |
@@ -76,7 +77,7 @@ jobs:
         cp main.py app_source/main.py
         ls -lh app_source/main.py
 
-    - name: Build Android Tunnel Receiver APK
+    - name: Build Alignment Calculator APK
       run: |
         export ANDROID_SDK_ROOT=$HOME/android/sdk
         export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/25.1.8937393
@@ -85,19 +86,12 @@ jobs:
         python3 -m pythonforandroid.toolchain apk \
           --debug \
           --private app_source \
-          --package=com.gai.androidtunnelreceiver \
-          --name="Android Tunnel Receiver" \
+          --package=com.alignment.calculator \
+          --name="Alignment Calculator" \
           --version=1.0 \
           --bootstrap=sdl2 \
-          --dist_name=android_tunnel_receiver_dist \
-          --requirements=python3,android,kivy,pyjnius,websocket-client,openssl \
-          --permission=INTERNET \
-          --permission=ACCESS_NETWORK_STATE \
-          --permission=ACCESS_WIFI_STATE \
-          --permission=MANAGE_EXTERNAL_STORAGE \
-          --permission=READ_EXTERNAL_STORAGE \
-          --permission=WRITE_EXTERNAL_STORAGE \
-          --permission=WAKE_LOCK \
+          --dist_name=alignment_calculator_dist \
+          --requirements=python3,android,kivy \
           --arch=arm64-v8a \
           --android-api=34 \
           --sdk-dir=$ANDROID_SDK_ROOT \
@@ -109,7 +103,8 @@ jobs:
         mkdir -p APK
         NEW_APK=$(find . -type f -name "*.apk" 2>/dev/null | grep -v "/APK/" | grep -v "/gradle/" | head -n 1)
         if [ -n "$NEW_APK" ]; then
-          OUTPUT_NAME="APK/Android-Tunnel-Receiver-$(date +%Y%m%d-%H%M).apk"
+          # નવું નામ 
+          OUTPUT_NAME="APK/Alignment-Calculator-$(date +%Y%m%d-%H%M).apk"
           cp "$NEW_APK" "$OUTPUT_NAME"
           ls -lh "$OUTPUT_NAME"
         else
@@ -125,9 +120,8 @@ jobs:
         git pull origin main --rebase || echo "Nothing to pull"
         git add APK/
         if [ -n "$(git status --porcelain APK/)" ]; then
-          git commit -m "Add New Android Tunnel Receiver APK [skip ci]"
+          git commit -m "Add New Alignment Calculator APK [skip ci]"
           git push origin main
         else
           echo "No new APK changes to commit."
         fi
-        
