@@ -90,7 +90,7 @@ jobs:
           --version=1.0 \
           --bootstrap=sdl2 \
           --dist_name=hc05_pro_dist \
-          --requirements=python3,android,kivy \
+          --requirements=python3,android,kivy,pyjnius \
           --permission BLUETOOTH \
           --permission BLUETOOTH_ADMIN \
           --permission BLUETOOTH_CONNECT \
