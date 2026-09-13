@@ -11,28 +11,59 @@ from kivy.uix.popup import Popup
 from kivy.core.window import Window
 from kivy.utils import platform
 
-# Check if running as a Real Android APK (JNI supported)
+# ==========================================
+# CHECK REAL ANDROID APK
+# ==========================================
 is_real_android = False
+
 if platform == 'android':
     try:
         from jnius import autoclass
-        BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
-        UUID = autoclass('java.util.UUID')
-        InputStreamReader = autoclass('java.io.InputStreamReader')
-        BufferedReader = autoclass('java.io.BufferedReader')
-        JavaString = autoclass('java.lang.String')
+
+        BluetoothAdapter = autoclass(
+            'android.bluetooth.BluetoothAdapter'
+        )
+
+        UUID = autoclass(
+            'java.util.UUID'
+        )
+
+        InputStreamReader = autoclass(
+            'java.io.InputStreamReader'
+        )
+
+        BufferedReader = autoclass(
+            'java.io.BufferedReader'
+        )
+
+        JavaString = autoclass(
+            'java.lang.String'
+        )
+
         is_real_android = True
+
     except Exception as e:
         print("JNI Loading Error:", e)
 
-# Dark Navy Background
-Window.clearcolor = (10/255, 25/255, 47/255, 1)
 
 # ==========================================
-# 100% SAFE KIVY UI DESIGN (No clipping, visible text)
+# DARK NAVY BACKGROUND
+# ==========================================
+Window.clearcolor = (
+    10 / 255,
+    25 / 255,
+    47 / 255,
+    1
+)
+
+
+# ==========================================
+# KIVY UI
 # ==========================================
 KV = '''
-# AHIYA FIX THAYU CHE: Native Solid Background, No Extra Padding
+# ==========================================
+# CUSTOM TEXT INPUT
+# ==========================================
 <CustomTextInput@TextInput>:
     background_normal: ''
     background_color: [0.04, 0.1, 0.18, 1]
@@ -42,28 +73,44 @@ KV = '''
     halign: 'center'
     font_size: '16sp'
 
+
+# ==========================================
+# ROUNDED BUTTON
+# ==========================================
 <RoundedButton@Button>:
     background_color: [0, 0, 0, 0]
     background_normal: ''
     bg_color: [0.39, 1.0, 0.85, 1]
     color: [0.04, 0.1, 0.18, 1]
+
     canvas.before:
         Color:
             rgba: self.bg_color if self.state == 'normal' else [self.bg_color[0]*0.8, self.bg_color[1]*0.8, self.bg_color[2]*0.8, 1]
+
         RoundedRectangle:
             pos: self.pos
             size: self.size
             radius: [18, 18, 18, 18]
 
+
+# ==========================================
+# STATUS LABEL
+# ==========================================
 <StatusLabel@Label>:
     bg_color: [0.82, 0.18, 0.18, 1]
+
     canvas.before:
         Color:
             rgba: self.bg_color
+
         Rectangle:
             pos: self.pos
             size: self.size
 
+
+# ==========================================
+# SETTINGS POPUP
+# ==========================================
 <SettingsPopup>:
     title: 'Button Value Settings'
     title_color: [0.39, 1.0, 0.85, 1]
@@ -87,57 +134,71 @@ KV = '''
                 text: 'MAC Address'
                 color: [0.8, 0.84, 0.96, 1]
                 bold: True
+
             CustomTextInput:
                 text: app.hc05_mac
                 on_text: app.hc05_mac = self.text
+
 
             Label:
                 text: 'ON Delay'
                 color: [0.8, 0.84, 0.96, 1]
                 bold: True
+
             CustomTextInput:
                 text: app.on_delay
                 on_text: app.on_delay = self.text
+
 
             Label:
                 text: 'OFF Delay'
                 color: [0.8, 0.84, 0.96, 1]
                 bold: True
+
             CustomTextInput:
                 text: app.off_delay
                 on_text: app.off_delay = self.text
+
 
             Label:
                 text: 'Slider 1 ON'
                 color: [0.8, 0.84, 0.96, 1]
                 bold: True
+
             CustomTextInput:
                 text: app.s1_on_msg
                 on_text: app.s1_on_msg = self.text
+
 
             Label:
                 text: 'Slider 1 OFF'
                 color: [0.8, 0.84, 0.96, 1]
                 bold: True
+
             CustomTextInput:
                 text: app.s1_off_msg
                 on_text: app.s1_off_msg = self.text
+
 
             Label:
                 text: 'Slider 2 ON'
                 color: [0.8, 0.84, 0.96, 1]
                 bold: True
+
             CustomTextInput:
                 text: app.s2_on_msg
                 on_text: app.s2_on_msg = self.text
+
 
             Label:
                 text: 'Slider 2 OFF'
                 color: [0.8, 0.84, 0.96, 1]
                 bold: True
+
             CustomTextInput:
                 text: app.s2_off_msg
                 on_text: app.s2_off_msg = self.text
+
 
         RoundedButton:
             text: 'Save & Close'
@@ -148,122 +209,232 @@ KV = '''
             font_size: '22sp'
             on_release: app.save_and_close_settings()
 
+
+# ==========================================
+# MAIN SCREEN
+# ==========================================
 BoxLayout:
     orientation: 'vertical'
 
+
+    # ======================================
+    # STATUS BAR
+    # ======================================
     StatusLabel:
         id: status_lbl
+
         text: 'System Starting...'
+
         size_hint_y: None
         height: '60dp'
+
         bold: True
         font_size: '22sp'
-        color: [1, 1, 1, 1]
-        bg_color: [0.85, 0.53, 0.1, 1] 
 
+        color: [1, 1, 1, 1]
+
+        bg_color: [0.85, 0.53, 0.1, 1]
+
+
+    # ======================================
+    # MAIN AREA
+    # ======================================
     BoxLayout:
         orientation: 'vertical'
 
-        # TOP 50% - MONITOR (FIXED FOR VISIBILITY)
+
+        # ==================================
+        # TOP 50% - MONITOR
+        # ==================================
         BoxLayout:
             padding: '15dp'
+
             TextInput:
                 id: monitor
+
                 readonly: True
+
                 background_normal: ''
-                background_color: [0, 0, 0, 1]  # Pure Black Background
-                foreground_color: [0.39, 1.0, 0.85, 1] # Teal Text
+                background_color: [0, 0, 0, 1]
+
+                foreground_color: [0.39, 1.0, 0.85, 1]
+
                 font_size: '13sp'
+
                 text: 'System Ready...\\n'
 
+
+        # ==================================
         # BOTTOM 50%
+        # ==================================
         BoxLayout:
             orientation: 'vertical'
+
             padding: '30dp'
             spacing: '30dp'
 
+
+            # ==============================
+            # SLIDER 1
+            # ==============================
             BoxLayout:
                 size_hint_y: None
                 height: '80dp'
+
                 Label:
                     text: 'Slider 1'
-                    font_size: '36sp' 
+                    font_size: '36sp'
                     bold: True
                     color: [0.8, 0.84, 0.96, 1]
+
                 Switch:
                     id: s1
+
                     on_active: app.s1_toggle(self.active)
+
                     canvas.before:
                         PushMatrix
+
                         Scale:
                             origin: self.center
                             x: 2.0
                             y: 2.0
+
                     canvas.after:
                         PopMatrix
 
+
+            # ==============================
+            # SLIDER 2
+            # ==============================
             BoxLayout:
                 size_hint_y: None
                 height: '80dp'
+
                 Label:
                     text: 'Slider 2'
                     font_size: '36sp'
                     bold: True
                     color: [0.8, 0.84, 0.96, 1]
+
                 Switch:
                     id: s2
+
                     on_active: app.s2_toggle(self.active)
+
                     canvas.before:
                         PushMatrix
+
                         Scale:
                             origin: self.center
                             x: 2.0
                             y: 2.0
+
                     canvas.after:
                         PopMatrix
 
+
+            # ==============================
+            # SETTINGS BUTTON
+            # ==============================
             AnchorLayout:
+
                 RoundedButton:
                     text: 'Settings'
+
                     size_hint: None, None
                     size: '250dp', '70dp'
+
                     bg_color: [0.39, 1.0, 0.85, 1]
+
                     bold: True
                     font_size: '24sp'
+
                     on_release: app.open_settings()
 '''
 
+
+# ==========================================
+# SETTINGS POPUP CLASS
+# ==========================================
 class SettingsPopup(Popup):
     pass
 
-class BluetoothApp(App):
-    hc05_mac = StringProperty("98:D3:31:F4:XX:XX")
-    on_delay = StringProperty("1000")
-    off_delay = StringProperty("1000")
-    s1_on_msg = StringProperty("S1_ON")
-    s1_off_msg = StringProperty("S1_OFF")
-    s2_on_msg = StringProperty("S2_ON")
-    s2_off_msg = StringProperty("S2_OFF")
 
+# ==========================================
+# BLUETOOTH APP
+# ==========================================
+class BluetoothApp(App):
+
+    hc05_mac = StringProperty(
+        "98:D3:31:F4:XX:XX"
+    )
+
+    on_delay = StringProperty(
+        "1000"
+    )
+
+    off_delay = StringProperty(
+        "1000"
+    )
+
+    s1_on_msg = StringProperty(
+        "S1_ON"
+    )
+
+    s1_off_msg = StringProperty(
+        "S1_OFF"
+    )
+
+    s2_on_msg = StringProperty(
+        "S2_ON"
+    )
+
+    s2_off_msg = StringProperty(
+        "S2_OFF"
+    )
+
+
+    # ======================================
+    # BUILD
+    # ======================================
     def build(self):
+
         self.bt_socket = None
+
         self.bt_out = None
         self.bt_in = None
+
         self.is_connected = False
+
         self.waiting_ack = False
         self.pending_data = ""
-        
+
         self.load_settings()
+
         self.root = Builder.load_string(KV)
+
         self.settings_popup = SettingsPopup()
+
         return self.root
 
+
+    # ======================================
+    # ON START
+    # ======================================
     def on_start(self):
-        self.log(f"Loaded MAC: {self.hc05_mac}")
-        
+
+        self.log(
+            f"Loaded MAC: {self.hc05_mac}"
+        )
+
+
         if is_real_android:
+
             try:
+
                 from android.permissions import request_permissions
+
                 request_permissions([
                     'android.permission.BLUETOOTH_CONNECT',
                     'android.permission.BLUETOOTH_SCAN',
@@ -271,147 +442,632 @@ class BluetoothApp(App):
                     'android.permission.BLUETOOTH',
                     'android.permission.BLUETOOTH_ADMIN'
                 ])
-                self.update_status("Waiting for Permissions...", [0.85, 0.53, 0.1, 1])
-                Clock.schedule_once(lambda dt: threading.Thread(target=self.connect_bluetooth, daemon=True).start(), 4)
+
+                self.update_status(
+                    "Waiting for Permissions...",
+                    [0.85, 0.53, 0.1, 1]
+                )
+
+
+                Clock.schedule_once(
+                    lambda dt:
+                    threading.Thread(
+                        target=self.connect_bluetooth,
+                        daemon=True
+                    ).start(),
+                    4
+                )
+
+
             except:
-                Clock.schedule_once(lambda dt: threading.Thread(target=self.connect_bluetooth, daemon=True).start(), 1)
+
+                Clock.schedule_once(
+                    lambda dt:
+                    threading.Thread(
+                        target=self.connect_bluetooth,
+                        daemon=True
+                    ).start(),
+                    1
+                )
+
+
         else:
-            Clock.schedule_once(lambda dt: threading.Thread(target=self.connect_bluetooth, daemon=True).start(), 1)
 
+            Clock.schedule_once(
+                lambda dt:
+                threading.Thread(
+                    target=self.connect_bluetooth,
+                    daemon=True
+                ).start(),
+                1
+            )
+
+
+    # ======================================
+    # LOAD SETTINGS
+    # ======================================
     def load_settings(self):
-        if os.path.exists("bt_settings.json"):
+
+        if os.path.exists(
+            "bt_settings.json"
+        ):
+
             try:
-                with open("bt_settings.json", "r") as f:
+
+                with open(
+                    "bt_settings.json",
+                    "r"
+                ) as f:
+
                     data = json.load(f)
-                    if "mac" in data: self.hc05_mac = data["mac"]
-                    if "on_delay" in data: self.on_delay = data["on_delay"]
-                    if "off_delay" in data: self.off_delay = data["off_delay"]
-                    if "s1_on" in data: self.s1_on_msg = data["s1_on"]
-                    if "s1_off" in data: self.s1_off_msg = data["s1_off"]
-                    if "s2_on" in data: self.s2_on_msg = data["s2_on"]
-                    if "s2_off" in data: self.s2_off_msg = data["s2_off"]
-            except: pass
 
+
+                    if "mac" in data:
+                        self.hc05_mac = data["mac"]
+
+
+                    if "on_delay" in data:
+                        self.on_delay = data["on_delay"]
+
+
+                    if "off_delay" in data:
+                        self.off_delay = data["off_delay"]
+
+
+                    if "s1_on" in data:
+                        self.s1_on_msg = data["s1_on"]
+
+
+                    if "s1_off" in data:
+                        self.s1_off_msg = data["s1_off"]
+
+
+                    if "s2_on" in data:
+                        self.s2_on_msg = data["s2_on"]
+
+
+                    if "s2_off" in data:
+                        self.s2_off_msg = data["s2_off"]
+
+
+            except:
+
+                pass
+
+
+    # ======================================
+    # SAVE SETTINGS
+    # ======================================
     def save_settings_to_file(self):
-        data = {
-            "mac": self.hc05_mac.strip(), "on_delay": self.on_delay, "off_delay": self.off_delay,
-            "s1_on": self.s1_on_msg, "s1_off": self.s1_off_msg, "s2_on": self.s2_on_msg, "s2_off": self.s2_off_msg
-        }
-        try:
-            with open("bt_settings.json", "w") as f:
-                json.dump(data, f)
-        except: pass
 
+        data = {
+            "mac": self.hc05_mac.strip(),
+
+            "on_delay": self.on_delay,
+
+            "off_delay": self.off_delay,
+
+            "s1_on": self.s1_on_msg,
+
+            "s1_off": self.s1_off_msg,
+
+            "s2_on": self.s2_on_msg,
+
+            "s2_off": self.s2_off_msg
+        }
+
+
+        try:
+
+            with open(
+                "bt_settings.json",
+                "w"
+            ) as f:
+
+                json.dump(
+                    data,
+                    f
+                )
+
+
+        except:
+
+            pass
+
+
+    # ======================================
+    # OPEN SETTINGS
+    # ======================================
     def open_settings(self):
+
         self.settings_popup.open()
 
+
+    # ======================================
+    # SAVE & CLOSE SETTINGS
+    # ======================================
     def save_and_close_settings(self):
+
         self.save_settings_to_file()
-        data = f"SET:{self.on_delay},{self.off_delay}"
+
+        data = (
+            f"SET:{self.on_delay},"
+            f"{self.off_delay}"
+        )
+
         self.send_data(data)
+
         self.settings_popup.dismiss()
 
+
+    # ======================================
+    # LOG
+    # ======================================
     @mainthread
     def log(self, msg):
-        monitor = self.root.ids.monitor
-        monitor.text += msg + "\n"
-        monitor.cursor = (0, len(monitor.text))
 
+        monitor = self.root.ids.monitor
+
+        monitor.text += (
+            msg + "\n"
+        )
+
+        monitor.cursor = (
+            0,
+            len(monitor.text)
+        )
+
+
+    # ======================================
+    # UPDATE STATUS
+    # ======================================
     @mainthread
-    def update_status(self, text, bg_color):
+    def update_status(
+        self,
+        text,
+        bg_color
+    ):
+
         self.root.ids.status_lbl.text = text
+
         self.root.ids.status_lbl.bg_color = bg_color
 
-    def connect_bluetooth(self):
-        mac = self.hc05_mac.strip()
-        self.log(f"Connecting to {mac}...")
-        self.update_status("Connecting...", [0.85, 0.53, 0.1, 1])
-        try:
-            if is_real_android:
-                adapter = BluetoothAdapter.getDefaultAdapter()
-                device = adapter.getRemoteDevice(mac)
-                spp_uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-                self.bt_socket = device.createRfcommSocketToServiceRecord(spp_uuid)
-                adapter.cancelDiscovery()
-                self.bt_socket.connect()
-                self.bt_out = self.bt_socket.getOutputStream()
-                self.bt_in = BufferedReader(InputStreamReader(self.bt_socket.getInputStream()))
-                self.is_connected = True
-            else:
-                if hasattr(socket, 'AF_BLUETOOTH'):
-                    self.bt_socket = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
-                    self.bt_socket.connect((mac, 1))
-                    self.is_connected = True
-                else:
-                    self.log("AF_BLUETOOTH missing. Simulated Mode.")
 
+    # ======================================
+    # CONNECT BLUETOOTH
+    # ======================================
+    def connect_bluetooth(self):
+
+        mac = self.hc05_mac.strip()
+
+        self.log(
+            f"Connecting to {mac}..."
+        )
+
+        self.update_status(
+            "Connecting...",
+            [0.85, 0.53, 0.1, 1]
+        )
+
+
+        try:
+
+            # ==================================
+            # REAL ANDROID
+            # ==================================
+            if is_real_android:
+
+                adapter = (
+                    BluetoothAdapter
+                    .getDefaultAdapter()
+                )
+
+
+                device = (
+                    adapter
+                    .getRemoteDevice(mac)
+                )
+
+
+                spp_uuid = (
+                    UUID.fromString(
+                        "00001101-0000-1000-8000-00805F9B34FB"
+                    )
+                )
+
+
+                self.bt_socket = (
+                    device
+                    .createRfcommSocketToServiceRecord(
+                        spp_uuid
+                    )
+                )
+
+
+                adapter.cancelDiscovery()
+
+
+                self.bt_socket.connect()
+
+
+                self.bt_out = (
+                    self.bt_socket
+                    .getOutputStream()
+                )
+
+
+                self.bt_in = BufferedReader(
+                    InputStreamReader(
+                        self.bt_socket
+                        .getInputStream()
+                    )
+                )
+
+
+                self.is_connected = True
+
+
+            # ==================================
+            # LINUX / DESKTOP
+            # ==================================
+            else:
+
+                if hasattr(
+                    socket,
+                    'AF_BLUETOOTH'
+                ):
+
+                    self.bt_socket = socket.socket(
+                        socket.AF_BLUETOOTH,
+                        socket.SOCK_STREAM,
+                        socket.BTPROTO_RFCOMM
+                    )
+
+
+                    self.bt_socket.connect(
+                        (mac, 1)
+                    )
+
+
+                    self.is_connected = True
+
+
+                else:
+
+                    self.log(
+                        "AF_BLUETOOTH missing. Simulated Mode."
+                    )
+
+
+            # ==================================
+            # START RX THREAD
+            # ==================================
             if self.is_connected:
-                threading.Thread(target=self.listen_for_ack, daemon=True).start()
-                self.update_status("Connected via Bluetooth!", [0.0, 0.78, 0.32, 1])
-                self.log("HC-05 Connected Successfully!")
+
+                threading.Thread(
+                    target=self.listen_for_ack,
+                    daemon=True
+                ).start()
+
+
+                self.update_status(
+                    "Connected via Bluetooth!",
+                    [0.0, 0.78, 0.32, 1]
+                )
+
+
+                self.log(
+                    "HC-05 Connected Successfully!"
+                )
+
 
         except Exception as e:
-            self.is_connected = False
-            self.update_status("Disconnected", [0.82, 0.18, 0.18, 1])
-            self.log(f"Failed: {str(e)}")
 
+            self.is_connected = False
+
+            self.update_status(
+                "Disconnected",
+                [0.82, 0.18, 0.18, 1]
+            )
+
+            self.log(
+                f"Failed: {str(e)}"
+            )
+
+
+    # ==========================================
+    # RECEIVE / ACK LISTENER
+    #
+    # IMPORTANT:
+    # Android ma ready() remove karyu che.
+    # readLine() dedicated background thread
+    # ma directly chale che.
+    # ==========================================
     def listen_for_ack(self):
-        while self.is_connected and self.bt_socket:
+
+        while (
+            self.is_connected
+            and self.bt_socket
+        ):
+
             try:
+
+                # ==================================
+                # REAL ANDROID RX
+                # ==================================
                 if is_real_android:
-                    if self.bt_in.ready():
-                        recv_data = self.bt_in.readLine()
-                        if recv_data:
-                            self.log(f"RCV: {recv_data.strip()}")
-                            if "OK" in recv_data.upper(): self.waiting_ack = False
-                else:
-                    recv_data = self.bt_socket.recv(1024).decode("utf-8").strip()
+
+                    # Blocking read.
+                    # Data aavse tyare aa line execute thase.
+                    recv_data = self.bt_in.readLine()
+
+
                     if recv_data:
-                        self.log(f"RCV: {recv_data}")
-                        if "OK" in recv_data.upper(): self.waiting_ack = False
-            except:
+
+                        recv_data = str(
+                            recv_data
+                        ).strip()
+
+
+                        if recv_data:
+
+                            self.log(
+                                f"RCV: {recv_data}"
+                            )
+
+
+                            if (
+                                "OK"
+                                in recv_data.upper()
+                            ):
+
+                                self.waiting_ack = False
+
+
+                # ==================================
+                # LINUX / DESKTOP RX
+                # ==================================
+                else:
+
+                    recv_data = (
+                        self.bt_socket
+                        .recv(1024)
+                        .decode(
+                            "utf-8"
+                        )
+                        .strip()
+                    )
+
+
+                    if recv_data:
+
+                        self.log(
+                            f"RCV: {recv_data}"
+                        )
+
+
+                        if (
+                            "OK"
+                            in recv_data.upper()
+                        ):
+
+                            self.waiting_ack = False
+
+
+            except Exception as e:
+
+                self.log(
+                    f"RX Error: {str(e)}"
+                )
+
                 break
 
-    def send_data(self, data, is_retry=False):
-        if self.is_connected and self.bt_socket:
+
+    # ======================================
+    # SEND DATA
+    # ======================================
+    def send_data(
+        self,
+        data,
+        is_retry=False
+    ):
+
+        if (
+            self.is_connected
+            and self.bt_socket
+        ):
+
             try:
+
                 msg = data + "\n"
+
+
+                # ==================================
+                # REAL ANDROID SEND
+                # ==================================
                 if is_real_android:
-                    java_msg = JavaString(msg).getBytes()
-                    self.bt_out.write(java_msg)
+
+                    java_msg = (
+                        JavaString(msg)
+                        .getBytes()
+                    )
+
+
+                    self.bt_out.write(
+                        java_msg
+                    )
+
+
                     self.bt_out.flush()
+
+
+                # ==================================
+                # LINUX / DESKTOP SEND
+                # ==================================
                 else:
-                    self.bt_socket.send(msg.encode("utf-8"))
-                
-                self.log(f"RE-SENT: {data}" if is_retry else f"SENT: {data}")
+
+                    self.bt_socket.send(
+                        msg.encode(
+                            "utf-8"
+                        )
+                    )
+
+
+                # ==================================
+                # LOG
+                # ==================================
+                if is_retry:
+
+                    self.log(
+                        f"RE-SENT: {data}"
+                    )
+
+                else:
+
+                    self.log(
+                        f"SENT: {data}"
+                    )
+
+
+                # ==================================
+                # ACK WAIT
+                # ==================================
                 self.waiting_ack = True
+
                 self.pending_data = data
-                Clock.schedule_once(lambda dt: self.check_ack(data, is_retry), 3)
-            except:
-                self.update_status("Disconnected", [0.82, 0.18, 0.18, 1])
+
+
+                Clock.schedule_once(
+                    lambda dt:
+                    self.check_ack(
+                        data,
+                        is_retry
+                    ),
+                    3
+                )
+
+
+            except Exception as e:
+
+                self.log(
+                    f"Send Error: {str(e)}"
+                )
+
+
+                self.update_status(
+                    "Disconnected",
+                    [0.82, 0.18, 0.18, 1]
+                )
+
+
                 self.is_connected = False
+
+
         else:
-            self.log(f"Simulated SENT: {data}")
 
-    def check_ack(self, data, is_retry):
-        if self.is_connected and self.waiting_ack and self.pending_data == data:
+            self.log(
+                f"Simulated SENT: {data}"
+            )
+
+
+    # ======================================
+    # CHECK ACK
+    # ======================================
+    def check_ack(
+        self,
+        data,
+        is_retry
+    ):
+
+        if (
+            self.is_connected
+            and self.waiting_ack
+            and self.pending_data == data
+        ):
+
             if not is_retry:
-                self.log("No message! Retrying...")
-                self.send_data(data, is_retry=True)
+
+                self.log(
+                    "No message! Retrying..."
+                )
+
+
+                self.send_data(
+                    data,
+                    is_retry=True
+                )
+
+
             else:
-                self.log("Controller Not Responding")
-                self.waiting_ack = False 
 
-    def s1_toggle(self, is_active):
-        self.send_data(self.s1_on_msg if is_active else self.s1_off_msg)
+                self.log(
+                    "Controller Not Responding"
+                )
 
-    def s2_toggle(self, is_active):
-        self.send_data(self.s2_on_msg if is_active else self.s2_off_msg)
 
+                self.waiting_ack = False
+
+
+    # ======================================
+    # SLIDER 1
+    # ======================================
+    def s1_toggle(
+        self,
+        is_active
+    ):
+
+        if is_active:
+
+            self.send_data(
+                self.s1_on_msg
+            )
+
+        else:
+
+            self.send_data(
+                self.s1_off_msg
+            )
+
+
+    # ======================================
+    # SLIDER 2
+    # ======================================
+    def s2_toggle(
+        self,
+        is_active
+    ):
+
+        if is_active:
+
+            self.send_data(
+                self.s2_on_msg
+            )
+
+        else:
+
+            self.send_data(
+                self.s2_off_msg
+            )
+
+
+# ==========================================
+# MAIN
+# ==========================================
 if __name__ == "__main__":
+
     try:
+
         BluetoothApp().run()
+
     except Exception as e:
+
         import traceback
-        with open("crash_log.txt", "w") as f:
-            f.write(traceback.format_exc())
+
+        with open(
+            "crash_log.txt",
+            "w"
+        ) as f:
+
+            f.write(
+                traceback.format_exc()
+            )
