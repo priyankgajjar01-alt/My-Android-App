@@ -16,7 +16,6 @@ from kivy.utils import platform
 from kivy.clock import Clock, mainthread
 from kivy.properties import StringProperty
 
-# Android Bluetooth integration
 BluetoothAdapter = None
 BluetoothDevice = None
 UUID = None
@@ -31,13 +30,19 @@ if platform == 'android':
         UUID = autoclass('java.util.UUID')
         InputStreamReader = autoclass('java.io.InputStreamReader')
         BufferedReader = autoclass('java.io.BufferedReader')
+        
+        try:
+            from android.permissions import request_permissions
+            request_permissions([
+                'android.permission.BLUETOOTH_CONNECT',
+                'android.permission.BLUETOOTH_SCAN',
+                'android.permission.ACCESS_FINE_LOCATION'
+            ])
+        except: pass
     except Exception as e:
         print("Android Pyjnius Import Error:", e)
 
 
-# ==========================================
-# ADVANCED GLOW BUTTON (Custom Area-Based Swipe)
-# ==========================================
 class GlowButton(Label):
     state = StringProperty('normal')
     
@@ -94,7 +99,19 @@ class HC05GamepadApp(App):
         self.title = "HC-05 Pro Gamepad"
         self.btn_state = {'brake': False, 'park': False, 'head': False}
         self.pressed_keys = set()
-        self.speed = 4
+        
+        self.val_up = 0
+        self.val_down = 0
+        self.val_left = 0
+        self.val_right = 0
+        self.val_brake = 0
+        self.val_park = 0
+        self.val_head = 0
+        self.val_horn = 0
+        
+        self.last_combined = ""
+        self.mac_address = "98:D3:31:F4:XX:XX"
+        
         self.bt_socket = None
         self.bt_writer = None
         self.bt_reader = None
@@ -112,13 +129,17 @@ class HC05GamepadApp(App):
 
         top_bar = BoxLayout(size_hint_y=None, height=90, padding=8, spacing=8)
         self.btn_brake = Button(text="BRAKE", font_size='16sp', bold=True, background_color=get_color_from_hex('#1e3a5f'), color=get_color_from_hex('#ccd6f6'))
-        self.btn_brake.bind(on_release=lambda x: self.toggle_btn('brake', 'K', self.btn_brake))
+        self.btn_brake.bind(on_release=lambda x: self.toggle_btn('brake', self.btn_brake))
+        
         self.btn_park = Button(text="PARK", font_size='16sp', bold=True, background_color=get_color_from_hex('#1e3a5f'), color=get_color_from_hex('#ccd6f6'))
-        self.btn_park.bind(on_release=lambda x: self.toggle_btn('park', 'P', self.btn_park))
+        self.btn_park.bind(on_release=lambda x: self.toggle_btn('park', self.btn_park))
+        
         self.btn_head = Button(text="HEAD", font_size='16sp', bold=True, background_color=get_color_from_hex('#1e3a5f'), color=get_color_from_hex('#ccd6f6'))
-        self.btn_head.bind(on_release=lambda x: self.toggle_btn('head', 'H', self.btn_head))
+        self.btn_head.bind(on_release=lambda x: self.toggle_btn('head', self.btn_head))
+        
         self.btn_horn = Button(text="HORN", font_size='16sp', bold=True, background_normal='', background_color=get_color_from_hex('#ff6d00'), color=get_color_from_hex('#ffffff'))
-        self.btn_horn.bind(on_press=lambda x: self.send_momentary('O', self.btn_horn), on_release=lambda x: self.release_momentary(self.btn_horn))
+        self.btn_horn.bind(on_press=lambda x: self.press_horn(self.btn_horn), on_release=lambda x: self.release_horn(self.btn_horn))
+        
         btn_setting = Button(text="⚙", font_size='26sp', size_hint_x=0.5, background_color=get_color_from_hex('#64ffda'), color=get_color_from_hex('#0a192f'))
         btn_setting.bind(on_release=lambda x: self.show_settings_popup())
         
@@ -126,23 +147,15 @@ class HC05GamepadApp(App):
             top_bar.add_widget(b)
         self.main_layout.add_widget(top_bar)
 
-        slider_box = BoxLayout(size_hint_y=None, height=75, padding=10, spacing=10)
-        self.lbl_speed = Label(text=f"Speed {self.speed}/9:", font_size='16sp', bold=True, color=get_color_from_hex('#8892b0'), size_hint_x=0.3)
-        self.speed_slider = Slider(min=0, max=9, value=self.speed, step=1, size_hint_x=0.7)
-        self.speed_slider.bind(value=self.on_slider_change)
-        slider_box.add_widget(self.lbl_speed)
-        slider_box.add_widget(self.speed_slider)
-        self.main_layout.add_widget(slider_box)
-
         control_wrap = BoxLayout(orientation='horizontal', padding=12, spacing=15)
         left_side = BoxLayout(orientation='vertical', size_hint_x=0.4, spacing=15)
         
         self.btn_f = GlowButton(text="UP", font_size='28sp', bold=True)
-        self.btn_f.key_id = 'F'
+        self.btn_f.key_id = 'UP'
         self.btn_f.bind(state=self.on_dpad_state)
         
         self.btn_b = GlowButton(text="DOWN", font_size='28sp', bold=True)
-        self.btn_b.key_id = 'B'
+        self.btn_b.key_id = 'DOWN'
         self.btn_b.bind(state=self.on_dpad_state)
         
         left_side.add_widget(self.btn_f)
@@ -152,11 +165,11 @@ class HC05GamepadApp(App):
         right_side = BoxLayout(orientation='horizontal', size_hint_x=0.6, spacing=15)
         
         self.btn_l = GlowButton(text="LEFT", font_size='28sp', bold=True)
-        self.btn_l.key_id = 'L'
+        self.btn_l.key_id = 'LEFT'
         self.btn_l.bind(state=self.on_dpad_state)
         
         self.btn_r = GlowButton(text="RIGHT", font_size='28sp', bold=True)
-        self.btn_r.key_id = 'R'
+        self.btn_r.key_id = 'RIGHT'
         self.btn_r.bind(state=self.on_dpad_state)
         
         right_side.add_widget(self.btn_l)
@@ -166,26 +179,11 @@ class HC05GamepadApp(App):
         self.main_layout.add_widget(control_wrap)
         return self.main_layout
 
-
-    # ==========================================
-    # BLUETOOTH AUTO-CONNECT & DISCONNECT LOGIC
-    # ==========================================
     def on_start(self):
-        if platform == 'android':
-            from android.permissions import request_permissions
-            try:
-                request_permissions([
-                    'android.permission.BLUETOOTH_CONNECT',
-                    'android.permission.BLUETOOTH_SCAN',
-                    'android.permission.ACCESS_FINE_LOCATION'
-                ])
-            except: pass
-            Clock.schedule_once(lambda dt: self.start_connection_thread(), 2)
-        else:
-            self.update_status_bar(False, "Simulated Mode (PC)")
+        Clock.schedule_once(lambda dt: self.start_connection_thread(), 1)
 
     def start_connection_thread(self):
-        mac = self.btn_map.get('MAC', '').strip()
+        mac = self.mac_address.strip()
         if not mac or mac == '98:D3:31:F4:XX:XX':
             self.update_status_bar(False, "Please set MAC Address in Settings")
             return
@@ -195,6 +193,10 @@ class HC05GamepadApp(App):
 
     def connect_task(self, mac):
         try:
+            if platform != 'android':
+                Clock.schedule_once(lambda dt: self.update_status_bar(True, "Simulated Connected Mode!"))
+                return
+                
             adapter = BluetoothAdapter.getDefaultAdapter()
             if adapter and adapter.isDiscovering(): 
                 adapter.cancelDiscovery()
@@ -220,9 +222,7 @@ class HC05GamepadApp(App):
 
     def on_connection_success(self):
         self.update_status_bar(True, "Connected via Bluetooth!")
-        cmd = self.btn_map.get('S', 'S')
-        if cmd.lower() != "no action":
-            self.send_data(cmd + "\n")
+        self.send_combined_data()
 
     def disconnect_bluetooth(self):
         try:
@@ -242,16 +242,20 @@ class HC05GamepadApp(App):
             Color(rgba=get_color_from_hex('#00c853' if connected else '#d32f2f'))
             RoundedRectangle(pos=self.status_bar.pos, size=self.status_bar.size)
 
-    def send_data(self, data):
-        if self.bt_socket and self.bt_writer:
-            try: 
-                self.bt_writer.write(data.encode('utf-8'))
-            except Exception as e: 
-                self.disconnect_bluetooth()
+    def send_combined_data(self):
+        packet = f"{self.val_up},{self.val_down},{self.val_left},{self.val_right},{self.val_brake},{self.val_park},{self.val_head},{self.val_horn}\n"
+        
+        if packet != self.last_combined:
+            if self.bt_socket and self.bt_writer:
+                try: 
+                    self.bt_writer.write(packet.encode('utf-8'))
+                    print(f"SENT: {packet.strip()}")
+                except Exception as e: 
+                    self.disconnect_bluetooth()
+            else:
+                print(f"SIM-SENT: {packet.strip()}")
+            self.last_combined = packet
 
-    # ==========================================
-    # DPAD CONTROL LOGIC (ANTI-GHOSTING & SAFETY)
-    # ==========================================
     def on_dpad_state(self, instance, state):
         key = instance.key_id
         if state == 'down':
@@ -260,142 +264,184 @@ class HC05GamepadApp(App):
             self.release_key(key)
 
     def press_key(self, key):
-        # AHIYA FIX THAYU CHE: UP ane DOWN ek sathe press thava par block kari dese
-        if key == 'F' and self.btn_b.state == 'down':
+        if key == 'UP' and self.btn_b.state == 'down':
             self.btn_b.active_touches.clear()
             self.btn_b.state = 'normal'
-        elif key == 'B' and self.btn_f.state == 'down':
+        elif key == 'DOWN' and self.btn_f.state == 'down':
             self.btn_f.active_touches.clear()
             self.btn_f.state = 'normal'
             
-        # AHIYA FIX THAYU CHE: LEFT ane RIGHT ek sathe press thava par block kari dese
-        if key == 'L' and self.btn_r.state == 'down':
+        if key == 'LEFT' and self.btn_r.state == 'down':
             self.btn_r.active_touches.clear()
             self.btn_r.state = 'normal'
-        elif key == 'R' and self.btn_l.state == 'down':
+        elif key == 'RIGHT' and self.btn_l.state == 'down':
             self.btn_l.active_touches.clear()
             self.btn_l.state = 'normal'
-            
-        self.pressed_keys.add(key)
-        self.check_and_send_combo()
+
+        if key == 'UP': self.val_up = 1
+        elif key == 'DOWN': self.val_down = 1
+        elif key == 'LEFT': self.val_left = 1
+        elif key == 'RIGHT': self.val_right = 1
+        
+        self.send_combined_data()
 
     def release_key(self, key):
-        if key in self.pressed_keys:
-            self.pressed_keys.discard(key)
-                
-            if not self.pressed_keys: 
-                cmd = self.btn_map.get('S', 'S')
-                if cmd.lower() != "no action":
-                    self.send_data(cmd + "\n")
-            else: 
-                self.check_and_send_combo()
+        if key == 'UP': self.val_up = 0
+        elif key == 'DOWN': self.val_down = 0
+        elif key == 'LEFT': self.val_left = 0
+        elif key == 'RIGHT': self.val_right = 0
+        
+        self.send_combined_data()
 
-    def check_and_send_combo(self):
-        cmd = self.btn_map.get('S', 'S')
-        if 'F' in self.pressed_keys and 'L' in self.pressed_keys: cmd = self.btn_map.get('FL', 'A')
-        elif 'F' in self.pressed_keys and 'R' in self.pressed_keys: cmd = self.btn_map.get('FR', 'C')
-        elif 'B' in self.pressed_keys and 'L' in self.pressed_keys: cmd = self.btn_map.get('BL', 'D')
-        elif 'B' in self.pressed_keys and 'R' in self.pressed_keys: cmd = self.btn_map.get('BR', 'E')
-        elif 'F' in self.pressed_keys: cmd = self.btn_map.get('F', 'F')
-        elif 'B' in self.pressed_keys: cmd = self.btn_map.get('B', 'B')
-        elif 'L' in self.pressed_keys: cmd = self.btn_map.get('L', 'L')
-        elif 'R' in self.pressed_keys: cmd = self.btn_map.get('R', 'R')
-        self.send_data(cmd + "\n")
-
-    def send_momentary(self, key, widget):
-        self.send_data(self.btn_map.get(key, key) + "\n")
-        widget.background_color = get_color_from_hex('#ffab40')
-
-    def release_momentary(self, widget):
-        widget.background_color = get_color_from_hex('#ff6d00')
-
-    def on_slider_change(self, instance, value):
-        self.speed = int(value)
-        self.lbl_speed.text = f"Speed {self.speed}/9:"
-        self.send_data(self.btn_map.get(f'S{self.speed}', str(self.speed)) + "\n")
-
-    def toggle_btn(self, type_name, key, widget):
+    def toggle_btn(self, type_name, widget):
         self.btn_state[type_name] = not self.btn_state[type_name]
-        state = '1' if self.btn_state[type_name] else '0'
-        widget.background_color = get_color_from_hex('#64ffda') if self.btn_state[type_name] else get_color_from_hex('#1e3a5f')
-        widget.color = get_color_from_hex('#0a192f') if self.btn_state[type_name] else get_color_from_hex('#ccd6f6')
-        self.send_data(self.btn_map.get(key, key) + state + "\n")
+        state = 1 if self.btn_state[type_name] else 0
+        
+        if type_name == 'brake': self.val_brake = state
+        elif type_name == 'park': self.val_park = state
+        elif type_name == 'head': self.val_head = state
+        
+        widget.background_color = get_color_from_hex('#64ffda') if state else get_color_from_hex('#1e3a5f')
+        widget.color = get_color_from_hex('#0a192f') if state else get_color_from_hex('#ccd6f6')
+        self.send_combined_data()
 
-    # ==========================================
-    # SETTINGS LOGIC
-    # ==========================================
+    def press_horn(self, widget):
+        self.val_horn = 1
+        widget.background_color = get_color_from_hex('#ffab40')
+        self.send_combined_data()
+
+    def release_horn(self, widget):
+        self.val_horn = 0
+        widget.background_color = get_color_from_hex('#ff6d00')
+        self.send_combined_data()
+
     def show_settings_popup(self):
-        popup_layout = BoxLayout(orientation='vertical', padding=10, spacing=8)
+        popup_layout = BoxLayout(orientation='vertical', padding=15, spacing=15)
         scroll_view = ScrollView()
-        grid = GridLayout(cols=2, spacing=10, size_hint_y=None)
+        grid = BoxLayout(orientation='vertical', spacing=10, size_hint_y=None)
         grid.bind(minimum_height=grid.setter('height'))
         
         self.inputs = {}
-        keys_to_show = [
-            ('MAC Address', 'MAC'),
-            ('Forward (F)', 'F'), 
-            ('Backward (B)', 'B'), 
-            ('Left (L)', 'L'), 
-            ('Right (R)', 'R'), 
-            ('Stop / Release (Type "No Action")', 'S'), 
-            ('Brake (K)', 'K'), 
-            ('Park Light (P)', 'P'), 
-            ('Head Light (H)', 'H'), 
-            ('Horn (O)', 'O'), 
-            ('F + L Combo', 'FL'), 
-            ('F + R Combo', 'FR'), 
-            ('B + L Combo', 'BL'), 
-            ('B + R Combo', 'BR')
+        
+        settings_items = [
+            ('MAC Address (Editable)', 'MAC', True),
+            ('Up Button Logic', 'UP', False),
+            ('Down Button Logic', 'DOWN', False),
+            ('Left Button Logic', 'LEFT', False),
+            ('Right Button Logic', 'RIGHT', False),
+            ('Brake Button Logic', 'BRAKE', False),
+            ('Park Button Logic', 'PARK', False),
+            ('Head Light Logic', 'HEAD', False),
+            ('Horn Button Logic', 'HORN', False),
         ]
         
-        for i in range(10): 
-            keys_to_show.append((f'Speed {i}', f'S{i}'))
+        for label_text, map_key, is_editable in settings_items:
+            row = BoxLayout(orientation='horizontal', size_hint_y=None, height=45, spacing=10)
+            lbl = Label(text=label_text, size_hint=(0.5, 1), color=get_color_from_hex('#ccd6f6'), font_size='15sp', halign='left')
+            lbl.bind(size=lbl.setter('text_size'))
             
-        for label_text, map_key in keys_to_show:
-            lbl = Label(text=label_text, size_hint=(0.6, None), height=45, color=get_color_from_hex('#ccd6f6'), font_size='15sp')
-            grid.add_widget(lbl)
-            txt_input = TextInput(text=self.btn_map.get(map_key, ''), size_hint=(0.4, None), height=45, multiline=False, background_color=get_color_from_hex('#0a192f'), foreground_color=get_color_from_hex('#64ffda'), cursor_color=get_color_from_hex('#64ffda'), font_size='16sp', halign='center')
-            grid.add_widget(txt_input)
-            self.inputs[map_key] = txt_input
+            val = self.mac_address if map_key == 'MAC' else "Press=1 / Release=0"
+            txt_input = TextInput(
+                text=val, 
+                size_hint=(0.5, 1), 
+                multiline=False, 
+                readonly=not is_editable,
+                background_color=get_color_from_hex('#0a192f'), 
+                foreground_color=get_color_from_hex('#64ffda') if is_editable else get_color_from_hex('#8892b0'), 
+                font_size='15sp', 
+                halign='center'
+            )
+            row.add_widget(lbl)
+            row.add_widget(txt_input)
+            grid.add_widget(row)
+            
+            if is_editable:
+                self.mac_input = txt_input
+
+        grid.add_widget(Label(size_hint_y=None, height=15))
+
+        # Format View Button (Instead of long text on main settings screen)
+        btn_view_format = Button(
+            text="📖 View Data Format & Logic", 
+            size_hint_y=None, 
+            height=50, 
+            font_size='15sp', 
+            background_color=get_color_from_hex('#1e3a5f'), 
+            color=get_color_from_hex('#64ffda'), 
+            bold=True
+        )
+        btn_view_format.bind(on_release=lambda x: self.show_format_popup())
+        grid.add_widget(btn_view_format)
             
         scroll_view.add_widget(grid)
         popup_layout.add_widget(scroll_view)
         
         btn_save = Button(text="Save & Close", size_hint_y=None, height=55, font_size='16sp', background_color=get_color_from_hex('#00c853'), color=get_color_from_hex('#0a192f'), bold=True)
+        btn_save.bind(on_release=lambda x: self.save_settings(popup))
         popup_layout.add_widget(btn_save)
         
-        popup = Popup(title="Button Value Settings", content=popup_layout, size_hint=(0.95, 0.9))
-        btn_save.bind(on_release=lambda x: self.save_settings(popup))
+        popup = Popup(title="Controller Settings", content=popup_layout, size_hint=(0.95, 0.9))
         popup.open()
 
+    def show_format_popup(self):
+        content = BoxLayout(orientation='vertical', padding=15, spacing=15)
+        
+        format_text = (
+            "--- ARDUINO DATA FORMAT ---\n\n"
+            "Format Sent: Up,Down,Left,Right,Brake,Park,Head,Horn\\n\n"
+            "Values are separated by commas and end with \\n\n\n"
+            "Logic:\n"
+            "• Press = 1\n"
+            "• Release = 0\n\n"
+            "Example (Up Pressed + Brake ON):\n"
+            "'1,0,0,0,1,0,0,0\\n'"
+        )
+        
+        lbl_format = Label(
+            text=format_text, 
+            color=get_color_from_hex('#8892b0'), 
+            font_size='15sp', 
+            halign='center', 
+            valign='middle'
+        )
+        lbl_format.bind(size=lbl_format.setter('text_size'))
+        content.add_widget(lbl_format)
+        
+        btn_close = Button(
+            text="Close", 
+            size_hint_y=None, 
+            height=50, 
+            font_size='16sp', 
+            background_color=get_color_from_hex('#64ffda'), 
+            color=get_color_from_hex('#0a192f'), 
+            bold=True
+        )
+        
+        format_popup = Popup(title="Data Format & Visualization", content=content, size_hint=(0.85, 0.5))
+        btn_close.bind(on_release=format_popup.dismiss)
+        content.add_widget(btn_close)
+        
+        format_popup.open()
+
     def save_settings(self, popup):
-        old_mac = self.btn_map.get('MAC', '')
-        for key, text_widget in self.inputs.items(): 
-            self.btn_map[key] = text_widget.text.strip()
-            
-        with open('btn_settings.json', 'w') as f: 
-            json.dump(self.btn_map, f)
+        old_mac = self.mac_address
+        self.mac_address = self.mac_input.text.strip()
+        
+        with open('bt_settings.json', 'w') as f: 
+            json.dump({'MAC': self.mac_address}, f)
         popup.dismiss()
         
-        new_mac = self.btn_map.get('MAC', '')
-        if old_mac != new_mac:
+        if old_mac != self.mac_address:
             self.disconnect_bluetooth()
             self.start_connection_thread()
 
     def load_settings(self):
-        self.btn_map = {
-            'MAC': '98:D3:31:F4:XX:XX',
-            'F':'F', 'B':'B', 'L':'L', 'R':'R', 'S':'S', 
-            'K':'K', 'P':'P', 'H':'H', 'O':'O', 
-            'FL':'A', 'FR':'C', 'BL':'D', 'BR':'E'
-        }
-        for i in range(10): 
-            self.btn_map[f'S{i}'] = str(i)
-            
-        if os.path.exists('btn_settings.json'):
+        if os.path.exists('bt_settings.json'):
             try: 
-                with open('btn_settings.json', 'r') as f: 
-                    self.btn_map.update(json.load(f))
+                with open('bt_settings.json', 'r') as f: 
+                    data = json.load(f)
+                    if 'MAC' in data:
+                        self.mac_address = data['MAC']
             except Exception as e: 
                 print(e)
 
