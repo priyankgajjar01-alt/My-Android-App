@@ -1,685 +1,880 @@
-import os
 import json
+import os
 import threading
-import time
-import socket
 from kivy.app import App
-from kivy.lang import Builder
-from kivy.clock import Clock, mainthread
-from kivy.properties import StringProperty, NumericProperty
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.anchorlayout import AnchorLayout
+from kivy.uix.button import Button
+from kivy.uix.label import Label
+from kivy.uix.slider import Slider
 from kivy.uix.popup import Popup
-from kivy.core.window import Window
-from kivy.utils import platform
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.textinput import TextInput
+from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
+from kivy.graphics import Color, RoundedRectangle
+from kivy.utils import get_color_from_hex, platform
+from kivy.clock import Clock, mainthread
+from kivy.properties import StringProperty
 from kivy.metrics import dp
 
-# JNI Check (Android mate)
-is_real_android = False
+# ==========================================
+# ANDROID BLUETOOTH SETUP
+# ==========================================
+BluetoothAdapter = None
+BluetoothDevice = None
+UUID = None
+InputStreamReader = None
+BufferedReader = None
+
 if platform == 'android':
     try:
         from jnius import autoclass
         BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
+        BluetoothDevice = autoclass('android.bluetooth.BluetoothDevice')
         UUID = autoclass('java.util.UUID')
         InputStreamReader = autoclass('java.io.InputStreamReader')
         BufferedReader = autoclass('java.io.BufferedReader')
-        JavaString = autoclass('java.lang.String')
-        is_real_android = True
+        try:
+            from android.permissions import request_permissions
+            request_permissions([
+                'android.permission.BLUETOOTH_CONNECT',
+                'android.permission.BLUETOOTH_SCAN',
+                'android.permission.ACCESS_FINE_LOCATION'
+            ])
+        except: pass
     except Exception as e:
-        print("JNI Loading Error:", e)
+        print("Android Pyjnius Import Error:", e)
 
-# Dark Navy Background
-Window.clearcolor = (10/255, 25/255, 47/255, 1)
 
-KV = '''
-<CustomTextInput@TextInput>:
-    background_normal: ''
-    background_color: [0.04, 0.1, 0.18, 1]
-    foreground_color: [0.39, 1.0, 0.85, 1]
-    cursor_color: [0.39, 1.0, 0.85, 1]
-    multiline: False
-    halign: 'center'
-    font_size: '14sp'
-    size_hint_y: None
-    height: '36dp'
-    padding_y: (self.height - self.line_height) / 2
-    use_bubble: False
-    use_handles: False
+# ==========================================
+# CUSTOM WIDGETS
+# ==========================================
+class ProButton(Button):
+    def __init__(self, bg_hex='#1e3a5f', **kwargs):
+        super().__init__(**kwargs)
+        self.background_color = (0, 0, 0, 0)
+        self.background_normal = ''
+        self.background_down = ''
+        self.bg_hex = bg_hex
+        self.bind(pos=self.update_canvas, size=self.update_canvas, state=self.update_canvas)
 
-<RoundedButton@Button>:
-    background_color: [0, 0, 0, 0]
-    background_normal: ''
-    bg_color: [0.39, 1.0, 0.85, 1]
-    color: [0.04, 0.1, 0.18, 1]
-    canvas.before:
-        Color:
-            rgba: self.bg_color if self.state == 'normal' else [self.bg_color[0]*0.8, self.bg_color[1]*0.8, self.bg_color[2]*0.8, 1]
-        RoundedRectangle:
-            pos: self.pos
-            size: self.size
-            radius: [18, 18, 18, 18]
+    def update_canvas(self, *args):
+        self.canvas.before.clear()
+        with self.canvas.before:
+            if self.state == 'down':
+                Color(rgba=get_color_from_hex('#64ffda80'))
+            else:
+                Color(rgba=get_color_from_hex(self.bg_hex))
+            RoundedRectangle(pos=self.pos, size=self.size, radius=[12])
 
-# ===== FORCE UPDATE BUTTON (with glow) =====
-<ForceButton@Button>:
-    background_normal: ''
-    background_color: [0, 0, 0, 0]
-    bold: True
-    font_size: '15sp'
-    color: [0.04, 0.1, 0.18, 1] if self.state == 'down' else [0.39, 1.0, 0.85, 1]
-    canvas.before:
-        Color:
-            rgba: [0.39, 1.0, 0.85, 0.35] if self.state == 'down' else [0, 0, 0, 0]
-        RoundedRectangle:
-            pos: self.x - 4, self.y - 4
-            size: self.width + 8, self.height + 8
-            radius: [28, 28, 28, 28]
-        Color:
-            rgba: [0.39, 1.0, 0.85, 1] if self.state == 'down' else [0.1, 0.2, 0.3, 1]
-        RoundedRectangle:
-            pos: self.pos
-            size: self.size
-            radius: [25, 25, 25, 25]
-        Color:
-            rgba: [0.39, 1.0, 0.85, 1]
-        Line:
-            rounded_rectangle: [self.x, self.y, self.width, self.height, 25]
-            width: 2
+    def set_bg_color(self, new_hex):
+        self.bg_hex = new_hex
+        self.update_canvas()
 
-<StatusLabel@Label>:
-    bg_color: [0.82, 0.18, 0.18, 1]
-    selectable: False
-    canvas.before:
-        Color:
-            rgba: self.bg_color
-        Rectangle:
-            pos: self.pos
-            size: self.size
 
-# ===== SLIDER CELL (UPDATED: Name bigger, Switch close to name) =====
-<SliderCell@BoxLayout>:
-    orientation: 'vertical'
-    spacing: '0dp'
-    slider_name: ''
-    slider_id: 0
-    padding: [0, 4, 0, 4]
-    
-    Label:
-        text: root.slider_name
-        color: [0.39, 1.0, 0.85, 1]
-        font_size: '24sp'
-        bold: True
-        size_hint_y: None
-        height: '34dp'
-        halign: 'center'
-        valign: 'middle'
-        text_size: self.size
-        selectable: False
-    
-    AnchorLayout:
-        anchor_x: 'center'
-        anchor_y: 'top'
-        Switch:
-            size_hint: None, None
-            size: '45dp', '30dp'
-            on_active: app.on_slider_change(root.slider_id, self.active)
-            canvas.before:
-                PushMatrix
-                Scale:
-                    origin: self.center
-                    x: 1.5
-                    y: 1.5
-            canvas.after:
-                PopMatrix
+class CenteredTextInput(TextInput):
+    """TextInput with vertical text centering"""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(height=self._update_padding)
 
-# ===== DATA FORMAT POPUP =====
-<DataFormatPopup>:
-    title: 'Data Format & Logic'
-    title_color: [0.39, 1.0, 0.85, 1]
-    title_size: '18sp'
-    separator_color: [0.39, 1.0, 0.85, 1]
-    background_color: [0.11, 0.14, 0.18, 1]
-    size_hint: 0.9, 0.8
-    auto_dismiss: True
+    def _update_padding(self, *args):
+        # Center text vertically
+        pad = max(0, (self.height - self.line_height) / 2)
+        self.padding_y = [pad, pad]
 
-    BoxLayout:
-        orientation: 'vertical'
-        padding: '15dp'
-        spacing: '10dp'
 
-        Label:
-            text: 'Format:\\n    on_delay,off_delay,s1,s2,s3,s4,s5,s6,s7,s8,s9,force\\n\\nExample:\\n    1000,1000,1,0,0,1,0,0,1,0,0,0\\n\\nRules:\\n    - Slider ON  = 1, OFF = 0 (S1 to S9)\\n    - Force Update pressed = 1 (during press)\\n    - Force Update normally = 0\\n    - All values sent in ONE line\\n    - Every message ends with newline (\\\\n)'
-            color: [0.8, 0.84, 0.96, 1]
-            font_size: '12sp'
-            halign: 'left'
-            valign: 'top'
-            text_size: self.width, None
-            size_hint_y: 1
-            selectable: False
-
-        Button:
-            text: 'Close'
-            background_color: [0.8, 0.2, 0.2, 1]
-            background_normal: ''
-            color: [1, 1, 1, 1]
-            bold: True
-            size_hint_y: None
-            height: '45dp'
-            on_release: root.dismiss()
-
-# ===== CONTROLLER SETTINGS POPUP =====
-<SettingsPopup>:
-    title: ''
-    separator_height: 0
-    background_color: [0.11, 0.14, 0.18, 1]
-    size_hint: 0.95, 0.95
-    auto_dismiss: False
-
-    BoxLayout:
-        orientation: 'vertical'
-        padding: '15dp'
-        spacing: '8dp'
-
-        Label:
-            text: 'Controller Settings'
-            color: [0.39, 1.0, 0.85, 1]
-            bold: True
-            font_size: '18sp'
-            halign: 'left'
-            valign: 'middle'
-            text_size: self.size
-            size_hint_y: None
-            height: '28dp'
-            selectable: False
-
-        Widget:
-            size_hint_y: None
-            height: '2dp'
-            canvas:
-                Color:
-                    rgba: [0.39, 1.0, 0.85, 1]
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-
-        GridLayout:
-            cols: 2
-            spacing: '8dp'
-            row_default_height: '36dp'
-            row_force_default: True
-            size_hint_y: None
-            height: '124dp'
-
-            Label:
-                text: 'MAC Address (Editable)'
-                color: [0.7, 0.8, 0.9, 1]
-                halign: 'left'
-                valign: 'middle'
-                text_size: self.size
-                selectable: False
-            CustomTextInput:
-                text: app.hc05_mac
-                on_text: app.hc05_mac = self.text
-
-            Label:
-                text: 'ON Delay (ms)'
-                color: [0.7, 0.8, 0.9, 1]
-                halign: 'left'
-                valign: 'middle'
-                text_size: self.size
-                selectable: False
-            CustomTextInput:
-                text: app.on_delay
-                on_text: app.on_delay = self.text
-
-            Label:
-                text: 'OFF Delay (ms)'
-                color: [0.7, 0.8, 0.9, 1]
-                halign: 'left'
-                valign: 'middle'
-                text_size: self.size
-                selectable: False
-            CustomTextInput:
-                text: app.off_delay
-                on_text: app.off_delay = self.text
-
-        Label:
-            text: 'Slider Names (S1 - S9)'
-            color: [0.39, 1.0, 0.85, 1]
-            bold: True
-            font_size: '14sp'
-            halign: 'left'
-            valign: 'middle'
-            text_size: self.size
-            size_hint_y: None
-            height: '22dp'
-            selectable: False
-
-        GridLayout:
-            cols: 3
-            spacing: '6dp'
-            row_default_height: '36dp'
-            row_force_default: True
-            size_hint_y: None
-            height: '120dp'
-
-            CustomTextInput:
-                hint_text: 'S1'
-                text: app.s1_name
-                on_text: app.s1_name = self.text
-            CustomTextInput:
-                hint_text: 'S2'
-                text: app.s2_name
-                on_text: app.s2_name = self.text
-            CustomTextInput:
-                hint_text: 'S3'
-                text: app.s3_name
-                on_text: app.s3_name = self.text
-            CustomTextInput:
-                hint_text: 'S4'
-                text: app.s4_name
-                on_text: app.s4_name = self.text
-            CustomTextInput:
-                hint_text: 'S5'
-                text: app.s5_name
-                on_text: app.s5_name = self.text
-            CustomTextInput:
-                hint_text: 'S6'
-                text: app.s6_name
-                on_text: app.s6_name = self.text
-            CustomTextInput:
-                hint_text: 'S7'
-                text: app.s7_name
-                on_text: app.s7_name = self.text
-            CustomTextInput:
-                hint_text: 'S8'
-                text: app.s8_name
-                on_text: app.s8_name = self.text
-            CustomTextInput:
-                hint_text: 'S9'
-                text: app.s9_name
-                on_text: app.s9_name = self.text
-
-        Button:
-            text: 'View Data Format & Logic'
-            background_color: [0.1, 0.2, 0.3, 1]
-            background_normal: ''
-            color: [0.39, 1.0, 0.85, 1]
-            bold: True
-            font_size: '14sp'
-            size_hint_y: None
-            height: '42dp'
-            on_release: app.show_data_format_popup()
-
-        Widget:
-            size_hint_y: 1
-
-        ForceButton:
-            text: 'Force Update Settings'
-            size_hint_y: None
-            height: '48dp'
-            on_press: app.force_update_and_close()
-
-        Button:
-            text: 'Save & Close'
-            background_color: [0.0, 0.78, 0.32, 1]
-            background_normal: ''
-            color: [0.04, 0.1, 0.18, 1]
-            bold: True
-            font_size: '16sp'
-            size_hint_y: None
-            height: '48dp'
-            on_release: app.save_and_close_settings()
-
-# ===== MAIN LAYOUT =====
-BoxLayout:
-    orientation: 'vertical'
-
-    StatusLabel:
-        id: status_lbl
-        text: 'System Starting...'
-        size_hint_y: None
-        height: '55dp'
-        bold: True
-        font_size: '20sp'
-        color: [1, 1, 1, 1]
-        bg_color: [0.85, 0.53, 0.1, 1]
-        on_touch_up: 
-            if self.collide_point(*args[1].pos): app.reconnect_bluetooth()
-
-    BoxLayout:
-        size_hint_y: 0.3
-        padding: '10dp'
-        TextInput:
-            id: monitor
-            readonly: True
-            background_normal: ''
-            background_color: [0, 0, 0, 1]
-            foreground_color: [0.39, 1.0, 0.85, 1]
-            font_size: '12sp'
-            text: 'System Ready...\\n'
-            use_bubble: False
-            use_handles: False
-
-    GridLayout:
-        cols: 3
-        rows: 3
-        spacing: '6dp'
-        padding: '10dp'
-        size_hint_y: 0.7
-
-        SliderCell:
-            slider_name: app.s1_name
-            slider_id: 1
-        SliderCell:
-            slider_name: app.s2_name
-            slider_id: 2
-        SliderCell:
-            slider_name: app.s3_name
-            slider_id: 3
-        SliderCell:
-            slider_name: app.s4_name
-            slider_id: 4
-        SliderCell:
-            slider_name: app.s5_name
-            slider_id: 5
-        SliderCell:
-            slider_name: app.s6_name
-            slider_id: 6
-        SliderCell:
-            slider_name: app.s7_name
-            slider_id: 7
-        SliderCell:
-            slider_name: app.s8_name
-            slider_id: 8
-        SliderCell:
-            slider_name: app.s9_name
-            slider_id: 9
-
-    AnchorLayout:
-        size_hint_y: None
-        height: '50dp'
-        anchor_x: 'center'
-        anchor_y: 'center'
-        RoundedButton:
-            text: 'Settings'
-            size_hint: None, None
-            size: '140dp', '40dp'
-            bg_color: [0.39, 1.0, 0.85, 1]
-            bold: True
-            font_size: '16sp'
-            on_release: app.open_settings()
-'''
-
-class SettingsPopup(Popup):
-    pass
-
-class DataFormatPopup(Popup):
-    pass
-
-class BluetoothApp(App):
-    hc05_mac = StringProperty("98:D3:31:F4:XX:XX")
-    on_delay = StringProperty("1000")
-    off_delay = StringProperty("1000")
-    
-    s1_name = StringProperty("S1")
-    s2_name = StringProperty("S2")
-    s3_name = StringProperty("S3")
-    s4_name = StringProperty("S4")
-    s5_name = StringProperty("S5")
-    s6_name = StringProperty("S6")
-    s7_name = StringProperty("S7")
-    s8_name = StringProperty("S8")
-    s9_name = StringProperty("S9")
-    
-    s1_state = NumericProperty(0)
-    s2_state = NumericProperty(0)
-    s3_state = NumericProperty(0)
-    s4_state = NumericProperty(0)
-    s5_state = NumericProperty(0)
-    s6_state = NumericProperty(0)
-    s7_state = NumericProperty(0)
-    s8_state = NumericProperty(0)
-    s9_state = NumericProperty(0)
-    
-    force_state = NumericProperty(0)
-
-    def build(self):
-        self.bt_socket = None
-        self.bt_out = None
-        self.bt_in = None
+class ReconnectButton(Button):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.background_color = (0, 0, 0, 0)
+        self.background_normal = ''
+        self.background_down = ''
         self.is_connected = False
-        self.waiting_ack = False
-        self.pending_data = ""
+        self.bind(pos=self.update_canvas, size=self.update_canvas, state=self.update_canvas)
+
+    def update_canvas(self, *args):
+        self.canvas.before.clear()
+        with self.canvas.before:
+            if self.state == 'down':
+                Color(rgba=get_color_from_hex('#ffffff80'))
+            else:
+                Color(rgba=get_color_from_hex('#00c853' if self.is_connected else '#d32f2f'))
+            radius = min(self.size[0], self.size[1]) / 2
+            RoundedRectangle(pos=self.pos, size=self.size, radius=[radius])
+
+    def set_connected(self, connected):
+        self.is_connected = connected
+        self.update_canvas()
+
+
+class GlowButton(Label):
+    state = StringProperty('normal')
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.active_touches = set()
+        self.bind(pos=self.draw_button, size=self.draw_button, state=self.draw_button)
+
+    def draw_button(self, *args):
+        self.canvas.before.clear()
+        pressed = self.state == 'down'
+        self.color = get_color_from_hex('#0a192f') if pressed else get_color_from_hex('#64ffda')
+        with self.canvas.before:
+            if pressed:
+                Color(rgba=get_color_from_hex('#64ffda40'))
+                RoundedRectangle(pos=(self.pos[0] - 5, self.pos[1] - 5), size=(self.size[0] + 10, self.size[1] + 10), radius=[22])
+                Color(rgba=get_color_from_hex('#64ffda'))
+                RoundedRectangle(pos=self.pos, size=self.size, radius=[18])
+            else:
+                Color(rgba=get_color_from_hex('#1e3a5f'))
+                RoundedRectangle(pos=self.pos, size=self.size, radius=[18])
+                Color(rgba=get_color_from_hex('#0a192f'))
+                RoundedRectangle(pos=(self.pos[0] + 2, self.pos[1] + 2), size=(self.size[0] - 4, self.size[1] - 4), radius=[16])
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            self.active_touches.add(touch.uid)
+            self.state = 'down'
+        return False
+
+    def on_touch_move(self, touch):
+        if self.collide_point(*touch.pos):
+            if touch.uid not in self.active_touches:
+                self.active_touches.add(touch.uid)
+                self.state = 'down'
+        else:
+            if touch.uid in self.active_touches:
+                self.active_touches.remove(touch.uid)
+                if not self.active_touches:
+                    self.state = 'normal'
+        return False
+
+    def on_touch_up(self, touch):
+        if touch.uid in self.active_touches:
+            self.active_touches.remove(touch.uid)
+            if not self.active_touches:
+                self.state = 'normal'
+        return False
+
+
+class AutoCenterSlider(Slider):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.cursor_size = ('80dp', '80dp')
+        self.background_width = '35dp'
+
+    def on_touch_up(self, touch):
+        if touch.grab_current == self:
+            Clock.schedule_once(lambda dt: setattr(self, 'value', 5), 0.05)
+        return super().on_touch_up(touch)
+
+
+# ==========================================
+# SCREENS
+# ==========================================
+class MenuScreen(Screen):
+    pass
+
+class AnalogScreen(Screen):
+    pass
+
+class DigitalScreen(Screen):
+    pass
+
+
+# ==========================================
+# MAIN APP
+# ==========================================
+class HC05ProApp(App):
+    def build(self):
+        self.title = "HC-05 Pro Controller"
+
+        self.bt_socket = None
+        self.bt_writer = None
+        self.bt_reader = None
+        self.mac_address = "98:D3:31:F4:XX:XX"
+
+        self.current_mode = 'analog'
+
+        self.val_v = 5
+        self.val_h = 5
+        self.val_up = 0
+        self.val_down = 0
+        self.val_left = 0
+        self.val_right = 0
+
+        self.val_brake = 0
+        self.val_park = 0
+        self.val_head = 0
+        self.val_horn = 0
+        self.btn_state = {'brake': False, 'park': False, 'head': False}
+
+        self.last_combined = ""
+        self.is_connected = False
         self.is_connecting = False
+        self.live_preview_label = None
+
+        self.reconnect_buttons = []
 
         self.load_settings()
-        self.root = Builder.load_string(KV)
-        self.settings_popup = SettingsPopup()
-        self.data_format_popup = DataFormatPopup()
-        return self.root
 
+        self.sm = ScreenManager(transition=SlideTransition(duration=0.25))
+        self.sm.add_widget(self._build_menu_screen())
+        self.sm.add_widget(self._build_analog_screen())
+        self.sm.add_widget(self._build_digital_screen())
+        self.sm.current = 'menu'
+        return self.sm
+
+    # ==========================================
+    # HELPER: Reconnect Button
+    # ==========================================
+    def _make_reconnect_button(self):
+        rb = ReconnectButton(text="RECONNECT", font_size='11sp', bold=True,
+                             color=get_color_from_hex('#ffffff'),
+                             size_hint_x=None, width='90dp')
+        rb.bind(on_release=lambda x: self.reconnect_bluetooth())
+        self.reconnect_buttons.append(rb)
+        return rb
+
+    # ==========================================
+    # MENU SCREEN
+    # ==========================================
+    def _build_menu_screen(self):
+        screen = MenuScreen(name='menu')
+        root = BoxLayout(orientation='vertical', padding='25dp', spacing='20dp')
+
+        with root.canvas.before:
+            Color(rgba=get_color_from_hex('#0a192f'))
+            RoundedRectangle(pos=(0, 0), size=(10000, 10000))
+
+        title = Label(
+            text="HC-05 PRO CONTROLLER",
+            size_hint_y=None, height='60dp',
+            color=get_color_from_hex('#64ffda'),
+            font_size='24sp', bold=True
+        )
+        root.add_widget(title)
+
+        self.menu_status = Label(
+            text="Initializing...",
+            size_hint_y=None, height='35dp',
+            color=get_color_from_hex('#ffffff'),
+            font_size='13sp', bold=True
+        )
+        self._paint_status_bg(self.menu_status, False)
+        root.add_widget(self.menu_status)
+
+        root.add_widget(Label(size_hint_y=None, height='20dp'))
+
+        select_lbl = Label(
+            text="SELECT CONTROL MODE",
+            size_hint_y=None, height='30dp',
+            color=get_color_from_hex('#ccd6f6'),
+            font_size='16sp', bold=True
+        )
+        root.add_widget(select_lbl)
+
+        btn_analog = ProButton(
+            bg_hex='#1e3a5f', text="ANALOG\n(Smooth Joystick)",
+            size_hint_y=None, height='100dp',
+            font_size='22sp', bold=True,
+            color=get_color_from_hex('#64ffda')
+        )
+        btn_analog.bind(on_release=lambda x: self.switch_mode('analog'))
+        root.add_widget(btn_analog)
+
+        btn_digital = ProButton(
+            bg_hex='#1e3a5f', text="DIGITAL\n(D-Pad Buttons)",
+            size_hint_y=None, height='100dp',
+            font_size='22sp', bold=True,
+            color=get_color_from_hex('#64ffda')
+        )
+        btn_digital.bind(on_release=lambda x: self.switch_mode('digital'))
+        root.add_widget(btn_digital)
+
+        root.add_widget(Label())
+
+        btn_settings = ProButton(
+            bg_hex='#64ffda', text="SETTINGS",
+            size_hint_y=None, height='55dp',
+            font_size='18sp', bold=True,
+            color=get_color_from_hex('#0a192f')
+        )
+        btn_settings.bind(on_release=lambda x: self.show_settings_popup())
+        root.add_widget(btn_settings)
+
+        screen.add_widget(root)
+        return screen
+
+    # ==========================================
+    # TOP BAR (shared)
+    # ==========================================
+    def _build_top_bar(self, mode_prefix):
+        top_bar = BoxLayout(size_hint_y=None, height='52dp', padding='4dp', spacing='4dp')
+
+        btn_back = ProButton(bg_hex='#64ffda', text="BACK", font_size='12sp', bold=True,
+                             color=get_color_from_hex('#0a192f'), size_hint_x=1)
+        btn_back.bind(on_release=lambda x: self.go_back_to_menu())
+        top_bar.add_widget(btn_back)
+
+        brake_btn = ProButton(bg_hex='#1e3a5f', text="BRAKE", font_size='12sp', bold=True,
+                              color=get_color_from_hex('#ccd6f6'), size_hint_x=1)
+        brake_btn.bind(on_release=self.toggle_brake)
+        top_bar.add_widget(brake_btn)
+
+        park_btn = ProButton(bg_hex='#1e3a5f', text="PARK", font_size='12sp', bold=True,
+                             color=get_color_from_hex('#ccd6f6'), size_hint_x=1)
+        park_btn.bind(on_release=self.toggle_park)
+        top_bar.add_widget(park_btn)
+
+        head_btn = ProButton(bg_hex='#1e3a5f', text="HEAD", font_size='12sp', bold=True,
+                             color=get_color_from_hex('#ccd6f6'), size_hint_x=1)
+        head_btn.bind(on_release=self.toggle_head)
+        top_bar.add_widget(head_btn)
+
+        horn_btn = ProButton(bg_hex='#ff6d00', text="HORN", font_size='12sp', bold=True,
+                             color=get_color_from_hex('#ffffff'), size_hint_x=1)
+        horn_btn.bind(on_press=self.press_horn, on_release=self.release_horn)
+        top_bar.add_widget(horn_btn)
+
+        reconnect_btn = self._make_reconnect_button()
+        top_bar.add_widget(reconnect_btn)
+
+        return top_bar, btn_back, brake_btn, park_btn, head_btn, horn_btn, reconnect_btn
+
+    # ==========================================
+    # ANALOG SCREEN
+    # ==========================================
+    def _build_analog_screen(self):
+        screen = AnalogScreen(name='analog')
+        root = BoxLayout(orientation='vertical')
+        with root.canvas.before:
+            Color(rgba=get_color_from_hex('#0a192f'))
+            RoundedRectangle(pos=(0, 0), size=(10000, 10000))
+
+        top_bar, _, self.ana_btn_brake, self.ana_btn_park, self.ana_btn_head, self.ana_btn_horn, _ = self._build_top_bar('ana')
+        root.add_widget(top_bar)
+
+        control_wrap = BoxLayout(orientation='horizontal', padding='20dp', spacing='30dp')
+
+        left_anchor = AnchorLayout(anchor_x='center', anchor_y='center', size_hint_x=0.5)
+        self.slider_v = AutoCenterSlider(min=0, max=10, value=5, orientation='vertical', step=1, size_hint=(None, 0.95), width='120dp')
+        self.slider_v.bind(value=self.on_v_slider)
+        left_anchor.add_widget(self.slider_v)
+        control_wrap.add_widget(left_anchor)
+
+        right_anchor = AnchorLayout(anchor_x='center', anchor_y='center', size_hint_x=0.5)
+        self.slider_h = AutoCenterSlider(min=0, max=10, value=5, orientation='horizontal', step=1, size_hint=(0.95, None), height='120dp')
+        self.slider_h.bind(value=self.on_h_slider)
+        right_anchor.add_widget(self.slider_h)
+        control_wrap.add_widget(right_anchor)
+
+        root.add_widget(control_wrap)
+        screen.add_widget(root)
+        return screen
+
+    # ==========================================
+    # DIGITAL SCREEN
+    # ==========================================
+    def _build_digital_screen(self):
+        screen = DigitalScreen(name='digital')
+        root = BoxLayout(orientation='vertical')
+        with root.canvas.before:
+            Color(rgba=get_color_from_hex('#0a192f'))
+            RoundedRectangle(pos=(0, 0), size=(10000, 10000))
+
+        top_bar, _, self.dig_btn_brake, self.dig_btn_park, self.dig_btn_head, self.dig_btn_horn, _ = self._build_top_bar('dig')
+        root.add_widget(top_bar)
+
+        control_wrap = BoxLayout(orientation='horizontal', padding='12dp', spacing='15dp')
+
+        left_side = BoxLayout(orientation='vertical', size_hint_x=0.4, spacing='15dp')
+        self.btn_f = GlowButton(text="UP", font_size='24sp', bold=True)
+        self.btn_f.key_id = 'UP'
+        self.btn_f.bind(state=self.on_dpad_state)
+
+        self.btn_b = GlowButton(text="DOWN", font_size='24sp', bold=True)
+        self.btn_b.key_id = 'DOWN'
+        self.btn_b.bind(state=self.on_dpad_state)
+
+        left_side.add_widget(self.btn_f)
+        left_side.add_widget(self.btn_b)
+        control_wrap.add_widget(left_side)
+
+        right_side = BoxLayout(orientation='horizontal', size_hint_x=0.6, spacing='15dp')
+
+        self.btn_l = GlowButton(text="LEFT", font_size='24sp', bold=True)
+        self.btn_l.key_id = 'LEFT'
+        self.btn_l.bind(state=self.on_dpad_state)
+
+        self.btn_r = GlowButton(text="RIGHT", font_size='24sp', bold=True)
+        self.btn_r.key_id = 'RIGHT'
+        self.btn_r.bind(state=self.on_dpad_state)
+
+        right_side.add_widget(self.btn_l)
+        right_side.add_widget(self.btn_r)
+        control_wrap.add_widget(right_side)
+
+        root.add_widget(control_wrap)
+        screen.add_widget(root)
+        return screen
+
+    # ==========================================
+    # NAVIGATION
+    # ==========================================
+    def switch_mode(self, mode):
+        self.current_mode = mode
+        self.reset_values_for_mode(mode)
+        self.sm.current = mode
+        self.last_combined = ""
+        self.send_combined_data()
+
+    def go_back_to_menu(self):
+        self.sm.current = 'menu'
+
+    def reset_values_for_mode(self, mode):
+        if mode == 'analog':
+            self.val_v = 5
+            self.val_h = 5
+            if hasattr(self, 'slider_v'):
+                self.slider_v.value = 5
+            if hasattr(self, 'slider_h'):
+                self.slider_h.value = 5
+        elif mode == 'digital':
+            self.val_up = self.val_down = self.val_left = self.val_right = 0
+            for attr in ['btn_f', 'btn_b', 'btn_l', 'btn_r']:
+                if hasattr(self, attr):
+                    b = getattr(self, attr)
+                    b.active_touches.clear()
+                    b.state = 'normal'
+
+    # ==========================================
+    # LIFECYCLE
+    # ==========================================
     def on_start(self):
-        self.log(f"Loaded MAC: {self.hc05_mac}")
-
-        if is_real_android:
+        Clock.schedule_once(lambda dt: self.start_connection_thread(), 1)
+        if platform == 'android':
             try:
-                from android.permissions import request_permissions
-                request_permissions([
-                    'android.permission.BLUETOOTH_CONNECT',
-                    'android.permission.BLUETOOTH_SCAN',
-                    'android.permission.ACCESS_FINE_LOCATION',
-                    'android.permission.BLUETOOTH',
-                    'android.permission.BLUETOOTH_ADMIN'
-                ])
-                self.update_status("Waiting for Permissions...", [0.85, 0.53, 0.1, 1])
-                Clock.schedule_once(lambda dt: threading.Thread(target=self.connect_bluetooth, daemon=True).start(), 4)
-            except:
-                Clock.schedule_once(lambda dt: threading.Thread(target=self.connect_bluetooth, daemon=True).start(), 1)
-        else:
-            Clock.schedule_once(lambda dt: threading.Thread(target=self.connect_bluetooth, daemon=True).start(), 1)
-
-    def reconnect_bluetooth(self):
-        if self.is_connected:
-            self.log("Already connected. Ignoring reconnect request.")
-            return
-        if self.is_connecting:
-            self.log("Reconnect already in progress...")
-            return
-        
-        self.is_connecting = True
-        self.log("Manual reconnect requested...")
-        self.update_status("Reconnecting...", [0.85, 0.53, 0.1, 1])
-        
-        if self.bt_socket:
-            try:
-                self.bt_socket.close()
-            except:
-                pass
-            self.bt_socket = None
-            self.bt_out = None
-            self.bt_in = None
-        
-        self.is_connected = False
-        self.waiting_ack = False
-        
-        threading.Thread(target=self.connect_bluetooth, daemon=True).start()
-
-    def load_settings(self):
-        if os.path.exists("bt_settings.json"):
-            try:
-                with open("bt_settings.json", "r") as f:
-                    data = json.load(f)
-                    if "mac" in data: self.hc05_mac = data["mac"]
-                    if "on_delay" in data: self.on_delay = data["on_delay"]
-                    if "off_delay" in data: self.off_delay = data["off_delay"]
-                    for i in range(1, 10):
-                        key = f"s{i}_name"
-                        if key in data:
-                            setattr(self, key, data[key])
+                from android import mActivity
+                mActivity.bind(on_keyboard=self._on_keyboard)
             except: pass
 
-    def save_settings_to_file(self):
-        data = {
-            "mac": self.hc05_mac.strip(),
-            "on_delay": self.on_delay,
-            "off_delay": self.off_delay,
-        }
-        for i in range(1, 10):
-            data[f"s{i}_name"] = getattr(self, f"s{i}_name")
-        
+    def _on_keyboard(self, window, key, *args):
+        if key == 27:
+            if self.sm.current != 'menu':
+                self.go_back_to_menu()
+                return True
+        return False
+
+    # ==========================================
+    # BLUETOOTH
+    # ==========================================
+    def start_connection_thread(self):
+        mac = self.mac_address.strip()
+        if not mac or mac == '98:D3:31:F4:XX:XX':
+            self.update_status_bar(False, "No MAC Address! Set in Settings")
+            return
+        self.update_status_bar(False, f"Connecting to {mac}...")
+        self.is_connecting = True
+        threading.Thread(target=self.connect_task, args=(mac,), daemon=True).start()
+
+    def connect_task(self, mac):
         try:
-            with open("bt_settings.json", "w") as f:
-                json.dump(data, f)
-        except: pass
-
-    def open_settings(self):
-        self.settings_popup.open()
-
-    def show_data_format_popup(self):
-        self.data_format_popup.open()
-
-    def save_and_close_settings(self):
-        self.force_state = 0
-        self.save_settings_to_file()
-        self.send_full_state()
-        self.settings_popup.dismiss()
-
-    def force_update_and_close(self):
-        self.force_state = 1
-        self.log("Force Update -> applying settings & closing popup")
-        
-        self.save_settings_to_file()
-        self.send_full_state()
-        
-        Clock.schedule_once(lambda dt: self._close_popup_after_force(), 0.35)
-
-    def _close_popup_after_force(self):
-        try:
-            self.settings_popup.dismiss()
-        except:
-            pass
-        Clock.schedule_once(lambda dt: self._reset_force_after_close(), 0.6)
-
-    def _reset_force_after_close(self):
-        if self.force_state == 1:
-            self.force_state = 0
-            self.log("Force reset to 0 (post-update)")
-            self.send_full_state()
-
-    @mainthread
-    def log(self, msg):
-        monitor = self.root.ids.monitor
-        monitor.text += msg + "\n"
-        monitor.cursor = (0, len(monitor.text))
-
-    @mainthread
-    def update_status(self, text, bg_color):
-        self.root.ids.status_lbl.text = text
-        self.root.ids.status_lbl.bg_color = bg_color
-
-    def connect_bluetooth(self):
-        mac = self.hc05_mac.strip()
-        self.log(f"Connecting to {mac}...")
-        self.update_status("Connecting...", [0.85, 0.53, 0.1, 1])
-        
-        try:
-            if is_real_android:
-                adapter = BluetoothAdapter.getDefaultAdapter()
-                device = adapter.getRemoteDevice(mac)
-                spp_uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-                self.bt_socket = device.createRfcommSocketToServiceRecord(spp_uuid)
-                adapter.cancelDiscovery()
-                self.bt_socket.connect()
-                self.bt_out = self.bt_socket.getOutputStream()
-                self.bt_in = BufferedReader(InputStreamReader(self.bt_socket.getInputStream()))
+            if platform != 'android':
+                Clock.schedule_once(lambda dt: self.update_status_bar(True, "Simulated Connected Mode!"))
                 self.is_connected = True
-            else:
-                if hasattr(socket, 'AF_BLUETOOTH'):
-                    self.bt_socket = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
-                    self.bt_socket.connect((mac, 1))
-                    self.is_connected = True
-                else:
-                    self.log("AF_BLUETOOTH missing. Simulated Mode.")
+                self.is_connecting = False
+                return
 
-            if self.is_connected:
-                threading.Thread(target=self.listen_for_ack, daemon=True).start()
-                self.update_status("Connected via Bluetooth!", [0.0, 0.78, 0.32, 1])
-                self.log("HC-05 Connected Successfully!")
+            adapter = BluetoothAdapter.getDefaultAdapter()
+            if adapter and adapter.isDiscovering():
+                adapter.cancelDiscovery()
 
-        except Exception as e:
-            self.is_connected = False
-            self.update_status("Disconnected", [0.82, 0.18, 0.18, 1])
-            self.log(f"Failed: {str(e)}")
-        
-        finally:
+            device = adapter.getRemoteDevice(mac)
+            s_uuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb")
+
+            self.bt_socket = device.createRfcommSocketToServiceRecord(s_uuid)
+            self.bt_socket.connect()
+            self.bt_writer = self.bt_socket.getOutputStream()
+            self.bt_reader = BufferedReader(InputStreamReader(self.bt_socket.getInputStream()))
+
+            self.is_connected = True
             self.is_connecting = False
+            Clock.schedule_once(lambda dt: self.on_connection_success())
 
-    def listen_for_ack(self):
-        while self.is_connected and self.bt_socket:
+            while True:
+                data = self.bt_reader.readLine()
+                if data is None:
+                    break
+        except Exception as e:
+            print("BT Error:", e)
+            self.is_connected = False
+            self.is_connecting = False
+        Clock.schedule_once(lambda dt: self.disconnect_bluetooth())
+
+    def on_connection_success(self):
+        self.update_status_bar(True, "Connected via Bluetooth!")
+        self._update_all_reconnect_buttons(True)
+        self.last_combined = ""
+        self.send_combined_data()
+
+    def disconnect_bluetooth(self):
+        try:
+            if self.bt_writer: self.bt_writer.close()
+            if self.bt_reader: self.bt_reader.close()
+            if self.bt_socket: self.bt_socket.close()
+        except: pass
+        self.bt_socket = None
+        self.bt_writer = None
+        self.bt_reader = None
+        self.is_connected = False
+        self.update_status_bar(False, "Disconnected")
+        self._update_all_reconnect_buttons(False)
+
+    def reconnect_bluetooth(self):
+        if self.is_connecting:
+            print("Reconnect already in progress...")
+            return
+        if self.is_connected:
+            self.disconnect_bluetooth()
+        Clock.schedule_once(lambda dt: self.start_connection_thread(), 0.5)
+
+    def _update_all_reconnect_buttons(self, connected):
+        for rb in self.reconnect_buttons:
             try:
-                if is_real_android:
-                    if self.bt_in.ready():
-                        recv_data = self.bt_in.readLine()
-                        if recv_data:
-                            self.log(f"RCV: {recv_data.strip()}")
-                            if "OK" in recv_data.upper(): self.waiting_ack = False
-                else:
-                    recv_data = self.bt_socket.recv(1024).decode("utf-8").strip()
-                    if recv_data:
-                        self.log(f"RCV: {recv_data}")
-                        if "OK" in recv_data.upper(): self.waiting_ack = False
-            except:
-                break
+                rb.set_connected(connected)
+            except: pass
 
-    def build_state_message(self):
-        parts = [self.on_delay, self.off_delay]
-        for i in range(1, 10):
-            parts.append(str(int(getattr(self, f"s{i}_state"))))
-        parts.append(str(int(self.force_state)))
-        return ",".join(parts)
+    def _paint_status_bg(self, widget, connected):
+        widget.canvas.before.clear()
+        with widget.canvas.before:
+            Color(rgba=get_color_from_hex('#00c853' if connected else '#d32f2f'))
+            RoundedRectangle(pos=widget.pos, size=widget.size)
 
-    def send_full_state(self):
-        data = self.build_state_message()
-        self.send_data(data)
+    @mainthread
+    def update_status_bar(self, connected, text_msg):
+        if hasattr(self, 'menu_status'):
+            self.menu_status.text = text_msg
+            self._paint_status_bg(self.menu_status, connected)
 
-    def send_data(self, data, is_retry=False):
-        if self.is_connected and self.bt_socket:
-            try:
-                msg = data + "\n"
-                if is_real_android:
-                    java_msg = JavaString(msg).getBytes()
-                    self.bt_out.write(java_msg)
-                    self.bt_out.flush()
-                else:
-                    self.bt_socket.send(msg.encode("utf-8"))
-
-                self.log(f"RE-SENT: {data}" if is_retry else f"SENT: {data}")
-                self.waiting_ack = True
-                self.pending_data = data
-                Clock.schedule_once(lambda dt: self.check_ack(data, is_retry), 3)
-            except:
-                self.update_status("Disconnected", [0.82, 0.18, 0.18, 1])
-                self.is_connected = False
+    # ==========================================
+    # DATA SENDING
+    # ==========================================
+    def send_combined_data(self):
+        if self.current_mode == 'analog':
+            packet = f"{self.val_v},{self.val_h},{self.val_brake},{self.val_park},{self.val_head},{self.val_horn}\n"
         else:
-            self.log(f"Simulated SENT: {data}")
+            packet = f"{self.val_up},{self.val_down},{self.val_left},{self.val_right},{self.val_brake},{self.val_park},{self.val_head},{self.val_horn}\n"
 
-    def check_ack(self, data, is_retry):
-        if self.is_connected and self.waiting_ack and self.pending_data == data:
-            if not is_retry:
-                self.log("No message! Retrying...")
-                self.send_data(data, is_retry=True)
+        if packet != self.last_combined:
+            if self.bt_socket and self.bt_writer:
+                try:
+                    self.bt_writer.write(packet.encode('utf-8'))
+                    print(f"SENT[{self.current_mode}]: {packet.strip()}")
+                except Exception:
+                    self.disconnect_bluetooth()
             else:
-                self.log("Controller Not Responding")
-                self.waiting_ack = False
+                print(f"SIM-SENT[{self.current_mode}]: {packet.strip()}")
+            self.last_combined = packet
 
-    def on_slider_change(self, slider_id, is_active):
-        val = 1 if is_active else 0
-        if 1 <= slider_id <= 9:
-            setattr(self, f"s{slider_id}_state", val)
-        self.send_full_state()
+            if self.live_preview_label is not None:
+                self._update_live_preview(packet.strip())
+
+    @mainthread
+    def _update_live_preview(self, text):
+        if self.live_preview_label is not None:
+            try:
+                self.live_preview_label.text = f"[{self.current_mode.upper()}] {text}"
+            except: pass
+
+    # ==========================================
+    # ANALOG HANDLERS
+    # ==========================================
+    def on_v_slider(self, instance, value):
+        if self.current_mode != 'analog': return
+        self.val_v = 10 - int(value)
+        self.send_combined_data()
+
+    def on_h_slider(self, instance, value):
+        if self.current_mode != 'analog': return
+        self.val_h = int(value)
+        self.send_combined_data()
+
+    # ==========================================
+    # DIGITAL HANDLERS
+    # ==========================================
+    def on_dpad_state(self, instance, state):
+        if self.current_mode != 'digital': return
+        key = instance.key_id
+        if state == 'down':
+            self.press_key(key)
+        else:
+            self.release_key(key)
+
+    def press_key(self, key):
+        if key == 'UP' and self.btn_b.state == 'down':
+            self.btn_b.active_touches.clear(); self.btn_b.state = 'normal'
+        elif key == 'DOWN' and self.btn_f.state == 'down':
+            self.btn_f.active_touches.clear(); self.btn_f.state = 'normal'
+        if key == 'LEFT' and self.btn_r.state == 'down':
+            self.btn_r.active_touches.clear(); self.btn_r.state = 'normal'
+        elif key == 'RIGHT' and self.btn_l.state == 'down':
+            self.btn_l.active_touches.clear(); self.btn_l.state = 'normal'
+
+        if key == 'UP': self.val_up = 1
+        elif key == 'DOWN': self.val_down = 1
+        elif key == 'LEFT': self.val_left = 1
+        elif key == 'RIGHT': self.val_right = 1
+        self.send_combined_data()
+
+    def release_key(self, key):
+        if key == 'UP': self.val_up = 0
+        elif key == 'DOWN': self.val_down = 0
+        elif key == 'LEFT': self.val_left = 0
+        elif key == 'RIGHT': self.val_right = 0
+        self.send_combined_data()
+
+    # ==========================================
+    # SHARED BUTTON HANDLERS
+    # ==========================================
+    def _update_btn_visual(self, ana_btn, dig_btn, state, on_hex, off_hex):
+        for b in [ana_btn, dig_btn]:
+            if b is None: continue
+            b.set_bg_color(on_hex if state else off_hex)
+            b.color = get_color_from_hex('#0a192f') if state else get_color_from_hex('#ccd6f6')
+
+    def toggle_brake(self, btn):
+        self.btn_state['brake'] = not self.btn_state['brake']
+        self.val_brake = 1 if self.btn_state['brake'] else 0
+        self._update_btn_visual(getattr(self, 'ana_btn_brake', None),
+                                getattr(self, 'dig_btn_brake', None),
+                                self.val_brake, '#64ffda', '#1e3a5f')
+        self.send_combined_data()
+
+    def toggle_park(self, btn):
+        self.btn_state['park'] = not self.btn_state['park']
+        self.val_park = 1 if self.btn_state['park'] else 0
+        self._update_btn_visual(getattr(self, 'ana_btn_park', None),
+                                getattr(self, 'dig_btn_park', None),
+                                self.val_park, '#64ffda', '#1e3a5f')
+        self.send_combined_data()
+
+    def toggle_head(self, btn):
+        self.btn_state['head'] = not self.btn_state['head']
+        self.val_head = 1 if self.btn_state['head'] else 0
+        self._update_btn_visual(getattr(self, 'ana_btn_head', None),
+                                getattr(self, 'dig_btn_head', None),
+                                self.val_head, '#64ffda', '#1e3a5f')
+        self.send_combined_data()
+
+    def press_horn(self, btn):
+        self.val_horn = 1
+        for b in [getattr(self, 'ana_btn_horn', None), getattr(self, 'dig_btn_horn', None)]:
+            if b: b.set_bg_color('#ffab40')
+        self.send_combined_data()
+
+    def release_horn(self, btn):
+        self.val_horn = 0
+        for b in [getattr(self, 'ana_btn_horn', None), getattr(self, 'dig_btn_horn', None)]:
+            if b: b.set_bg_color('#ff6d00')
+        self.send_combined_data()
+
+    # ==========================================
+    # SETTINGS POPUP (Compact - no format text)
+    # ==========================================
+    def show_settings_popup(self):
+        popup_layout = BoxLayout(orientation='vertical', padding='15dp', spacing='12dp')
+
+        # --- MAC Address ---
+        lbl_mac = Label(text="HC-05 MAC Address", size_hint_y=None, height='28dp',
+                        color=get_color_from_hex('#64ffda'), font_size='16sp', bold=True,
+                        halign='left', valign='middle')
+        lbl_mac.bind(size=lbl_mac.setter('text_size'))
+        popup_layout.add_widget(lbl_mac)
+
+        # MAC input - CENTERED via AnchorLayout with fixed height
+        mac_wrap = AnchorLayout(size_hint_y=None, height='50dp',
+                                anchor_x='center', anchor_y='center')
+        self.mac_input = CenteredTextInput(
+            text=self.mac_address, size_hint=(1, 1), multiline=False,
+            background_color=get_color_from_hex('#0a192f'),
+            foreground_color=get_color_from_hex('#64ffda'),
+            cursor_color=get_color_from_hex('#64ffda'),
+            font_size='18sp', halign='center',
+            use_bubble=False, use_handles=False
+        )
+        mac_wrap.add_widget(self.mac_input)
+        popup_layout.add_widget(mac_wrap)
+
+        # --- ACTIVE MODE indicator ---
+        mode_lbl = Label(
+            text=f"ACTIVE MODE: {self.current_mode.upper()}",
+            size_hint_y=None, height='36dp',
+            color=get_color_from_hex('#0a192f'),
+            font_size='16sp', bold=True
+        )
+        with mode_lbl.canvas.before:
+            Color(rgba=get_color_from_hex('#64ffda'))
+            RoundedRectangle(pos=mode_lbl.pos, size=mode_lbl.size, radius=[8])
+        mode_lbl.bind(pos=self._repaint_mode_lbl, size=self._repaint_mode_lbl)
+        popup_layout.add_widget(mode_lbl)
+
+        # --- LIVE DATA PREVIEW ---
+        live_title = Label(text="LIVE DATA PREVIEW", size_hint_y=None, height='24dp',
+                           color=get_color_from_hex('#64ffda'), font_size='13sp', bold=True,
+                           halign='left', valign='middle')
+        live_title.bind(size=live_title.setter('text_size'))
+        popup_layout.add_widget(live_title)
+
+        self.live_preview_label = Label(
+            text=f"[{self.current_mode.upper()}] Waiting for data...",
+            size_hint_y=None, height='46dp',
+            color=get_color_from_hex('#64ffda'),
+            font_size='15sp', bold=True,
+            halign='center', valign='middle'
+        )
+        self.live_preview_label.bind(size=self.live_preview_label.setter('text_size'))
+        with self.live_preview_label.canvas.before:
+            Color(rgba=get_color_from_hex('#0a192f'))
+            RoundedRectangle(pos=self.live_preview_label.pos, size=self.live_preview_label.size, radius=[8])
+        self.live_preview_label.bind(pos=self._repaint_live, size=self._repaint_live)
+        popup_layout.add_widget(self.live_preview_label)
+
+        # --- View Data Format Button ---
+        btn_view_format = ProButton(
+            bg_hex='#1e3a5f', text="VIEW DATA FORMAT & LOGIC",
+            size_hint_y=None, height='50dp',
+            font_size='15sp', bold=True,
+            color=get_color_from_hex('#64ffda')
+        )
+        btn_view_format.bind(on_release=lambda x: self.show_format_popup())
+        popup_layout.add_widget(btn_view_format)
+
+        # Spacer
+        popup_layout.add_widget(Label())
+
+        # --- Save Button ---
+        btn_save = ProButton(bg_hex='#00c853', text="SAVE & RECONNECT",
+                             size_hint_y=None, height='55dp',
+                             font_size='18sp', color=get_color_from_hex('#0a192f'), bold=True)
+        btn_save.bind(on_release=self.save_settings)
+        popup_layout.add_widget(btn_save)
+
+        self.popup = Popup(
+            title="Controller Settings",
+            content=popup_layout, size_hint=(0.95, 0.75),
+            background_color=[0.07, 0.13, 0.25, 1]
+        )
+        self.popup.bind(on_dismiss=lambda x: setattr(self, 'live_preview_label', None))
+        self.popup.open()
+
+    # ==========================================
+    # DATA FORMAT POPUP (separate)
+    # ==========================================
+    def show_format_popup(self):
+        content = BoxLayout(orientation='vertical', padding='15dp', spacing='10dp')
+
+        scroll = ScrollView(size_hint=(1, 1))
+        info_text = (
+            "ANALOG MODE (Joystick)\n"
+            "Format: V, H, B, P, L, O\\n\n\n"
+            "  V = Vertical\n"
+            "      0 = Fast Forward\n"
+            "      5 = Stop (center)\n"
+            "      10 = Fast Back\n\n"
+            "  H = Horizontal\n"
+            "      0 = Left\n"
+            "      5 = Straight (center)\n"
+            "      10 = Right\n\n"
+            "  B = Brake      (0 / 1)\n"
+            "  P = Park       (0 / 1)\n"
+            "  L = Head Light (0 / 1)\n"
+            "  O = Horn       (0 / 1)\n\n"
+            "  Example: 2,5,0,0,1,0\\n\n"
+            "──────────────────────────────\n\n"
+            "DIGITAL MODE (D-Pad)\n"
+            "Format: U, D, L, R, B, P, Hd, Hr\\n\n\n"
+            "  U = Up    (0 / 1)\n"
+            "  D = Down  (0 / 1)\n"
+            "  L = Left  (0 / 1)\n"
+            "  R = Right (0 / 1)\n\n"
+            "  B  = Brake      (0 / 1)\n"
+            "  P  = Park       (0 / 1)\n"
+            "  Hd = Head Light (0 / 1)\n"
+            "  Hr = Horn       (0 / 1)\n\n"
+            "  Example: 1,0,0,0,1,0,0,0\\n\n"
+            "──────────────────────────────\n\n"
+            "NOTES:\n"
+            "  • Only ACTIVE mode's packet is transmitted.\n"
+            "  • Mode switch = auto values reset + fresh send.\n"
+            "  • Sliders auto-center to 5 on release.\n"
+            "  • D-Pad auto-excludes opposite directions."
+        )
+
+        lbl = Label(
+            text=info_text,
+            color=get_color_from_hex('#ccd6f6'),
+            font_size='13sp',
+            halign='left', valign='top',
+            size_hint_y=None
+        )
+        lbl.bind(width=lambda inst, w: setattr(inst, 'text_size', (w, None)))
+        lbl.bind(texture_size=lambda inst, ts: setattr(inst, 'height', ts[1]))
+        scroll.add_widget(lbl)
+        content.add_widget(scroll)
+
+        btn_close = ProButton(
+            bg_hex='#64ffda', text="CLOSE",
+            size_hint_y=None, height='50dp',
+            font_size='16sp', bold=True,
+            color=get_color_from_hex('#0a192f')
+        )
+        format_popup = Popup(
+            title="Data Format & Logic",
+            content=content, size_hint=(0.92, 0.85),
+            background_color=[0.07, 0.13, 0.25, 1]
+        )
+        btn_close.bind(on_release=format_popup.dismiss)
+        content.add_widget(btn_close)
+        format_popup.open()
+
+    def _repaint_mode_lbl(self, widget, *args):
+        widget.canvas.before.clear()
+        with widget.canvas.before:
+            Color(rgba=get_color_from_hex('#64ffda'))
+            RoundedRectangle(pos=widget.pos, size=widget.size, radius=[8])
+
+    def _repaint_live(self, widget, *args):
+        widget.canvas.before.clear()
+        with widget.canvas.before:
+            Color(rgba=get_color_from_hex('#0a192f'))
+            RoundedRectangle(pos=widget.pos, size=widget.size, radius=[8])
+
+    def save_settings(self, btn):
+        old_mac = self.mac_address
+        self.mac_address = self.mac_input.text.strip()
+        try:
+            with open('bt_settings.json', 'w') as f:
+                json.dump({'MAC': self.mac_address}, f)
+        except: pass
+        self.popup.dismiss()
+        if old_mac != self.mac_address:
+            self.disconnect_bluetooth()
+            self.start_connection_thread()
+
+    def load_settings(self):
+        if os.path.exists('bt_settings.json'):
+            try:
+                with open('bt_settings.json', 'r') as f:
+                    data = json.load(f)
+                    if 'MAC' in data:
+                        self.mac_address = data['MAC']
+                    elif 'mac' in data:
+                        self.mac_address = data['mac']
+            except Exception as e:
+                print("Setting load error:", e)
+
 
 if __name__ == "__main__":
-    try:
-        BluetoothApp().run()
-    except Exception as e:
-        import traceback
-        with open("crash_log.txt", "w") as f:
-            f.write(traceback.format_exc())
+    HC05ProApp().run()
