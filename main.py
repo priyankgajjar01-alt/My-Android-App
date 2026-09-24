@@ -37,9 +37,9 @@ KV = '''
     cursor_color: [0.39, 1.0, 0.85, 1]
     multiline: False
     halign: 'center'
-    font_size: '15sp'
+    font_size: '14sp'
     size_hint_y: None
-    height: '40dp'
+    height: '36dp'
     padding_y: (self.height - self.line_height) / 2
     use_bubble: False
     use_handles: False
@@ -62,24 +62,21 @@ KV = '''
     background_normal: ''
     background_color: [0, 0, 0, 0]
     bold: True
-    font_size: '17sp'
+    font_size: '15sp'
     color: [0.04, 0.1, 0.18, 1] if self.state == 'down' else [0.39, 1.0, 0.85, 1]
     canvas.before:
-        # Outer glow (only when pressed)
         Color:
             rgba: [0.39, 1.0, 0.85, 0.35] if self.state == 'down' else [0, 0, 0, 0]
         RoundedRectangle:
             pos: self.x - 4, self.y - 4
             size: self.width + 8, self.height + 8
             radius: [28, 28, 28, 28]
-        # Main button background
         Color:
             rgba: [0.39, 1.0, 0.85, 1] if self.state == 'down' else [0.1, 0.2, 0.3, 1]
         RoundedRectangle:
             pos: self.pos
             size: self.size
             radius: [25, 25, 25, 25]
-        # Border
         Color:
             rgba: [0.39, 1.0, 0.85, 1]
         Line:
@@ -96,6 +93,42 @@ KV = '''
             pos: self.pos
             size: self.size
 
+# ===== SLIDER CELL (UPDATED: Name bigger, Switch close to name) =====
+<SliderCell@BoxLayout>:
+    orientation: 'vertical'
+    spacing: '0dp'
+    slider_name: ''
+    slider_id: 0
+    padding: [0, 4, 0, 4]
+    
+    Label:
+        text: root.slider_name
+        color: [0.39, 1.0, 0.85, 1]
+        font_size: '24sp'
+        bold: True
+        size_hint_y: None
+        height: '34dp'
+        halign: 'center'
+        valign: 'middle'
+        text_size: self.size
+        selectable: False
+    
+    AnchorLayout:
+        anchor_x: 'center'
+        anchor_y: 'top'
+        Switch:
+            size_hint: None, None
+            size: '45dp', '30dp'
+            on_active: app.on_slider_change(root.slider_id, self.active)
+            canvas.before:
+                PushMatrix
+                Scale:
+                    origin: self.center
+                    x: 1.5
+                    y: 1.5
+            canvas.after:
+                PopMatrix
+
 # ===== DATA FORMAT POPUP =====
 <DataFormatPopup>:
     title: 'Data Format & Logic'
@@ -103,7 +136,7 @@ KV = '''
     title_size: '18sp'
     separator_color: [0.39, 1.0, 0.85, 1]
     background_color: [0.11, 0.14, 0.18, 1]
-    size_hint: 0.9, 0.75
+    size_hint: 0.9, 0.8
     auto_dismiss: True
 
     BoxLayout:
@@ -112,9 +145,9 @@ KV = '''
         spacing: '10dp'
 
         Label:
-            text: 'Format:\\n    on_delay,off_delay,s1,s2,force\\n\\nExample:\\n    1000,1000,1,0,0\\n\\nRules:\\n    - Slider ON  = 1\\n    - Slider OFF = 0\\n    - Force Update pressed = 1\\n    - Force Update normally = 0\\n    - All values sent together in ONE line\\n    - Every message ends with newline (\\\\n)\\n    - Force button applies settings & closes popup'
+            text: 'Format:\\n    on_delay,off_delay,s1,s2,s3,s4,s5,s6,s7,s8,s9,force\\n\\nExample:\\n    1000,1000,1,0,0,1,0,0,1,0,0,0\\n\\nRules:\\n    - Slider ON  = 1, OFF = 0 (S1 to S9)\\n    - Force Update pressed = 1 (during press)\\n    - Force Update normally = 0\\n    - All values sent in ONE line\\n    - Every message ends with newline (\\\\n)'
             color: [0.8, 0.84, 0.96, 1]
-            font_size: '13sp'
+            font_size: '12sp'
             halign: 'left'
             valign: 'top'
             text_size: self.width, None
@@ -142,9 +175,8 @@ KV = '''
     BoxLayout:
         orientation: 'vertical'
         padding: '15dp'
-        spacing: '10dp'
+        spacing: '8dp'
 
-        # Header
         Label:
             text: 'Controller Settings'
             color: [0.39, 1.0, 0.85, 1]
@@ -154,10 +186,9 @@ KV = '''
             valign: 'middle'
             text_size: self.size
             size_hint_y: None
-            height: '30dp'
+            height: '28dp'
             selectable: False
 
-        # Underline
         Widget:
             size_hint_y: None
             height: '2dp'
@@ -168,14 +199,13 @@ KV = '''
                     pos: self.pos
                     size: self.size
 
-        # Form Grid
         GridLayout:
             cols: 2
-            spacing: '10dp'
-            row_default_height: '40dp'
+            spacing: '8dp'
+            row_default_height: '36dp'
             row_force_default: True
             size_hint_y: None
-            height: '250dp'
+            height: '124dp'
 
             Label:
                 text: 'MAC Address (Editable)'
@@ -210,61 +240,92 @@ KV = '''
                 text: app.off_delay
                 on_text: app.off_delay = self.text
 
-            Label:
-                text: 'Slider 1 Logic'
-                color: [0.7, 0.8, 0.9, 1]
-                halign: 'left'
-                valign: 'middle'
-                text_size: self.size
-                selectable: False
-            CustomTextInput:
-                text: 'Press=1 / Release=0'
-                readonly: True
+        Label:
+            text: 'Slider Names (S1 - S9)'
+            color: [0.39, 1.0, 0.85, 1]
+            bold: True
+            font_size: '14sp'
+            halign: 'left'
+            valign: 'middle'
+            text_size: self.size
+            size_hint_y: None
+            height: '22dp'
+            selectable: False
 
-            Label:
-                text: 'Slider 2 Logic'
-                color: [0.7, 0.8, 0.9, 1]
-                halign: 'left'
-                valign: 'middle'
-                text_size: self.size
-                selectable: False
-            CustomTextInput:
-                text: 'Press=1 / Release=0'
-                readonly: True
+        GridLayout:
+            cols: 3
+            spacing: '6dp'
+            row_default_height: '36dp'
+            row_force_default: True
+            size_hint_y: None
+            height: '120dp'
 
-        # View Data Format Button
+            CustomTextInput:
+                hint_text: 'S1'
+                text: app.s1_name
+                on_text: app.s1_name = self.text
+            CustomTextInput:
+                hint_text: 'S2'
+                text: app.s2_name
+                on_text: app.s2_name = self.text
+            CustomTextInput:
+                hint_text: 'S3'
+                text: app.s3_name
+                on_text: app.s3_name = self.text
+            CustomTextInput:
+                hint_text: 'S4'
+                text: app.s4_name
+                on_text: app.s4_name = self.text
+            CustomTextInput:
+                hint_text: 'S5'
+                text: app.s5_name
+                on_text: app.s5_name = self.text
+            CustomTextInput:
+                hint_text: 'S6'
+                text: app.s6_name
+                on_text: app.s6_name = self.text
+            CustomTextInput:
+                hint_text: 'S7'
+                text: app.s7_name
+                on_text: app.s7_name = self.text
+            CustomTextInput:
+                hint_text: 'S8'
+                text: app.s8_name
+                on_text: app.s8_name = self.text
+            CustomTextInput:
+                hint_text: 'S9'
+                text: app.s9_name
+                on_text: app.s9_name = self.text
+
         Button:
             text: 'View Data Format & Logic'
             background_color: [0.1, 0.2, 0.3, 1]
             background_normal: ''
             color: [0.39, 1.0, 0.85, 1]
             bold: True
-            font_size: '15sp'
+            font_size: '14sp'
             size_hint_y: None
-            height: '45dp'
+            height: '42dp'
             on_release: app.show_data_format_popup()
 
-        # Spacer (push bottom buttons down)
         Widget:
             size_hint_y: 1
 
-        # ===== FORCE UPDATE BUTTON (above Save & Close) =====
         ForceButton:
             text: 'Force Update Settings'
             size_hint_y: None
-            height: '50dp'
+            height: '48dp'
             on_press: app.force_update_and_close()
 
-        # Save & Close Button
         Button:
             text: 'Save & Close'
             background_color: [0.0, 0.78, 0.32, 1]
             background_normal: ''
             color: [0.04, 0.1, 0.18, 1]
             bold: True
-            font_size: '18sp'
+            font_size: '16sp'
             size_hint_y: None
-            height: '50dp'
+            height: '48dp'
             on_release: app.save_and_close_settings()
 
 # ===== MAIN LAYOUT =====
@@ -275,86 +336,76 @@ BoxLayout:
         id: status_lbl
         text: 'System Starting...'
         size_hint_y: None
-        height: '60dp'
+        height: '55dp'
         bold: True
-        font_size: '22sp'
+        font_size: '20sp'
         color: [1, 1, 1, 1]
         bg_color: [0.85, 0.53, 0.1, 1]
         on_touch_up: 
             if self.collide_point(*args[1].pos): app.reconnect_bluetooth()
 
     BoxLayout:
-        orientation: 'vertical'
+        size_hint_y: 0.3
+        padding: '10dp'
+        TextInput:
+            id: monitor
+            readonly: True
+            background_normal: ''
+            background_color: [0, 0, 0, 1]
+            foreground_color: [0.39, 1.0, 0.85, 1]
+            font_size: '12sp'
+            text: 'System Ready...\\n'
+            use_bubble: False
+            use_handles: False
 
-        BoxLayout:
-            padding: '15dp'
-            TextInput:
-                id: monitor
-                readonly: True
-                background_normal: ''
-                background_color: [0, 0, 0, 1]
-                foreground_color: [0.39, 1.0, 0.85, 1]
-                font_size: '13sp'
-                text: 'System Ready...\\n'
-                use_bubble: False
-                use_handles: False
+    GridLayout:
+        cols: 3
+        rows: 3
+        spacing: '6dp'
+        padding: '10dp'
+        size_hint_y: 0.7
 
-        BoxLayout:
-            orientation: 'vertical'
-            padding: '30dp'
-            spacing: '30dp'
+        SliderCell:
+            slider_name: app.s1_name
+            slider_id: 1
+        SliderCell:
+            slider_name: app.s2_name
+            slider_id: 2
+        SliderCell:
+            slider_name: app.s3_name
+            slider_id: 3
+        SliderCell:
+            slider_name: app.s4_name
+            slider_id: 4
+        SliderCell:
+            slider_name: app.s5_name
+            slider_id: 5
+        SliderCell:
+            slider_name: app.s6_name
+            slider_id: 6
+        SliderCell:
+            slider_name: app.s7_name
+            slider_id: 7
+        SliderCell:
+            slider_name: app.s8_name
+            slider_id: 8
+        SliderCell:
+            slider_name: app.s9_name
+            slider_id: 9
 
-            BoxLayout:
-                size_hint_y: None
-                height: '80dp'
-                Label:
-                    text: 'Slider 1'
-                    font_size: '36sp'
-                    bold: True
-                    color: [0.8, 0.84, 0.96, 1]
-                    selectable: False
-                Switch:
-                    id: s1
-                    on_active: app.on_slider_change(1, self.active)
-                    canvas.before:
-                        PushMatrix
-                        Scale:
-                            origin: self.center
-                            x: 2.0
-                            y: 2.0
-                    canvas.after:
-                        PopMatrix
-
-            BoxLayout:
-                size_hint_y: None
-                height: '80dp'
-                Label:
-                    text: 'Slider 2'
-                    font_size: '36sp'
-                    bold: True
-                    color: [0.8, 0.84, 0.96, 1]
-                    selectable: False
-                Switch:
-                    id: s2
-                    on_active: app.on_slider_change(2, self.active)
-                    canvas.before:
-                        PushMatrix
-                        Scale:
-                            origin: self.center
-                            x: 2.0
-                            y: 2.0
-                    canvas.after:
-                        PopMatrix
-
-            AnchorLayout:
-                RoundedButton:
-                    text: 'Settings'
-                    size_hint: None, None
-                    size: '250dp', '70dp'
-                    bg_color: [0.39, 1.0, 0.85, 1]
-                    bold: True
-                    font_size: '24sp'
-                    on_release: app.open_settings()
+    AnchorLayout:
+        size_hint_y: None
+        height: '50dp'
+        anchor_x: 'center'
+        anchor_y: 'center'
+        RoundedButton:
+            text: 'Settings'
+            size_hint: None, None
+            size: '140dp', '40dp'
+            bg_color: [0.39, 1.0, 0.85, 1]
+            bold: True
+            font_size: '16sp'
+            on_release: app.open_settings()
 '''
 
 class SettingsPopup(Popup):
@@ -367,8 +418,27 @@ class BluetoothApp(App):
     hc05_mac = StringProperty("98:D3:31:F4:XX:XX")
     on_delay = StringProperty("1000")
     off_delay = StringProperty("1000")
+    
+    s1_name = StringProperty("S1")
+    s2_name = StringProperty("S2")
+    s3_name = StringProperty("S3")
+    s4_name = StringProperty("S4")
+    s5_name = StringProperty("S5")
+    s6_name = StringProperty("S6")
+    s7_name = StringProperty("S7")
+    s8_name = StringProperty("S8")
+    s9_name = StringProperty("S9")
+    
     s1_state = NumericProperty(0)
     s2_state = NumericProperty(0)
+    s3_state = NumericProperty(0)
+    s4_state = NumericProperty(0)
+    s5_state = NumericProperty(0)
+    s6_state = NumericProperty(0)
+    s7_state = NumericProperty(0)
+    s8_state = NumericProperty(0)
+    s9_state = NumericProperty(0)
+    
     force_state = NumericProperty(0)
 
     def build(self):
@@ -440,6 +510,10 @@ class BluetoothApp(App):
                     if "mac" in data: self.hc05_mac = data["mac"]
                     if "on_delay" in data: self.on_delay = data["on_delay"]
                     if "off_delay" in data: self.off_delay = data["off_delay"]
+                    for i in range(1, 10):
+                        key = f"s{i}_name"
+                        if key in data:
+                            setattr(self, key, data[key])
             except: pass
 
     def save_settings_to_file(self):
@@ -448,6 +522,9 @@ class BluetoothApp(App):
             "on_delay": self.on_delay,
             "off_delay": self.off_delay,
         }
+        for i in range(1, 10):
+            data[f"s{i}_name"] = getattr(self, f"s{i}_name")
+        
         try:
             with open("bt_settings.json", "w") as f:
                 json.dump(data, f)
@@ -465,20 +542,13 @@ class BluetoothApp(App):
         self.send_full_state()
         self.settings_popup.dismiss()
 
-    # ==================================================
-    # FORCE UPDATE: Press -> Send force=1 -> Save -> Close -> Reset to 0
-    # ==================================================
     def force_update_and_close(self):
         self.force_state = 1
         self.log("Force Update -> applying settings & closing popup")
         
-        # Save settings first (so latest delays are stored)
         self.save_settings_to_file()
-        
-        # Send full state with force=1 in ONE line
         self.send_full_state()
         
-        # Close popup after short delay (so user sees glow)
         Clock.schedule_once(lambda dt: self._close_popup_after_force(), 0.35)
 
     def _close_popup_after_force(self):
@@ -486,7 +556,6 @@ class BluetoothApp(App):
             self.settings_popup.dismiss()
         except:
             pass
-        # Reset force back to 0 and send again (background)
         Clock.schedule_once(lambda dt: self._reset_force_after_close(), 0.6)
 
     def _reset_force_after_close(self):
@@ -560,9 +629,12 @@ class BluetoothApp(App):
             except:
                 break
 
-    # Format: on_delay,off_delay,s1,s2,force
     def build_state_message(self):
-        return f"{self.on_delay},{self.off_delay},{int(self.s1_state)},{int(self.s2_state)},{int(self.force_state)}"
+        parts = [self.on_delay, self.off_delay]
+        for i in range(1, 10):
+            parts.append(str(int(getattr(self, f"s{i}_state"))))
+        parts.append(str(int(self.force_state)))
+        return ",".join(parts)
 
     def send_full_state(self):
         data = self.build_state_message()
@@ -598,12 +670,10 @@ class BluetoothApp(App):
                 self.log("Controller Not Responding")
                 self.waiting_ack = False
 
-    def on_slider_change(self, slider_num, is_active):
+    def on_slider_change(self, slider_id, is_active):
         val = 1 if is_active else 0
-        if slider_num == 1:
-            self.s1_state = val
-        else:
-            self.s2_state = val
+        if 1 <= slider_id <= 9:
+            setattr(self, f"s{slider_id}_state", val)
         self.send_full_state()
 
 if __name__ == "__main__":
