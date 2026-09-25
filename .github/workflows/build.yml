@@ -91,7 +91,7 @@ jobs:
         export PATH=$JAVA_HOME/bin:$PATH
 
         python3 -m pythonforandroid.toolchain apk --debug --private . \
-          --package=com.gai.btjoystick \
+          --package=com.gai.hc05_9s12b \
           --name="HC05 9S12B" \
           --version=1.0 \
           --bootstrap=sdl2 \
