@@ -2,6 +2,7 @@ import math
 import os
 import json
 import traceback
+import threading
 from kivy.app import App
 from kivy.lang import Builder
 from kivy.uix.boxlayout import BoxLayout
@@ -18,7 +19,7 @@ from kivy.properties import StringProperty, DictProperty
 from kivy.utils import get_color_from_hex, platform
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.graphics import Color, RoundedRectangle, Line
-from kivy.clock import Clock
+from kivy.clock import Clock, mainthread
 
 # Android imports
 if platform == 'android':
@@ -214,9 +215,10 @@ KV = """
             size_hint_x: None
             width: '35dp'
 
+# -- Table Cell Improvements (Bigger Font, Proper Sizing) --
 <ExcelHeaderCell>:
     size_hint_y: None
-    height: '45dp'
+    height: '50dp'
     canvas.before:
         Color:
             rgba: utils.get_color_from_hex('#003366')
@@ -230,7 +232,7 @@ KV = """
             width: 1
     Label:
         text: root.lbl_text
-        font_size: '13sp'
+        font_size: '13.5sp'
         bold: True
         color: utils.get_color_from_hex('#00ddff')
         text_size: self.size
@@ -239,7 +241,7 @@ KV = """
 
 <ExcelParamCell>:
     size_hint_y: None
-    height: '55dp'
+    height: '65dp'
     canvas.before:
         Color:
             rgba: utils.get_color_from_hex('#0f1623')
@@ -253,16 +255,17 @@ KV = """
             width: 1
     Label:
         text: root.lbl_text
-        font_size: '13sp'
+        font_size: '14sp'
         bold: True
         color: utils.get_color_from_hex('#ffdd00')
         text_size: self.size
         halign: 'center'
         valign: 'middle'
+        markup: True
 
 <ExcelValueCell>:
     size_hint_y: None
-    height: '55dp'
+    height: '65dp'
     canvas.before:
         Color:
             rgba: utils.get_color_from_hex('#121926')
@@ -276,12 +279,13 @@ KV = """
             width: 1
     Label:
         text: root.lbl_text
-        font_size: '13sp'
+        font_size: '16sp'
         bold: True
         color: utils.get_color_from_hex('#ffffff')
         text_size: self.size
         halign: 'center'
         valign: 'middle'
+        markup: True
 
 <ListItem>:
     size_hint_y: None
@@ -318,6 +322,84 @@ KV = """
         bold: True
         color: utils.get_color_from_hex('#00ddff')
 
+# IN-APP FILE CHOOSER POPUP
+<FileChooserPopup@Popup>:
+    title: '  Select Backup File (.json)'
+    title_color: utils.get_color_from_hex('#00ddff')
+    title_size: '16sp'
+    size_hint: (0.95, 0.85)
+    background: ''  
+    background_color: utils.get_color_from_hex('#0a0f1a')
+    separator_color: utils.get_color_from_hex('#00ddff')
+    separator_height: '2dp'
+    
+    BoxLayout:
+        orientation: 'vertical'
+        spacing: '10dp'
+        padding: '5dp'
+
+        BoxLayout:
+            size_hint_y: None
+            height: '40dp'
+            spacing: '10dp'
+            RoundedButton:
+                text: '📂 Downloads'
+                font_size: '13sp'
+                bold: True
+                bg_hex: '#1b2a47'
+                radius: 8
+                color: 1,1,1,1
+                on_release: filechooser.path = app.get_download_path()
+            RoundedButton:
+                text: '📁 App Folder'
+                font_size: '13sp'
+                bold: True
+                bg_hex: '#1b2a47'
+                radius: 8
+                color: 1,1,1,1
+                on_release: filechooser.path = app.get_current_path()
+
+        BoxLayout:
+            canvas.before:
+                Color:
+                    rgba: utils.get_color_from_hex('#121926')
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [10]
+                Color:
+                    rgba: utils.get_color_from_hex('#2a3a50')
+                Line:
+                    rounded_rectangle: [self.x, self.y, self.width, self.height, 10]
+                    width: 1
+            padding: '5dp'
+
+            FileChooserListView:
+                id: filechooser
+                path: app.get_download_path()
+                filters: ['*.json']
+
+        BoxLayout:
+            size_hint_y: None
+            height: '45dp'
+            spacing: '15dp'
+            RoundedButton:
+                text: 'CANCEL'
+                bg_hex: '#d32f2f'
+                radius: 8
+                font_size: '14sp'
+                bold: True
+                color: 1,1,1,1
+                on_release: root.dismiss()
+            RoundedButton:
+                text: 'LOAD THIS FILE'
+                bg_hex: '#00aa55'
+                radius: 8
+                font_size: '14sp'
+                bold: True
+                color: 1,1,1,1
+                on_release: 
+                    if filechooser.selection: app.process_selected_file(filechooser.selection[0]); root.dismiss()
 
 <MainScreen>:
     name: 'main'
@@ -956,17 +1038,6 @@ class AlignmentApp(App):
     progress_status = None
 
     def build(self):
-        if platform == 'android':
-            try:
-                request_permissions([
-                    Permission.READ_EXTERNAL_STORAGE,
-                    Permission.WRITE_EXTERNAL_STORAGE,
-                    Permission.READ_MEDIA_IMAGES,
-                    Permission.READ_MEDIA_VIDEO,
-                ])
-            except Exception as e:
-                print("Permission error:", e)
-        
         self.db_path = os.path.join(self.user_data_dir, 'foc_specs_db.json')
         self.load_db()
         Builder.load_string(KV)
@@ -975,18 +1046,16 @@ class AlignmentApp(App):
         sm.add_widget(MainScreen())
         sm.add_widget(ListScreen())
         return sm
-    
-    def on_start(self):
-        if platform == 'android':
-            try:
-                request_permissions([
-                    Permission.READ_EXTERNAL_STORAGE,
-                    Permission.WRITE_EXTERNAL_STORAGE,
-                    Permission.READ_MEDIA_IMAGES,
-                ])
-            except Exception as e:
-                print("on_start permission error:", e)
         
+    def get_download_path(self):
+        download = '/storage/emulated/0/Download'
+        if os.path.exists(download):
+            return download
+        return os.getcwd()
+
+    def get_current_path(self):
+        return os.getcwd()
+
     def get_all_textinputs(self, parent):
         inputs = []
         if not parent: return inputs
@@ -1010,7 +1079,7 @@ class AlignmentApp(App):
     def load_db(self):
         if os.path.exists(self.db_path):
             try:
-                with open(self.db_path, 'r') as f:
+                with open(self.db_path, 'r', encoding='utf-8') as f:
                     self.db = json.load(f)
             except:
                 self.db = []
@@ -1018,7 +1087,7 @@ class AlignmentApp(App):
             self.db = []
 
     def save_db(self):
-        with open(self.db_path, 'w') as f:
+        with open(self.db_path, 'w', encoding='utf-8') as f:
             json.dump(self.db, f)
 
     # ==========================================
@@ -1086,32 +1155,68 @@ class AlignmentApp(App):
         return main_screen.ids[id_name].ids.inner_input.text
 
     # ==========================================
-    # IMPORT FROM FILE
+    # IMPORT USING IN-APP FILE CHOOSER
     # ==========================================
     def import_from_file(self):
-        if platform != 'android':
-            self._show_message("File picker is only available on Android.")
-            return
-        
+        from kivy.factory import Factory
+        self.fc_popup = Factory.FileChooserPopup()
+        self.fc_popup.open()
+
+    def process_selected_file(self, filepath):
+        self._show_progress_popup()
+        Clock.schedule_once(lambda dt: self._start_import_worker(filepath), 0.15)
+
+    def _start_import_worker(self, filepath):
+        threading.Thread(target=self._import_worker, args=(filepath,), daemon=True).start()
+
+    def _import_worker(self, filepath):
         try:
-            Intent = autoclass('android.content.Intent')
-            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            self._update_progress(10, "Opening file...")
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            self._update_progress(40, "Parsing JSON...")
+            data = json.loads(content)
             
-            intent = Intent(Intent.ACTION_GET_CONTENT)
-            intent.setType('*/*')
-            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            if not isinstance(data, list):
+                self._close_progress_popup()
+                self._show_message("File contains invalid JSON format! Expected a list.")
+                return
             
-            # Ensure no old bindings exist
-            try:
-                activity.unbind(on_activity_result=self._on_activity_result)
-            except:
-                pass
+            self._update_progress(60, f"Parsed {len(data)} records")
+            
+            existing_ids = set()
+            for d in self.db:
+                key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
+                existing_ids.add(key)
+            
+            self._update_progress(75, "Adding new records...")
+            
+            added = 0
+            total = len(data)
+            for i, d in enumerate(data):
+                if not isinstance(d, dict):
+                    continue
+                key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
+                if key not in existing_ids:
+                    self.db.append(d)
+                    existing_ids.add(key)
+                    added += 1
                 
-            activity.bind(on_activity_result=self._on_activity_result)
-            PythonActivity.mActivity.startActivityForResult(intent, 1001)
+                if total > 0 and (i % 5 == 0 or i == total - 1):
+                    progress = 75 + int((i / max(total, 1)) * 20)
+                    self._update_progress(progress, f"Processing {i+1}/{total}...")
+            
+            self._update_progress(95, "Saving database...")
+            self.save_db()
+            self._update_progress(100, "Complete!")
+            
+            Clock.schedule_once(lambda dt: self._close_progress_popup(), 0.8)
+            Clock.schedule_once(lambda dt: self._finish_import(added), 0.9)
             
         except Exception as e:
-            self._show_message(f"Error starting file picker: {str(e)}")
+            Clock.schedule_once(lambda dt: self._close_progress_popup())
+            Clock.schedule_once(lambda dt: self._show_message(f"Import error: {str(e)}"))
             print(traceback.format_exc())
 
     # ==========================================
@@ -1165,6 +1270,7 @@ class AlignmentApp(App):
         )
         self.progress_popup.open()
 
+    @mainthread
     def _update_progress(self, value, status_text=None):
         try:
             if self.progress_bar:
@@ -1175,6 +1281,7 @@ class AlignmentApp(App):
                 self.progress_status.text = status_text
         except: pass
 
+    @mainthread
     def _close_progress_popup(self):
         try:
             if self.progress_popup:
@@ -1182,90 +1289,13 @@ class AlignmentApp(App):
                 self.progress_popup = None
         except: pass
 
-    # ==========================================
-    # ACTIVITY RESULT (Import trigger)
-    # ==========================================
-    def _on_activity_result(self, requestCode, resultCode, intent):
-        if requestCode != 1001:
-            return
-
+    @mainthread
+    def _finish_import(self, added):
         try:
-            activity.unbind(on_activity_result=self._on_activity_result)
-        except: pass
-
-        if resultCode != -1 or intent is None:
-            return
-
-        self._show_progress_popup()
-        self._update_progress(10, "Opening file...")
-        Clock.schedule_once(lambda dt: self._read_and_process_file(intent), 0.2)
-
-    def _read_and_process_file(self, intent):
-        try:
-            uri = intent.getData()
-            PythonActivity = autoclass('org.kivy.android.PythonActivity')
-            content_resolver = PythonActivity.mActivity.getContentResolver()
-            input_stream = content_resolver.openInputStream(uri)
-
-            BufferedReader = autoclass('java.io.BufferedReader')
-            InputStreamReader = autoclass('java.io.InputStreamReader')
-            reader = BufferedReader(InputStreamReader(input_stream))
-
-            content = ""
-            line = reader.readLine()
-            while line is not None:
-                content += line + "\n"
-                line = reader.readLine()
-
-            reader.close()
-            input_stream.close()
-
-            self._update_progress(50, "Parsing data...")
-            Clock.schedule_once(lambda dt: self._parse_and_save(content), 0.1)
-
-        except Exception as e:
-            self._close_progress_popup()
-            self._show_message(f"Read error: {str(e)}")
-
-    def _parse_and_save(self, content):
-        try:
-            data = json.loads(content)
-            if not isinstance(data, list):
-                self._close_progress_popup()
-                self._show_message("Invalid JSON format! Expected a list.")
-                return
-
-            self._update_progress(70, "Updating database...")
-
-            added = 0
-            existing_ids = set()
-            for d in self.db:
-                key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
-                existing_ids.add(key)
-
-            for d in data:
-                if not isinstance(d, dict): continue
-                key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
-                if key not in existing_ids:
-                    self.db.append(d)
-                    existing_ids.add(key)
-                    added += 1
-
-            self._update_progress(90, "Saving...")
-            self.save_db()
-
-            self._update_progress(100, "Done!")
-
             if self.root.current == 'list_screen':
                 self.root.get_screen('list_screen').populate_list(self.db)
-
-            Clock.schedule_once(lambda dt: self._close_progress_popup(), 0.5)
-            Clock.schedule_once(lambda dt: self._show_message(f"Successfully imported {added} new records!"), 0.6)
-
-        except Exception as e:
-            self._close_progress_popup()
-            self._show_message(f"Parse error: {str(e)}")
-
+        except: pass
+        self._show_message(f"Successfully imported {added} new records!")
 
     # ==========================================
     # MESSAGE POPUP
@@ -1298,7 +1328,7 @@ class AlignmentApp(App):
         popup.open()
 
     # ==========================================
-    # OPEN SPEC POPUP
+    # OPEN SPEC POPUP (UPDATED FOR BETTER UI)
     # ==========================================
     def open_spec_popup(self, data):
         app = self
@@ -1327,9 +1357,12 @@ class AlignmentApp(App):
         table = BoxLayout(orientation='vertical', size_hint_y=None, spacing=0)
         table.bind(minimum_height=table.setter('height'))
 
-        header = GridLayout(cols=5, size_hint_y=None, height='45dp', spacing=0)
-        for t in ["PARAM", "MIN", "MAX", "STD", "TOL"]:
-            header.add_widget(ExcelHeaderCell(lbl_text=t))
+        # Header adjusted dynamically
+        header = GridLayout(cols=5, size_hint_y=None, height='50dp', spacing=1)
+        for t, w in [("PARAM", 1.2), ("MIN", 0.9), ("MAX", 0.9), ("STD", 0.9), ("TOL", 0.9)]:
+            c = ExcelHeaderCell(lbl_text=t)
+            c.size_hint_x = w
+            header.add_widget(c)
         table.add_widget(header)
 
         def add_row(label, std, tol, min_v, max_v):
@@ -1343,21 +1376,26 @@ class AlignmentApp(App):
                 
             def fmt_cell(val):
                 if val is None: return "-"
-                return f"{app.dd_to_dm_str(val)}\n({val:.2f}°)"
+                return f"{app.dd_to_dm_str(val)}\n[size=12sp][color=#aaaaaa]({val:.2f}°)[/color][/size]"
 
-            r = GridLayout(cols=5, size_hint_y=None, height='55dp', spacing=0)
-            r.add_widget(ExcelParamCell(lbl_text=label))
-            r.add_widget(ExcelValueCell(lbl_text=fmt_cell(min_v)))
-            r.add_widget(ExcelValueCell(lbl_text=fmt_cell(max_v)))
-            r.add_widget(ExcelValueCell(lbl_text=fmt_cell(std)))
-            r.add_widget(ExcelValueCell(lbl_text=fmt_cell(tol)))
+            r = GridLayout(cols=5, size_hint_y=None, height='65dp', spacing=1)
+            
+            p_cell = ExcelParamCell(lbl_text=label)
+            p_cell.size_hint_x = 1.2
+            r.add_widget(p_cell)
+            
+            for v in [min_v, max_v, std, tol]:
+                v_cell = ExcelValueCell(lbl_text=fmt_cell(v))
+                v_cell.size_hint_x = 0.9
+                r.add_widget(v_cell)
+                
             table.add_widget(r)
 
-        add_row("F. Toe", data.get('fToeStd'), data.get('fToeTol'), data.get('fToeMin'), data.get('fToeMax'))
-        add_row("F. Camber", data.get('fCamStd'), data.get('fCamTol'), data.get('fCamMin'), data.get('fCamMax'))
-        add_row("F. Castor", data.get('fCasStd'), data.get('fCasTol'), data.get('fCasMin'), data.get('fCasMax'))
-        add_row("R. Toe", data.get('rToeStd'), data.get('rToeTol'), data.get('rToeMin'), data.get('rToeMax'))
-        add_row("R. Camber", data.get('rCamStd'), data.get('rCamTol'), data.get('rCamMin'), data.get('rCamMax'))
+        add_row("Front\nToe", data.get('fToeStd'), data.get('fToeTol'), data.get('fToeMin'), data.get('fToeMax'))
+        add_row("Front\nCamber", data.get('fCamStd'), data.get('fCamTol'), data.get('fCamMin'), data.get('fCamMax'))
+        add_row("Front\nCastor", data.get('fCasStd'), data.get('fCasTol'), data.get('fCasMin'), data.get('fCasMax'))
+        add_row("Rear\nToe", data.get('rToeStd'), data.get('rToeTol'), data.get('rToeMin'), data.get('rToeMax'))
+        add_row("Rear\nCamber", data.get('rCamStd'), data.get('rCamTol'), data.get('rCamMin'), data.get('rCamMax'))
 
         scroll.add_widget(table)
         content.add_widget(scroll)
