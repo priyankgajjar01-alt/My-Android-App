@@ -2,7 +2,6 @@ import math
 import os
 import json
 import traceback
-import threading
 from kivy.app import App
 from kivy.lang import Builder
 from kivy.uix.boxlayout import BoxLayout
@@ -19,7 +18,7 @@ from kivy.properties import StringProperty, DictProperty
 from kivy.utils import get_color_from_hex, platform
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.graphics import Color, RoundedRectangle, Line
-from kivy.clock import Clock, mainthread
+from kivy.clock import Clock
 
 # Android imports
 if platform == 'android':
@@ -1102,12 +1101,17 @@ class AlignmentApp(App):
             intent.setType('*/*')
             intent.addCategory(Intent.CATEGORY_OPENABLE)
             
+            # Ensure no old bindings exist
+            try:
+                activity.unbind(on_activity_result=self._on_activity_result)
+            except:
+                pass
+                
             activity.bind(on_activity_result=self._on_activity_result)
-            
             PythonActivity.mActivity.startActivityForResult(intent, 1001)
             
         except Exception as e:
-            self._show_message(f"Error: {str(e)}")
+            self._show_message(f"Error starting file picker: {str(e)}")
             print(traceback.format_exc())
 
     # ==========================================
@@ -1161,7 +1165,6 @@ class AlignmentApp(App):
         )
         self.progress_popup.open()
 
-    @mainthread
     def _update_progress(self, value, status_text=None):
         try:
             if self.progress_bar:
@@ -1172,7 +1175,6 @@ class AlignmentApp(App):
                 self.progress_status.text = status_text
         except: pass
 
-    @mainthread
     def _close_progress_popup(self):
         try:
             if self.progress_popup:
@@ -1186,114 +1188,84 @@ class AlignmentApp(App):
     def _on_activity_result(self, requestCode, resultCode, intent):
         if requestCode != 1001:
             return
-        
+
+        try:
+            activity.unbind(on_activity_result=self._on_activity_result)
+        except: pass
+
         if resultCode != -1 or intent is None:
             return
-        
-        # Show progress popup first
+
         self._show_progress_popup()
-        # Then start import worker
-        Clock.schedule_once(lambda dt: self._start_import_worker(intent), 0.15)
+        self._update_progress(10, "Opening file...")
+        Clock.schedule_once(lambda dt: self._read_and_process_file(intent), 0.2)
 
-    def _start_import_worker(self, intent):
-        threading.Thread(target=self._import_worker, args=(intent,), daemon=True).start()
-
-    def _import_worker(self, intent):
-        """Background import worker with progress updates"""
+    def _read_and_process_file(self, intent):
         try:
-            # STEP 1: Open file
-            self._update_progress(5, "Opening file...")
-            
             uri = intent.getData()
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
             content_resolver = PythonActivity.mActivity.getContentResolver()
             input_stream = content_resolver.openInputStream(uri)
-            
-            # STEP 2: Read file
-            self._update_progress(15, "Reading file...")
-            
+
             BufferedReader = autoclass('java.io.BufferedReader')
             InputStreamReader = autoclass('java.io.InputStreamReader')
             reader = BufferedReader(InputStreamReader(input_stream))
-            
+
             content = ""
-            line_count = 0
             line = reader.readLine()
             while line is not None:
                 content += line + "\n"
-                line_count += 1
-                if line_count % 100 == 0:
-                    progress = min(15 + (line_count // 100), 40)
-                    self._update_progress(progress, f"Reading file... ({line_count} lines)")
                 line = reader.readLine()
-            
+
             reader.close()
             input_stream.close()
-            
-            # STEP 3: Parse JSON
-            self._update_progress(45, "Parsing JSON...")
-            
+
+            self._update_progress(50, "Parsing data...")
+            Clock.schedule_once(lambda dt: self._parse_and_save(content), 0.1)
+
+        except Exception as e:
+            self._close_progress_popup()
+            self._show_message(f"Read error: {str(e)}")
+
+    def _parse_and_save(self, content):
+        try:
             data = json.loads(content)
             if not isinstance(data, list):
                 self._close_progress_popup()
-                self._show_message("File contains invalid JSON format!")
+                self._show_message("Invalid JSON format! Expected a list.")
                 return
-            
-            self._update_progress(60, f"Parsed {len(data)} records")
-            
-            # STEP 4: Duplicate check
-            self._update_progress(65, "Checking duplicates...")
-            
+
+            self._update_progress(70, "Updating database...")
+
+            added = 0
             existing_ids = set()
             for d in self.db:
                 key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
                 existing_ids.add(key)
-            
-            self._update_progress(75, "Adding new records...")
-            
-            # STEP 5: Add records
-            added = 0
-            total = len(data)
-            for i, d in enumerate(data):
-                if not isinstance(d, dict):
-                    continue
+
+            for d in data:
+                if not isinstance(d, dict): continue
                 key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
                 if key not in existing_ids:
                     self.db.append(d)
                     existing_ids.add(key)
                     added += 1
-                
-                if total > 0 and (i % 10 == 0 or i == total - 1):
-                    progress = 75 + int((i / max(total, 1)) * 20)
-                    self._update_progress(progress, f"Processing {i+1}/{total}...")
-            
-            # STEP 6: Save DB
-            self._update_progress(95, "Saving database...")
-            self.save_db()
-            self._update_progress(100, "Complete!")
-            
-            # Close popup after short delay
-            Clock.schedule_once(lambda dt: self._close_progress_popup(), 0.8)
-            
-            # Show success and refresh list
-            Clock.schedule_once(lambda dt: self._finish_import(added), 0.9)
-            
-            try:
-                activity.unbind(on_activity_result=self._on_activity_result)
-            except: pass
-            
-        except Exception as e:
-            Clock.schedule_once(lambda dt: self._close_progress_popup())
-            Clock.schedule_once(lambda dt: self._show_message(f"Import error: {str(e)}"))
-            print(traceback.format_exc())
 
-    @mainthread
-    def _finish_import(self, added):
-        try:
+            self._update_progress(90, "Saving...")
+            self.save_db()
+
+            self._update_progress(100, "Done!")
+
             if self.root.current == 'list_screen':
                 self.root.get_screen('list_screen').populate_list(self.db)
-        except: pass
-        self._show_message(f"Successfully imported {added} new records!")
+
+            Clock.schedule_once(lambda dt: self._close_progress_popup(), 0.5)
+            Clock.schedule_once(lambda dt: self._show_message(f"Successfully imported {added} new records!"), 0.6)
+
+        except Exception as e:
+            self._close_progress_popup()
+            self._show_message(f"Parse error: {str(e)}")
+
 
     # ==========================================
     # MESSAGE POPUP
