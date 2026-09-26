@@ -1,8 +1,10 @@
-name: Build HC05 9S12B APK
+name: Build Alignment Calculator APK
+
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
   build:
@@ -12,128 +14,126 @@ jobs:
       contents: write
 
     steps:
-    - uses: actions/checkout@v4
-      with: { fetch-depth: 0 }
+    - name: Checkout source code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-    - uses: actions/setup-python@v5
-      with: { python-version: '3.10' }
-    - uses: actions/setup-java@v4
-      with: { distribution: 'temurin', java-version: '17' }
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
 
-    # 🛠️ Step 1: FORCE CLEAN
-    - name: "🧹 FORCE CLEAN: Wipe All Runner Cache"
+    - name: Setup Java 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+
+    - name: FORCE CLEAN
       run: |
-        echo "🧼 Starting Force Clean..."
+        echo "Cleaning old build files..."
         rm -rf .buildozer/ .pytest_cache/ __pycache__/
-        rm -rf $HOME/.local/share/python-for-android/
-        rm -rf $HOME/.cache/pip/
-        rm -rf $HOME/.gradle/
+        rm -rf "$HOME/.local/share/python-for-android/" "$HOME/.cache/pip/" "$HOME/.gradle/"
         sudo rm -rf /usr/local/lib/android/sdk/ndk/27* /usr/local/lib/android/sdk/ndk/28* /usr/local/lib/android/sdk/ndk/29*
-        echo "✨ Runner is 100% clean!"
+        echo "Clean completed."
 
-    # 🛠️ Step 2: System Dependencies
-    - name: 📦 Install system dependencies
+    - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
-          git zip unzip autoconf automake libtool pkg-config \
-          zlib1g-dev libffi-dev libssl-dev cmake build-essential
+        sudo apt-get install -y git zip unzip wget curl autoconf automake libtool pkg-config zlib1g-dev libffi-dev libssl-dev cmake build-essential
 
-    # 🛠️ Step 3: Fresh Setup SDK & NDK 25.1
-    - name: 🤖 Fresh Setup SDK & NDK 25.1
+    - name: Setup Android SDK and NDK
       run: |
         export ANDROID_SDK_ROOT=$HOME/android/sdk
         echo "ANDROID_SDK_ROOT=$HOME/android/sdk" >> $GITHUB_ENV
-
-        mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
-        cd $ANDROID_SDK_ROOT/cmdline-tools
+        mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+        cd "$ANDROID_SDK_ROOT/cmdline-tools"
         wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-
         rm -rf latest
         unzip -q commandlinetools-linux-11076708_latest.zip
         mv cmdline-tools latest
-
         if [ -d "$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin" ]; then
           BIN_PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin"
         else
           BIN_PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin"
         fi
-
         echo "$BIN_PATH" >> $GITHUB_PATH
         echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
-
         export PATH="$BIN_PATH:$ANDROID_SDK_ROOT/platform-tools:$PATH"
-
         yes | sdkmanager --licenses
         sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
-    # 🛠️ Step 4: Python Packages
-    - name: 📚 Fresh Install Python packages
+    - name: Install Python packages
       run: |
         python3 -m pip install --upgrade pip setuptools wheel
-        python3 -m pip install --upgrade cython==0.29.33 kivy[base] python-for-android==2024.1.21
+        python3 -m pip install cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
-    # 🛠️ Step 4.5: Verify source files
-    - name: Verify source files
+    - name: Prepare app source
       run: |
-        echo "Files in repo root:"
-        ls -la
-        echo ""
-        [ -f main.py ] && echo "✅ main.py FOUND" || echo "❌ main.py MISSING"
-        [ -f icon.png ] && echo "✅ icon.png FOUND" || echo "⚠️ icon.png MISSING (default icon use thase)"
+        mkdir -p app_source
+        if [ ! -f "main.py" ]; then echo "ERROR: main.py not found!"; exit 1; fi
+        cp main.py app_source/main.py
+        # Icon copy (if exists in repo root)
+        if [ -f "icon.png" ]; then
+          cp icon.png app_source/icon.png
+          echo "Icon copied to app_source"
+        else
+          echo "WARNING: icon.png not found in repo root!"
+        fi
+        ls -lh app_source/
 
-    # 🛠️ Step 5: Build HC05 9S12B APK
-    - name: Build HC05 9S12B APK
+    - name: Build Alignment Calculator APK
       run: |
         export ANDROID_SDK_ROOT=$HOME/android/sdk
         export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/25.1.8937393
         export JAVA_HOME=$JAVA_HOME_17_X64
         export PATH=$JAVA_HOME/bin:$PATH
-
-        python3 -m pythonforandroid.toolchain apk --debug --private . \
-          --package=com.gai.hc05_9s12b \
-          --name="HC05 9S12B" \
+        python3 -m pythonforandroid.toolchain apk \
+          --debug \
+          --private app_source \
+          --package=com.alignment.calculator \
+          --name="Alignment Calculator" \
           --version=1.0 \
           --bootstrap=sdl2 \
-          --dist_name=hc05_9s12b_dist \
-          --requirements=hostpython3,python3,kivy,pyjnius \
-          --permission=BLUETOOTH \
-          --permission=BLUETOOTH_ADMIN \
-          --permission=BLUETOOTH_CONNECT \
-          --permission=BLUETOOTH_SCAN \
-          --permission=ACCESS_FINE_LOCATION \
-          --permission=ACCESS_COARSE_LOCATION \
+          --dist_name=alignment_calculator_dist \
+          --requirements=python3,android,kivy,pyjnius,plyer \
+          --permission=READ_EXTERNAL_STORAGE \
+          --permission=WRITE_EXTERNAL_STORAGE \
+          --permission=READ_MEDIA_IMAGES \
+          --permission=MANAGE_EXTERNAL_STORAGE \
           --icon=icon.png \
           --presplash=icon.png \
-          --presplash-color=#0a192f \
+          --presplash-color=#000000 \
           --arch=arm64-v8a \
           --android-api=34 \
           --sdk-dir=$ANDROID_SDK_ROOT \
-          --ndk-dir=$ANDROID_NDK_ROOT
+          --ndk-dir=$ANDROID_NDK_ROOT \
+          --ndk-version=25.1.8937393
 
-    # 🛠️ Step 6: APK Copy
     - name: Copy APK
       run: |
         mkdir -p APK
-        NEW_APK=$(find . -type f -name "*.apk" 2>/dev/null | grep -v "APK/" | grep -v "gradle" | head -n 1)
-
-        if [ ! -z "$NEW_APK" ]; then
-          echo "🎯 APK found: $NEW_APK"
-          OUTPUT_NAME="APK/HC05-9S12B-$(date +%Y%m%d-%H%M).apk"
+        NEW_APK=$(find . -type f -name "*.apk" 2>/dev/null | grep -v "/APK/" | grep -v "/gradle/" | head -n 1)
+        if [ -n "$NEW_APK" ]; then
+          OUTPUT_NAME="APK/Alignment-Calculator-$(date +%Y%m%d-%H%M).apk"
           cp "$NEW_APK" "$OUTPUT_NAME"
-          echo "✅ Saved: $OUTPUT_NAME"
+          ls -lh "$OUTPUT_NAME"
         else
-          echo "❌ APK not generated. Logs:"
-          ls -la
+          find . -type f -name "*.apk" -print
           exit 1
         fi
 
-    # 🛠️ Step 7: Push to Repo
-    - name: Push to Repo
+    - name: Push APK to repository
       run: |
-        git config user.name "github-actions"
-        git config user.email "actions@github.com"
-        git pull origin main --rebase || true
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git checkout main || git checkout -b main
+        git pull origin main --rebase || echo "Nothing to pull"
         git add APK/
-
-        git diff --cached --quiet || (git commit -m "Add New HC05 9S12B APK [skip ci]" && git push origin main)
+        if [ -n "$(git status --porcelain APK/)" ]; then
+          git commit -m "Add New Alignment Calculator APK [skip ci]"
+          git push origin main
+        else
+          echo "No new APK changes to commit."
+        fi: 
