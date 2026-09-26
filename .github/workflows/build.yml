@@ -96,10 +96,11 @@ jobs:
           --version=1.0 \
           --bootstrap=sdl2 \
           --dist_name=alignment_calculator_dist \
-          --requirements=python3,android,kivy,pyjnius,plyer \
+          --requirements=python3,android,kivy,pyjnius \
           --permission=READ_EXTERNAL_STORAGE \
           --permission=WRITE_EXTERNAL_STORAGE \
           --permission=READ_MEDIA_IMAGES \
+          --permission=READ_MEDIA_VIDEO \
           --icon=icon.png \
           --presplash=icon.png \
           --presplash-color=#000000 \
