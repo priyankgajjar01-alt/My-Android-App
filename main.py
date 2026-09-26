@@ -1,7 +1,8 @@
-import math
+Import math
 import os
 import json
 import traceback
+import threading
 from kivy.app import App
 from kivy.lang import Builder
 from kivy.uix.boxlayout import BoxLayout
@@ -12,11 +13,13 @@ from kivy.uix.button import Button
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.behaviors import ButtonBehavior
+from kivy.uix.progressbar import ProgressBar
 from kivy.core.window import Window
 from kivy.properties import StringProperty, DictProperty
 from kivy.utils import get_color_from_hex, platform
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.graphics import Color, RoundedRectangle, Line
+from kivy.clock import Clock, mainthread
 
 # Android imports
 if platform == 'android':
@@ -764,7 +767,7 @@ KV = """
                                         lbl_text: "Camber Std *"
                                         unit_text: 'Val'
                                     InputRow:
-                                        id: t3_fCamCamTol
+                                        id: t3_fCamTol
                                         lbl_text: "Camber Tol *"
                                         unit_text: 'Tol'
                                     InputRow:
@@ -948,6 +951,10 @@ class AlignmentApp(App):
     
     db = []
     editing_index = None
+    progress_popup = None
+    progress_bar = None
+    progress_label = None
+    progress_status = None
 
     def build(self):
         if platform == 'android':
@@ -1016,7 +1023,71 @@ class AlignmentApp(App):
             json.dump(self.db, f)
 
     # ==========================================
-    # IMPORT FROM FILE (Native Android File Picker)
+    # MATH HELPERS
+    # ==========================================
+    def to_float(self, val):
+        if val in (None, "-", ""): 
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+
+    def dm_to_dd(self, val_str):
+        if not val_str or str(val_str).strip() == "": return None
+        try:
+            num = float(val_str)
+            sign = -1.0 if num < 0 or math.copysign(1.0, num) < 0 else 1.0
+            abs_v = abs(num)
+            deg = math.floor(abs_v)
+            m = (abs_v - deg) * 100.0
+            return sign * (deg + m/60.0)
+        except: return None
+
+    def mm_to_dd(self, mm_val, rim_inch):
+        if not mm_val or not rim_inch or rim_inch <= 0: return 0.0
+        try:
+            r_mm = rim_inch * 25.4
+            return math.asin(float(mm_val) / r_mm) * (180.0 / math.pi)
+        except: return 0.0
+
+    def dd_to_dm_str(self, dd_val):
+        dd_val = self.to_float(dd_val)
+        if dd_val is None: return "-"
+        
+        neg = dd_val < 0 or math.copysign(1.0, dd_val) < 0
+        abs_v = abs(dd_val)
+        d = math.floor(abs_v)
+        m = round((abs_v - d) * 60.0)
+        if m >= 60: 
+            d += 1
+            m = 0
+        return f"{'-' if neg else ''}{d}°{m:02d}'"
+
+    def dd_to_input_dm(self, dd_val):
+        dd_val = self.to_float(dd_val)
+        if dd_val is None: return ""
+        
+        neg = dd_val < 0 or math.copysign(1.0, dd_val) < 0
+        abs_v = abs(dd_val)
+        d = math.floor(abs_v)
+        m = round((abs_v - d) * 60.0)
+        if m >= 60: 
+            d += 1
+            m = 0
+        m_str = f"{m:02d}"
+        return f"{'-' if neg else ''}{d}.{m_str}"
+
+    def safe_float(self, s):
+        try: return float(s) if str(s).strip()!="" else None
+        except: return None
+
+    def get_val(self, id_name):
+        main_screen = self.root.get_screen('main')
+        return main_screen.ids[id_name].ids.inner_input.text
+
+    # ==========================================
+    # IMPORT FROM FILE
     # ==========================================
     def import_from_file(self):
         if platform != 'android':
@@ -1039,7 +1110,79 @@ class AlignmentApp(App):
             self._show_message(f"Error: {str(e)}")
             print(traceback.format_exc())
 
+    # ==========================================
+    # PROGRESS POPUP
+    # ==========================================
+    def _show_progress_popup(self):
+        content = BoxLayout(orientation='vertical', padding='20dp', spacing='15dp')
+        
+        lbl_title = Label(
+            text='Importing Database...',
+            size_hint_y=None, height='40dp',
+            color=get_color_from_hex('#00ddff'),
+            font_size='16sp', bold=True,
+            halign='center', valign='middle'
+        )
+        lbl_title.bind(size=lbl_title.setter('text_size'))
+        content.add_widget(lbl_title)
+        
+        self.progress_bar = ProgressBar(max=100, value=0, size_hint_y=None, height='25dp')
+        content.add_widget(self.progress_bar)
+        
+        self.progress_label = Label(
+            text='0%',
+            size_hint_y=None, height='30dp',
+            color=get_color_from_hex('#ffdd00'),
+            font_size='20sp', bold=True,
+            halign='center', valign='middle'
+        )
+        self.progress_label.bind(size=self.progress_label.setter('text_size'))
+        content.add_widget(self.progress_label)
+        
+        self.progress_status = Label(
+            text='Reading file...',
+            size_hint_y=None, height='30dp',
+            color=get_color_from_hex('#8892b0'),
+            font_size='13sp',
+            halign='center', valign='middle'
+        )
+        self.progress_status.bind(size=self.progress_status.setter('text_size'))
+        content.add_widget(self.progress_status)
+        
+        self.progress_popup = Popup(
+            title='Please Wait',
+            title_color=get_color_from_hex('#00ddff'),
+            title_size='14sp',
+            content=content,
+            size_hint=(0.85, 0.4),
+            background_color=get_color_from_hex('#0a0f1a'),
+            separator_color=get_color_from_hex('#00ddff'),
+            auto_dismiss=False
+        )
+        self.progress_popup.open()
 
+    @mainthread
+    def _update_progress(self, value, status_text=None):
+        try:
+            if self.progress_bar:
+                self.progress_bar.value = value
+            if self.progress_label:
+                self.progress_label.text = f"{int(value)}%"
+            if status_text and self.progress_status:
+                self.progress_status.text = status_text
+        except: pass
+
+    @mainthread
+    def _close_progress_popup(self):
+        try:
+            if self.progress_popup:
+                self.progress_popup.dismiss()
+                self.progress_popup = None
+        except: pass
+
+    # ==========================================
+    # ACTIVITY RESULT (Import trigger)
+    # ==========================================
     def _on_activity_result(self, requestCode, resultCode, intent):
         if requestCode != 1001:
             return
@@ -1047,61 +1190,114 @@ class AlignmentApp(App):
         if resultCode != -1 or intent is None:
             return
         
+        # Show progress popup first
+        self._show_progress_popup()
+        # Then start import worker
+        Clock.schedule_once(lambda dt: self._start_import_worker(intent), 0.15)
+
+    def _start_import_worker(self, intent):
+        threading.Thread(target=self._import_worker, args=(intent,), daemon=True).start()
+
+    def _import_worker(self, intent):
+        """Background import worker with progress updates"""
         try:
-            uri = intent.getData()
+            # STEP 1: Open file
+            self._update_progress(5, "Opening file...")
             
+            uri = intent.getData()
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
             content_resolver = PythonActivity.mActivity.getContentResolver()
             input_stream = content_resolver.openInputStream(uri)
+            
+            # STEP 2: Read file
+            self._update_progress(15, "Reading file...")
             
             BufferedReader = autoclass('java.io.BufferedReader')
             InputStreamReader = autoclass('java.io.InputStreamReader')
             reader = BufferedReader(InputStreamReader(input_stream))
             
             content = ""
+            line_count = 0
             line = reader.readLine()
             while line is not None:
                 content += line + "\n"
+                line_count += 1
+                if line_count % 100 == 0:
+                    progress = min(15 + (line_count // 100), 40)
+                    self._update_progress(progress, f"Reading file... ({line_count} lines)")
                 line = reader.readLine()
             
             reader.close()
             input_stream.close()
             
+            # STEP 3: Parse JSON
+            self._update_progress(45, "Parsing JSON...")
+            
             data = json.loads(content)
             if not isinstance(data, list):
+                self._close_progress_popup()
                 self._show_message("File contains invalid JSON format!")
                 return
             
-            added = 0
+            self._update_progress(60, f"Parsed {len(data)} records")
+            
+            # STEP 4: Duplicate check
+            self._update_progress(65, "Checking duplicates...")
+            
             existing_ids = set()
             for d in self.db:
                 key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
                 existing_ids.add(key)
             
-            for d in data:
-                if not isinstance(d, dict): continue
+            self._update_progress(75, "Adding new records...")
+            
+            # STEP 5: Add records
+            added = 0
+            total = len(data)
+            for i, d in enumerate(data):
+                if not isinstance(d, dict):
+                    continue
                 key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
                 if key not in existing_ids:
                     self.db.append(d)
                     existing_ids.add(key)
                     added += 1
+                
+                if total > 0 and (i % 10 == 0 or i == total - 1):
+                    progress = 75 + int((i / max(total, 1)) * 20)
+                    self._update_progress(progress, f"Processing {i+1}/{total}...")
             
+            # STEP 6: Save DB
+            self._update_progress(95, "Saving database...")
             self.save_db()
+            self._update_progress(100, "Complete!")
             
-            if self.root.current == 'list_screen':
-                self.root.get_screen('list_screen').populate_list(self.db)
+            # Close popup after short delay
+            Clock.schedule_once(lambda dt: self._close_progress_popup(), 0.8)
             
-            self._show_message(f"Imported {added} new records!")
+            # Show success and refresh list
+            Clock.schedule_once(lambda dt: self._finish_import(added), 0.9)
             
             try:
                 activity.unbind(on_activity_result=self._on_activity_result)
             except: pass
             
         except Exception as e:
-            self._show_message(f"Import error: {str(e)}")
+            Clock.schedule_once(lambda dt: self._close_progress_popup())
+            Clock.schedule_once(lambda dt: self._show_message(f"Import error: {str(e)}"))
             print(traceback.format_exc())
 
+    @mainthread
+    def _finish_import(self, added):
+        try:
+            if self.root.current == 'list_screen':
+                self.root.get_screen('list_screen').populate_list(self.db)
+        except: pass
+        self._show_message(f"Successfully imported {added} new records!")
 
+    # ==========================================
+    # MESSAGE POPUP
+    # ==========================================
     def _show_message(self, msg):
         content = BoxLayout(orientation='vertical', padding='15dp', spacing='10dp')
         lbl = Label(
@@ -1129,9 +1325,8 @@ class AlignmentApp(App):
         btn.bind(on_release=popup.dismiss)
         popup.open()
 
-
     # ==========================================
-    # OPEN SPEC POPUP (Excel style + Edit)
+    # OPEN SPEC POPUP
     # ==========================================
     def open_spec_popup(self, data):
         app = self
@@ -1166,21 +1361,24 @@ class AlignmentApp(App):
         table.add_widget(header)
 
         def add_row(label, std, tol, min_v, max_v):
-            if min_v == "-" or min_v is None: return
+            std = app.to_float(std)
+            tol = app.to_float(tol)
+            min_v = app.to_float(min_v)
+            max_v = app.to_float(max_v)
+            
+            if std is None and tol is None and min_v is None and max_v is None:
+                return
+                
+            def fmt_cell(val):
+                if val is None: return "-"
+                return f"{app.dd_to_dm_str(val)}\n({val:.2f}°)"
+
             r = GridLayout(cols=5, size_hint_y=None, height='55dp', spacing=0)
             r.add_widget(ExcelParamCell(lbl_text=label))
-            r.add_widget(ExcelValueCell(
-                lbl_text=f"{app.dd_to_dm_str(min_v)}\n({min_v:.2f}°)" if isinstance(min_v, float) else "-"
-            ))
-            r.add_widget(ExcelValueCell(
-                lbl_text=f"{app.dd_to_dm_str(max_v)}\n({max_v:.2f}°)" if isinstance(max_v, float) else "-"
-            ))
-            r.add_widget(ExcelValueCell(
-                lbl_text=f"{app.dd_to_dm_str(std)}\n({std:.2f}°)" if isinstance(std, float) else "-"
-            ))
-            r.add_widget(ExcelValueCell(
-                lbl_text=f"{app.dd_to_dm_str(tol)}\n({tol:.2f}°)" if isinstance(tol, float) else "-"
-            ))
+            r.add_widget(ExcelValueCell(lbl_text=fmt_cell(min_v)))
+            r.add_widget(ExcelValueCell(lbl_text=fmt_cell(max_v)))
+            r.add_widget(ExcelValueCell(lbl_text=fmt_cell(std)))
+            r.add_widget(ExcelValueCell(lbl_text=fmt_cell(tol)))
             table.add_widget(r)
 
         add_row("F. Toe", data.get('fToeStd'), data.get('fToeTol'), data.get('fToeMin'), data.get('fToeMax'))
@@ -1239,10 +1437,11 @@ class AlignmentApp(App):
         self.t1_r_toe_type = 'DM'
         
         def set_val(id_name, val):
-            try:
-                if val == "-" or val is None: return
+            val = self.to_float(val)
+            if val is not None:
                 main.ids[id_name].ids.inner_input.text = self.dd_to_input_dm(val)
-            except: pass
+            else:
+                main.ids[id_name].ids.inner_input.text = ""
         
         set_val('t1_fToeMin', data.get('fToeMin'))
         set_val('t1_fToeMax', data.get('fToeMax'))
@@ -1259,56 +1458,6 @@ class AlignmentApp(App):
         main.ids.msg_label.color = get_color_from_hex('#ffdd00')
         
         self.root.current = 'main'
-
-    def dd_to_input_dm(self, dd_val):
-        if dd_val == "-" or dd_val is None or isinstance(dd_val, str): return ""
-        neg = dd_val < 0
-        abs_v = abs(dd_val)
-        d = math.floor(abs_v)
-        m = round((abs_v - d) * 60.0)
-        if m >= 60: d += 1; m = 0
-        m_str = f"{m:02d}"
-        return f"{'-' if neg else ''}{d}.{m_str}"
-
-    # ==========================================
-    # MATH HELPERS
-    # ==========================================
-    def dm_to_dd(self, val_str):
-        if not val_str or str(val_str).strip() == "": return None
-        try:
-            num = float(val_str)
-            sign = -1.0 if num < 0 or math.copysign(1.0, num) < 0 else 1.0
-            abs_v = abs(num)
-            deg = math.floor(abs_v)
-            m = (abs_v - deg) * 100.0
-            return sign * (deg + m/60.0)
-        except: return None
-
-    def mm_to_dd(self, mm_val, rim_inch):
-        if not mm_val or not rim_inch or rim_inch <= 0: return 0.0
-        try:
-            r_mm = rim_inch * 25.4
-            return math.asin(float(mm_val) / r_mm) * (180.0 / math.pi)
-        except: return 0.0
-
-    def dd_to_dm_str(self, dd_val):
-        if dd_val == "-" or dd_val is None or isinstance(dd_val, str): return "-"
-        neg = dd_val < 0 or math.copysign(1.0, dd_val) < 0
-        abs_v = abs(dd_val)
-        d = math.floor(abs_v)
-        m = round((abs_v - d) * 60.0)
-        if m >= 60: 
-            d += 1
-            m = 0
-        return f"{'-' if neg else ''}{d}°{m:02d}'"
-
-    def safe_float(self, s):
-        try: return float(s) if str(s).strip()!="" else None
-        except: return None
-
-    def get_val(self, id_name):
-        main_screen = self.root.get_screen('main')
-        return main_screen.ids[id_name].ids.inner_input.text
 
     # ==========================================
     # SAVE / UPDATE LOGIC
@@ -1402,15 +1551,14 @@ class AlignmentApp(App):
                 else:
                     fToeStd = self.safe_float(std_raw); fToeTol = abs(self.safe_float(tol_raw) or 0)
                 
-                # FIX: t3_fCamTol → t3_fCamCamTol
                 if self.t3_sub_mode == "DM":
                     fCamStd = self.dm_to_dd(self.get_val('t3_fCamStd'))
-                    fCamTol = abs(self.dm_to_dd(self.get_val('t3_fCamCamTol')) or 0)
+                    fCamTol = abs(self.dm_to_dd(self.get_val('t3_fCamTol')) or 0)
                     fCasStd = self.dm_to_dd(self.get_val('t3_fCasStd'))
                     fCasTol = abs(self.dm_to_dd(self.get_val('t3_fCasTol')) or 0)
                 else:
                     fCamStd = self.safe_float(self.get_val('t3_fCamStd'))
-                    fCamTol = abs(self.safe_float(self.get_val('t3_fCamCamTol')) or 0)
+                    fCamTol = abs(self.safe_float(self.get_val('t3_fCamTol')) or 0)
                     fCasStd = self.safe_float(self.get_val('t3_fCasStd'))
                     fCasTol = abs(self.safe_float(self.get_val('t3_fCasTol')) or 0)
                 
