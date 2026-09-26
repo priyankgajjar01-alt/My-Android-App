@@ -101,6 +101,7 @@ jobs:
           --permission=WRITE_EXTERNAL_STORAGE \
           --permission=READ_MEDIA_IMAGES \
           --permission=READ_MEDIA_VIDEO \
+          --permission=MANAGE_EXTERNAL_STORAGE \
           --icon=icon.png \
           --presplash=icon.png \
           --presplash-color=#000000 \
