@@ -21,12 +21,6 @@ from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.graphics import Color, RoundedRectangle, Line
 from kivy.clock import Clock, mainthread
 
-# Android imports
-if platform == 'android':
-    from android import activity
-    from jnius import autoclass
-    from android.permissions import request_permissions, Permission
-
 # Background
 Window.clearcolor = get_color_from_hex('#0a0f1a')
 Window.softinput_mode = "below_target"
@@ -215,7 +209,6 @@ KV = """
             size_hint_x: None
             width: '35dp'
 
-# -- Table Cell Improvements (Bigger Font, Proper Sizing) --
 <ExcelHeaderCell>:
     size_hint_y: None
     height: '50dp'
@@ -1047,6 +1040,35 @@ class AlignmentApp(App):
         sm.add_widget(ListScreen())
         return sm
         
+    def on_start(self):
+        if platform == 'android':
+            try:
+                from jnius import autoclass
+                from android import activity
+                
+                Build = autoclass('android.os.Build$VERSION')
+                
+                # Check for Android 11+ (API 30+)
+                if Build.SDK_INT >= 30:
+                    Environment = autoclass('android.os.Environment')
+                    if not Environment.isExternalStorageManager():
+                        Intent = autoclass('android.content.Intent')
+                        Settings = autoclass('android.provider.Settings')
+                        Uri = autoclass('android.net.Uri')
+                        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+
+                        intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                        uri = Uri.parse("package:" + PythonActivity.mActivity.getPackageName())
+                        intent.setData(uri)
+                        PythonActivity.mActivity.startActivity(intent)
+                else:
+                    # For Android 10 and below
+                    from android.permissions import request_permissions, Permission
+                    request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
+                    
+            except Exception as e:
+                print("Permission Request Error:", e)
+
     def get_download_path(self):
         download = '/storage/emulated/0/Download'
         if os.path.exists(download):
@@ -1357,7 +1379,6 @@ class AlignmentApp(App):
         table = BoxLayout(orientation='vertical', size_hint_y=None, spacing=0)
         table.bind(minimum_height=table.setter('height'))
 
-        # Header adjusted dynamically
         header = GridLayout(cols=5, size_hint_y=None, height='50dp', spacing=1)
         for t, w in [("PARAM", 1.2), ("MIN", 0.9), ("MAX", 0.9), ("STD", 0.9), ("TOL", 0.9)]:
             c = ExcelHeaderCell(lbl_text=t)
