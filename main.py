@@ -1,685 +1,1418 @@
+import math
 import os
 import json
-import threading
-import time
-import socket
+import traceback
 from kivy.app import App
 from kivy.lang import Builder
-from kivy.clock import Clock, mainthread
-from kivy.properties import StringProperty, NumericProperty
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
+from kivy.uix.button import Button
 from kivy.uix.popup import Popup
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.behaviors import ButtonBehavior
 from kivy.core.window import Window
-from kivy.utils import platform
-from kivy.metrics import dp
+from kivy.properties import StringProperty, DictProperty
+from kivy.utils import get_color_from_hex, platform
+from kivy.uix.screenmanager import ScreenManager, Screen
+from kivy.graphics import Color, RoundedRectangle, Line
 
-# JNI Check (Android mate)
-is_real_android = False
-if platform == 'android':
-    try:
-        from jnius import autoclass
-        BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
-        UUID = autoclass('java.util.UUID')
-        InputStreamReader = autoclass('java.io.InputStreamReader')
-        BufferedReader = autoclass('java.io.BufferedReader')
-        JavaString = autoclass('java.lang.String')
-        is_real_android = True
-    except Exception as e:
-        print("JNI Loading Error:", e)
+try:
+    from plyer import filechooser
+    HAS_PLYER = True
+except:
+    HAS_PLYER = False
 
-# Dark Navy Background
-Window.clearcolor = (10/255, 25/255, 47/255, 1)
+# Background
+Window.clearcolor = get_color_from_hex('#0a0f1a')
+Window.softinput_mode = "below_target"
 
-KV = '''
-<CustomTextInput@TextInput>:
-    background_normal: ''
-    background_color: [0.04, 0.1, 0.18, 1]
-    foreground_color: [0.39, 1.0, 0.85, 1]
-    cursor_color: [0.39, 1.0, 0.85, 1]
-    multiline: False
-    halign: 'center'
+if platform not in ('android', 'ios'):
+    Window.size = (380, 700)
+
+
+# ==========================================
+# CUSTOM WIDGETS
+# ==========================================
+class RoundedButton(Button):
+    def __init__(self, bg_hex='#0055aa', radius=12, **kwargs):
+        super().__init__(**kwargs)
+        self.background_color = (0, 0, 0, 0)
+        self.background_normal = ''
+        self.background_down = ''
+        self.bg_hex = bg_hex
+        self.radius = radius
+        self.bind(pos=self.update_canvas, size=self.update_canvas, state=self.update_canvas)
+
+    def update_canvas(self, *args):
+        self.canvas.before.clear()
+        with self.canvas.before:
+            if self.state == 'down':
+                Color(rgba=get_color_from_hex('#64ffda80'))
+            else:
+                Color(rgba=get_color_from_hex(self.bg_hex))
+            RoundedRectangle(pos=self.pos, size=self.size, radius=[self.radius])
+
+
+# Excel-style cells
+class ExcelHeaderCell(BoxLayout):
+    lbl_text = StringProperty('')
+
+class ExcelParamCell(BoxLayout):
+    lbl_text = StringProperty('')
+
+class ExcelValueCell(BoxLayout):
+    lbl_text = StringProperty('')
+
+
+class ListItem(ButtonBehavior, BoxLayout):
+    brand_model = StringProperty('')
+    spec_data = DictProperty({})
+
+    def on_release(self):
+        App.get_running_app().open_spec_popup(self.spec_data)
+
+
+class MainScreen(Screen):
+    pass
+
+class ListScreen(Screen):
+    def on_pre_enter(self, *args):
+        self.ids.search_bar.text = ''
+        self.populate_list(App.get_running_app().db)
+
+    def populate_list(self, data_list):
+        container = self.ids.list_container
+        container.clear_widgets()
+        for spec in data_list:
+            item = ListItem()
+            item.brand_model = f"{spec.get('brand','-')}  |  {spec.get('model','-')}"
+            item.spec_data = spec
+            container.add_widget(item)
+
+    def filter_list(self, query):
+        db = App.get_running_app().db
+        if not query:
+            self.populate_list(db)
+        else:
+            q = query.lower()
+            filtered = [s for s in db if q in s.get('brand','').lower() or q in s.get('model','').lower()]
+            self.populate_list(filtered)
+
+
+# ==========================================
+# KV STRING
+# ==========================================
+KV = """
+#:import utils kivy.utils
+
+<HeaderLabel@Label>:
     font_size: '14sp'
-    size_hint_y: None
-    height: '36dp'
-    padding_y: (self.height - self.line_height) / 2
-    use_bubble: False
-    use_handles: False
-
-<RoundedButton@Button>:
-    background_color: [0, 0, 0, 0]
-    background_normal: ''
-    bg_color: [0.39, 1.0, 0.85, 1]
-    color: [0.04, 0.1, 0.18, 1]
-    canvas.before:
-        Color:
-            rgba: self.bg_color if self.state == 'normal' else [self.bg_color[0]*0.8, self.bg_color[1]*0.8, self.bg_color[2]*0.8, 1]
-        RoundedRectangle:
-            pos: self.pos
-            size: self.size
-            radius: [18, 18, 18, 18]
-
-# ===== FORCE UPDATE BUTTON (with glow) =====
-<ForceButton@Button>:
-    background_normal: ''
-    background_color: [0, 0, 0, 0]
     bold: True
-    font_size: '15sp'
-    color: [0.04, 0.1, 0.18, 1] if self.state == 'down' else [0.39, 1.0, 0.85, 1]
-    canvas.before:
-        Color:
-            rgba: [0.39, 1.0, 0.85, 0.35] if self.state == 'down' else [0, 0, 0, 0]
-        RoundedRectangle:
-            pos: self.x - 4, self.y - 4
-            size: self.width + 8, self.height + 8
-            radius: [28, 28, 28, 28]
-        Color:
-            rgba: [0.39, 1.0, 0.85, 1] if self.state == 'down' else [0.1, 0.2, 0.3, 1]
-        RoundedRectangle:
-            pos: self.pos
-            size: self.size
-            radius: [25, 25, 25, 25]
-        Color:
-            rgba: [0.39, 1.0, 0.85, 1]
-        Line:
-            rounded_rectangle: [self.x, self.y, self.width, self.height, 25]
-            width: 2
+    color: utils.get_color_from_hex('#00ddff')
+    size_hint_y: None
+    height: '35dp'
+    text_size: self.size
+    halign: 'left'
+    valign: 'middle'
 
-<StatusLabel@Label>:
-    bg_color: [0.82, 0.18, 0.18, 1]
-    selectable: False
+<SectionTitle@Label>:
+    font_size: '11sp'
+    bold: True
+    color: utils.get_color_from_hex('#ffdd00')
+    size_hint_y: None
+    height: '25dp'
+    text_size: self.size
+    halign: 'left'
+    valign: 'middle'
+    padding_x: '5dp'
     canvas.before:
         Color:
-            rgba: self.bg_color
+            rgba: utils.get_color_from_hex('#001a33')
         Rectangle:
             pos: self.pos
             size: self.size
 
-# ===== SLIDER CELL (UPDATED: Name bigger, Switch close to name) =====
-<SliderCell@BoxLayout>:
-    orientation: 'vertical'
-    spacing: '0dp'
-    slider_name: ''
-    slider_id: 0
-    padding: [0, 4, 0, 4]
-    
+<RoundedButton>:
+    background_normal: ''
+    background_down: ''
+    background_color: 0,0,0,0
+    canvas.before:
+        Color:
+            rgba: utils.get_color_from_hex('#64ffda80') if self.state == 'down' else utils.get_color_from_hex(root.bg_hex)
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [root.radius]
+
+<StringInputRow@BoxLayout>:
+    size_hint_y: None
+    height: '30dp'
+    spacing: '5dp'
+    lbl_text: ''
     Label:
-        text: root.slider_name
-        color: [0.39, 1.0, 0.85, 1]
-        font_size: '24sp'
+        text: root.lbl_text
+        font_size: '11sp'
+        color: utils.get_color_from_hex('#ffdd00')
+        text_size: self.size
+        halign: 'left'
+        valign: 'middle'
+        size_hint_x: 0.4
+    TextInput:
+        id: inner_input
+        size_hint_x: 0.6
+        background_color: utils.get_color_from_hex('#1b2a47')
+        foreground_color: 1,1,1,1
+        multiline: False
+        font_size: '13sp'
+        padding_y: [self.height / 2.0 - (self.line_height / 2.0), 0]
+        on_text_validate: app.focus_next(self)
+
+<InputRow@BoxLayout>:
+    size_hint_y: None
+    height: '28dp'
+    spacing: '5dp'
+    lbl_text: ''
+    unit_text: 'D.M'
+    Label:
+        text: root.lbl_text
+        font_size: '11sp'
+        color: utils.get_color_from_hex('#aaaaaa')
+        text_size: self.size
+        halign: 'left'
+        valign: 'middle'
+        size_hint_x: 0.4
+    BoxLayout:
+        canvas.before:
+            Color:
+                rgba: utils.get_color_from_hex('#1a2333')
+            Rectangle:
+                pos: self.pos
+                size: self.size
+            Color:
+                rgba: utils.get_color_from_hex('#2a3a50')
+            Line:
+                rectangle: self.x, self.y, self.width, self.height
+                width: 1
+        size_hint_x: 0.6
+        TextInput:
+            id: inner_input
+            background_color: 0,0,0,0
+            foreground_color: 1,1,1,1
+            cursor_color: 1,1,1,1
+            multiline: False
+            font_size: '13sp'
+            halign: 'left'
+            padding_y: [self.height / 2.0 - (self.line_height / 2.0), 0]
+            on_text_validate: app.focus_next(self)
+        Label:
+            text: root.unit_text
+            font_size: '10sp'
+            color: utils.get_color_from_hex('#00ddff')
+            size_hint_x: None
+            width: '35dp'
+
+# ===== EXCEL-STYLE CELLS =====
+<ExcelHeaderCell>:
+    size_hint_y: None
+    height: '45dp'
+    canvas.before:
+        Color:
+            rgba: utils.get_color_from_hex('#003366')
+        Rectangle:
+            pos: self.pos
+            size: self.size
+        Color:
+            rgba: utils.get_color_from_hex('#00ddff')
+        Line:
+            rectangle: self.x, self.y, self.width, self.height
+            width: 1
+    Label:
+        text: root.lbl_text
+        font_size: '13sp'
         bold: True
-        size_hint_y: None
-        height: '34dp'
+        color: utils.get_color_from_hex('#00ddff')
+        text_size: self.size
         halign: 'center'
         valign: 'middle'
+
+<ExcelParamCell>:
+    size_hint_y: None
+    height: '55dp'
+    canvas.before:
+        Color:
+            rgba: utils.get_color_from_hex('#0f1623')
+        Rectangle:
+            pos: self.pos
+            size: self.size
+        Color:
+            rgba: utils.get_color_from_hex('#2a3a50')
+        Line:
+            rectangle: self.x, self.y, self.width, self.height
+            width: 1
+    Label:
+        text: root.lbl_text
+        font_size: '13sp'
+        bold: True
+        color: utils.get_color_from_hex('#ffdd00')
         text_size: self.size
-        selectable: False
-    
-    AnchorLayout:
-        anchor_x: 'center'
-        anchor_y: 'top'
-        Switch:
-            size_hint: None, None
-            size: '45dp', '30dp'
-            on_active: app.on_slider_change(root.slider_id, self.active)
-            canvas.before:
-                PushMatrix
-                Scale:
-                    origin: self.center
-                    x: 1.5
-                    y: 1.5
-            canvas.after:
-                PopMatrix
+        halign: 'center'
+        valign: 'middle'
 
-# ===== DATA FORMAT POPUP =====
-<DataFormatPopup>:
-    title: 'Data Format & Logic'
-    title_color: [0.39, 1.0, 0.85, 1]
-    title_size: '18sp'
-    separator_color: [0.39, 1.0, 0.85, 1]
-    background_color: [0.11, 0.14, 0.18, 1]
-    size_hint: 0.9, 0.8
-    auto_dismiss: True
+<ExcelValueCell>:
+    size_hint_y: None
+    height: '55dp'
+    canvas.before:
+        Color:
+            rgba: utils.get_color_from_hex('#121926')
+        Rectangle:
+            pos: self.pos
+            size: self.size
+        Color:
+            rgba: utils.get_color_from_hex('#2a3a50')
+        Line:
+            rectangle: self.x, self.y, self.width, self.height
+            width: 1
+    Label:
+        text: root.lbl_text
+        font_size: '13sp'
+        bold: True
+        color: utils.get_color_from_hex('#ffffff')
+        text_size: self.size
+        halign: 'center'
+        valign: 'middle'
 
+<ListItem>:
+    size_hint_y: None
+    height: '55dp'
+    padding: '10dp'
+    spacing: '10dp'
+    canvas.before:
+        Color:
+            rgba: utils.get_color_from_hex('#64ffda40') if self.state == 'down' else utils.get_color_from_hex('#1a2333')
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [10]
+        Color:
+            rgba: utils.get_color_from_hex('#00ddff')
+        Line:
+            rounded_rectangle: [self.x, self.y, self.width, self.height, 10]
+            width: 1
+    Label:
+        text: root.brand_model
+        font_size: '16sp'
+        bold: True
+        color: utils.get_color_from_hex('#ffffff')
+        text_size: self.size
+        halign: 'left'
+        valign: 'middle'
+    Label:
+        text: 'TAP TO VIEW'
+        size_hint_x: None
+        width: '100dp'
+        font_size: '11sp'
+        bold: True
+        color: utils.get_color_from_hex('#00ddff')
+
+
+<MainScreen>:
+    name: 'main'
     BoxLayout:
         orientation: 'vertical'
-        padding: '15dp'
-        spacing: '10dp'
-
-        Label:
-            text: 'Format:\\n    on_delay,off_delay,s1,s2,s3,s4,s5,s6,s7,s8,s9,force\\n\\nExample:\\n    1000,1000,1,0,0,1,0,0,1,0,0,0\\n\\nRules:\\n    - Slider ON  = 1, OFF = 0 (S1 to S9)\\n    - Force Update pressed = 1 (during press)\\n    - Force Update normally = 0\\n    - All values sent in ONE line\\n    - Every message ends with newline (\\\\n)'
-            color: [0.8, 0.84, 0.96, 1]
-            font_size: '12sp'
-            halign: 'left'
-            valign: 'top'
-            text_size: self.width, None
-            size_hint_y: 1
-            selectable: False
-
-        Button:
-            text: 'Close'
-            background_color: [0.8, 0.2, 0.2, 1]
-            background_normal: ''
-            color: [1, 1, 1, 1]
-            bold: True
+        
+        BoxLayout:
             size_hint_y: None
             height: '45dp'
-            on_release: root.dismiss()
-
-# ===== CONTROLLER SETTINGS POPUP =====
-<SettingsPopup>:
-    title: ''
-    separator_height: 0
-    background_color: [0.11, 0.14, 0.18, 1]
-    size_hint: 0.95, 0.95
-    auto_dismiss: False
-
-    BoxLayout:
-        orientation: 'vertical'
-        padding: '15dp'
-        spacing: '8dp'
-
-        Label:
-            text: 'Controller Settings'
-            color: [0.39, 1.0, 0.85, 1]
-            bold: True
-            font_size: '18sp'
-            halign: 'left'
-            valign: 'middle'
-            text_size: self.size
-            size_hint_y: None
-            height: '28dp'
-            selectable: False
-
-        Widget:
-            size_hint_y: None
-            height: '2dp'
-            canvas:
+            padding: ['10dp', '0dp']
+            canvas.before:
                 Color:
-                    rgba: [0.39, 1.0, 0.85, 1]
+                    rgba: utils.get_color_from_hex('#001a33')
                 Rectangle:
                     pos: self.pos
                     size: self.size
-
-        GridLayout:
-            cols: 2
-            spacing: '8dp'
-            row_default_height: '36dp'
-            row_force_default: True
-            size_hint_y: None
-            height: '124dp'
-
             Label:
-                text: 'MAC Address (Editable)'
-                color: [0.7, 0.8, 0.9, 1]
+                text: "Vehicle Spec Database"
+                font_size: '18sp'
+                bold: True
+                color: utils.get_color_from_hex('#00ddff')
+                text_size: self.size
                 halign: 'left'
                 valign: 'middle'
-                text_size: self.size
-                selectable: False
-            CustomTextInput:
-                text: app.hc05_mac
-                on_text: app.hc05_mac = self.text
 
-            Label:
-                text: 'ON Delay (ms)'
-                color: [0.7, 0.8, 0.9, 1]
-                halign: 'left'
-                valign: 'middle'
-                text_size: self.size
-                selectable: False
-            CustomTextInput:
-                text: app.on_delay
-                on_text: app.on_delay = self.text
+        ScrollView:
+            do_scroll_x: False
+            BoxLayout:
+                orientation: 'vertical'
+                size_hint_y: None
+                height: self.minimum_height
+                padding: '10dp'
+                spacing: '10dp'
 
-            Label:
-                text: 'OFF Delay (ms)'
-                color: [0.7, 0.8, 0.9, 1]
-                halign: 'left'
-                valign: 'middle'
-                text_size: self.size
-                selectable: False
-            CustomTextInput:
-                text: app.off_delay
-                on_text: app.off_delay = self.text
+                BoxLayout:
+                    orientation: 'vertical'
+                    size_hint_y: None
+                    height: self.minimum_height
+                    padding: '8dp'
+                    spacing: '8dp'
+                    canvas.before:
+                        Color:
+                            rgba: utils.get_color_from_hex('#121926')
+                        RoundedRectangle:
+                            pos: self.pos
+                            size: self.size
+                            radius: [12]
+                        Color:
+                            rgba: utils.get_color_from_hex('#00ddff')
+                        Line:
+                            rounded_rectangle: [self.x, self.y, self.width, self.height, 12]
+                            width: 1
 
-        Label:
-            text: 'Slider Names (S1 - S9)'
-            color: [0.39, 1.0, 0.85, 1]
-            bold: True
-            font_size: '14sp'
-            halign: 'left'
-            valign: 'middle'
-            text_size: self.size
-            size_hint_y: None
-            height: '22dp'
-            selectable: False
+                    HeaderLabel:
+                        text: " 1. ADD NEW VEHICLE SPEC "
+                    
+                    StringInputRow:
+                        id: inp_brand
+                        lbl_text: "Brand *"
+                    StringInputRow:
+                        id: inp_model_name
+                        lbl_text: "Model Name *"
+                    StringInputRow:
+                        id: inp_common_rim
+                        lbl_text: "Rim Size (Inch)"
+                    
+                    BoxLayout:
+                        size_hint_y: None
+                        height: '35dp'
+                        spacing: 1
+                        canvas.before:
+                            Color:
+                                rgba: utils.get_color_from_hex('#0a101c')
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                        ToggleButton:
+                            text: "DM"
+                            group: 'tabs'
+                            state: 'down'
+                            background_normal: ''
+                            background_down: ''
+                            background_color: utils.get_color_from_hex('#4CAF50') if self.state == 'down' else utils.get_color_from_hex('#0a101c')
+                            color: (0,0,0,1) if self.state == 'down' else (0.6,0.6,0.6,1)
+                            bold: True if self.state == 'down' else False
+                            on_release: sm.current = 'tab1'
+                        ToggleButton:
+                            text: "Decimal"
+                            group: 'tabs'
+                            background_normal: ''
+                            background_down: ''
+                            background_color: utils.get_color_from_hex('#4CAF50') if self.state == 'down' else utils.get_color_from_hex('#0a101c')
+                            color: (0,0,0,1) if self.state == 'down' else (0.6,0.6,0.6,1)
+                            bold: True if self.state == 'down' else False
+                            on_release: sm.current = 'tab2'
+                        ToggleButton:
+                            text: "Std±Tol"
+                            group: 'tabs'
+                            background_normal: ''
+                            background_down: ''
+                            background_color: utils.get_color_from_hex('#4CAF50') if self.state == 'down' else utils.get_color_from_hex('#0a101c')
+                            color: (0,0,0,1) if self.state == 'down' else (0.6,0.6,0.6,1)
+                            bold: True if self.state == 'down' else False
+                            on_release: sm.current = 'tab3'
 
-        GridLayout:
-            cols: 3
-            spacing: '6dp'
-            row_default_height: '36dp'
-            row_force_default: True
-            size_hint_y: None
-            height: '120dp'
+                    ScreenManager:
+                        id: sm
+                        size_hint_y: None
+                        height: tab1_box.minimum_height if self.current == 'tab1' else (tab2_box.minimum_height if self.current == 'tab2' else tab3_box.minimum_height)
 
-            CustomTextInput:
-                hint_text: 'S1'
-                text: app.s1_name
-                on_text: app.s1_name = self.text
-            CustomTextInput:
-                hint_text: 'S2'
-                text: app.s2_name
-                on_text: app.s2_name = self.text
-            CustomTextInput:
-                hint_text: 'S3'
-                text: app.s3_name
-                on_text: app.s3_name = self.text
-            CustomTextInput:
-                hint_text: 'S4'
-                text: app.s4_name
-                on_text: app.s4_name = self.text
-            CustomTextInput:
-                hint_text: 'S5'
-                text: app.s5_name
-                on_text: app.s5_name = self.text
-            CustomTextInput:
-                hint_text: 'S6'
-                text: app.s6_name
-                on_text: app.s6_name = self.text
-            CustomTextInput:
-                hint_text: 'S7'
-                text: app.s7_name
-                on_text: app.s7_name = self.text
-            CustomTextInput:
-                hint_text: 'S8'
-                text: app.s8_name
-                on_text: app.s8_name = self.text
-            CustomTextInput:
-                hint_text: 'S9'
-                text: app.s9_name
-                on_text: app.s9_name = self.text
+                        Screen:
+                            name: 'tab1'
+                            BoxLayout:
+                                id: tab1_box
+                                orientation: 'vertical'
+                                size_hint_y: None
+                                height: self.minimum_height
+                                spacing: '8dp'
+                                BoxLayout:
+                                    orientation: 'vertical'
+                                    size_hint_y: None
+                                    height: self.minimum_height
+                                    padding: '3dp'
+                                    spacing: '3dp'
+                                    canvas.before:
+                                        Color:
+                                            rgba: utils.get_color_from_hex('#2a3a50')
+                                        RoundedRectangle:
+                                            pos: self.pos
+                                            size: self.size
+                                            radius: [8]
+                                    SectionTitle:
+                                        text: " FRONT WHEEL"
+                                    BoxLayout:
+                                        size_hint_y: None
+                                        height: '25dp'
+                                        CheckBox:
+                                            group: 't1_f_toe'
+                                            active: True
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            on_active: app.t1_f_toe_type = 'DM' if self.active else 'MM'
+                                        Label:
+                                            text: 'D.M'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            font_size: '11sp'
+                                        CheckBox:
+                                            group: 't1_f_toe'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            on_active: app.t1_f_toe_type = 'MM' if self.active else 'DM'
+                                        Label:
+                                            text: 'mm'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            font_size: '11sp'
+                                    InputRow:
+                                        id: t1_fToeMin
+                                        lbl_text: "Toe Min *"
+                                        unit_text: 'D.M' if app.t1_f_toe_type == 'DM' else 'mm'
+                                    InputRow:
+                                        id: t1_fToeMax
+                                        lbl_text: "Toe Max *"
+                                        unit_text: 'D.M' if app.t1_f_toe_type == 'DM' else 'mm'
+                                    InputRow:
+                                        id: t1_fCamMin
+                                        lbl_text: "Camber Min *"
+                                    InputRow:
+                                        id: t1_fCamMax
+                                        lbl_text: "Camber Max *"
+                                    InputRow:
+                                        id: t1_fCasMin
+                                        lbl_text: "Castor Min *"
+                                    InputRow:
+                                        id: t1_fCasMax
+                                        lbl_text: "Castor Max *"
+                                BoxLayout:
+                                    orientation: 'vertical'
+                                    size_hint_y: None
+                                    height: self.minimum_height
+                                    padding: '3dp'
+                                    spacing: '3dp'
+                                    canvas.before:
+                                        Color:
+                                            rgba: utils.get_color_from_hex('#2a3a50')
+                                        RoundedRectangle:
+                                            pos: self.pos
+                                            size: self.size
+                                            radius: [8]
+                                    SectionTitle:
+                                        text: " REAR WHEEL (OPT)"
+                                    BoxLayout:
+                                        size_hint_y: None
+                                        height: '25dp'
+                                        CheckBox:
+                                            group: 't1_r_toe'
+                                            active: True
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            on_active: app.t1_r_toe_type = 'DM' if self.active else 'MM'
+                                        Label:
+                                            text: 'D.M'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            font_size: '11sp'
+                                        CheckBox:
+                                            group: 't1_r_toe'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            on_active: app.t1_r_toe_type = 'MM' if self.active else 'DM'
+                                        Label:
+                                            text: 'mm'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            font_size: '11sp'
+                                    InputRow:
+                                        id: t1_rToeMin
+                                        lbl_text: "Toe Min"
+                                        unit_text: 'D.M' if app.t1_r_toe_type == 'DM' else 'mm'
+                                    InputRow:
+                                        id: t1_rToeMax
+                                        lbl_text: "Toe Max"
+                                        unit_text: 'D.M' if app.t1_r_toe_type == 'DM' else 'mm'
+                                    InputRow:
+                                        id: t1_rCamMin
+                                        lbl_text: "Camber Min"
+                                    InputRow:
+                                        id: t1_rCamMax
+                                        lbl_text: "Camber Max"
 
-        Button:
-            text: 'View Data Format & Logic'
-            background_color: [0.1, 0.2, 0.3, 1]
-            background_normal: ''
-            color: [0.39, 1.0, 0.85, 1]
-            bold: True
-            font_size: '14sp'
-            size_hint_y: None
-            height: '42dp'
-            on_release: app.show_data_format_popup()
+                        Screen:
+                            name: 'tab2'
+                            BoxLayout:
+                                id: tab2_box
+                                orientation: 'vertical'
+                                size_hint_y: None
+                                height: self.minimum_height
+                                spacing: '8dp'
+                                BoxLayout:
+                                    orientation: 'vertical'
+                                    size_hint_y: None
+                                    height: self.minimum_height
+                                    padding: '3dp'
+                                    spacing: '3dp'
+                                    canvas.before:
+                                        Color:
+                                            rgba: utils.get_color_from_hex('#2a3a50')
+                                        RoundedRectangle:
+                                            pos: self.pos
+                                            size: self.size
+                                            radius: [8]
+                                    SectionTitle:
+                                        text: " FRONT WHEEL"
+                                    BoxLayout:
+                                        size_hint_y: None
+                                        height: '25dp'
+                                        CheckBox:
+                                            group: 't2_f_toe'
+                                            active: True
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            on_active: app.t2_f_toe_type = 'DD' if self.active else 'MM'
+                                        Label:
+                                            text: 'Degree'
+                                            size_hint_x: None
+                                            width: '50dp'
+                                            font_size: '11sp'
+                                        CheckBox:
+                                            group: 't2_f_toe'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            on_active: app.t2_f_toe_type = 'MM' if self.active else 'DD'
+                                        Label:
+                                            text: 'mm'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            font_size: '11sp'
+                                    InputRow:
+                                        id: t2_fToeMin
+                                        lbl_text: "Toe Min *"
+                                        unit_text: '°' if app.t2_f_toe_type == 'DD' else 'mm'
+                                    InputRow:
+                                        id: t2_fToeMax
+                                        lbl_text: "Toe Max *"
+                                        unit_text: '°' if app.t2_f_toe_type == 'DD' else 'mm'
+                                    InputRow:
+                                        id: t2_fCamMin
+                                        lbl_text: "Camber Min *"
+                                        unit_text: '°'
+                                    InputRow:
+                                        id: t2_fCamMax
+                                        lbl_text: "Camber Max *"
+                                        unit_text: '°'
+                                    InputRow:
+                                        id: t2_fCasMin
+                                        lbl_text: "Castor Min *"
+                                        unit_text: '°'
+                                    InputRow:
+                                        id: t2_fCasMax
+                                        lbl_text: "Castor Max *"
+                                        unit_text: '°'
+                                BoxLayout:
+                                    orientation: 'vertical'
+                                    size_hint_y: None
+                                    height: self.minimum_height
+                                    padding: '3dp'
+                                    spacing: '3dp'
+                                    canvas.before:
+                                        Color:
+                                            rgba: utils.get_color_from_hex('#2a3a50')
+                                        RoundedRectangle:
+                                            pos: self.pos
+                                            size: self.size
+                                            radius: [8]
+                                    SectionTitle:
+                                        text: " REAR WHEEL (OPT)"
+                                    BoxLayout:
+                                        size_hint_y: None
+                                        height: '25dp'
+                                        CheckBox:
+                                            group: 't2_r_toe'
+                                            active: True
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            on_active: app.t2_r_toe_type = 'DD' if self.active else 'MM'
+                                        Label:
+                                            text: 'Degree'
+                                            size_hint_x: None
+                                            width: '50dp'
+                                            font_size: '11sp'
+                                        CheckBox:
+                                            group: 't2_r_toe'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            on_active: app.t2_r_toe_type = 'MM' if self.active else 'DD'
+                                        Label:
+                                            text: 'mm'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            font_size: '11sp'
+                                    InputRow:
+                                        id: t2_rToeMin
+                                        lbl_text: "Toe Min"
+                                        unit_text: '°' if app.t2_r_toe_type == 'DD' else 'mm'
+                                    InputRow:
+                                        id: t2_rToeMax
+                                        lbl_text: "Toe Max"
+                                        unit_text: '°' if app.t2_r_toe_type == 'DD' else 'mm'
+                                    InputRow:
+                                        id: t2_rCamMin
+                                        lbl_text: "Camber Min"
+                                        unit_text: '°'
+                                    InputRow:
+                                        id: t2_rCamMax
+                                        lbl_text: "Camber Max"
+                                        unit_text: '°'
 
-        Widget:
-            size_hint_y: 1
+                        Screen:
+                            name: 'tab3'
+                            BoxLayout:
+                                id: tab3_box
+                                orientation: 'vertical'
+                                size_hint_y: None
+                                height: self.minimum_height
+                                spacing: '8dp'
+                                BoxLayout:
+                                    size_hint_y: None
+                                    height: '30dp'
+                                    canvas.before:
+                                        Color:
+                                            rgba: utils.get_color_from_hex('#111c30')
+                                        RoundedRectangle:
+                                            pos: self.pos
+                                            size: self.size
+                                            radius: [6]
+                                    ToggleButton:
+                                        text: "DM Std ± Tol"
+                                        group: 't3_sub'
+                                        state: 'down'
+                                        background_normal: ''
+                                        background_down: ''
+                                        background_color: utils.get_color_from_hex('#4CAF50') if self.state == 'down' else utils.get_color_from_hex('#111c30')
+                                        color: (0,0,0,1) if self.state == 'down' else utils.get_color_from_hex('#ffdd00')
+                                        bold: True if self.state == 'down' else False
+                                        on_state: if self.state == 'down': app.t3_sub_mode = 'DM'
+                                    ToggleButton:
+                                        text: "Decimal Std ± Tol"
+                                        group: 't3_sub'
+                                        background_normal: ''
+                                        background_down: ''
+                                        background_color: utils.get_color_from_hex('#4CAF50') if self.state == 'down' else utils.get_color_from_hex('#111c30')
+                                        color: (0,0,0,1) if self.state == 'down' else utils.get_color_from_hex('#ffdd00')
+                                        bold: True if self.state == 'down' else False
+                                        on_state: if self.state == 'down': app.t3_sub_mode = 'DD'
+                                
+                                BoxLayout:
+                                    orientation: 'vertical'
+                                    size_hint_y: None
+                                    height: self.minimum_height
+                                    padding: '3dp'
+                                    spacing: '3dp'
+                                    canvas.before:
+                                        Color:
+                                            rgba: utils.get_color_from_hex('#2a3a50')
+                                        RoundedRectangle:
+                                            pos: self.pos
+                                            size: self.size
+                                            radius: [8]
+                                    SectionTitle:
+                                        text: " FRONT WHEEL - STD/TOL"
+                                    BoxLayout:
+                                        size_hint_y: None
+                                        height: '25dp'
+                                        CheckBox:
+                                            group: 't3_f_toe'
+                                            active: True
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            on_active: app.t3_f_toe_type = 'DEG' if self.active else 'MM'
+                                        Label:
+                                            text: 'Degree'
+                                            size_hint_x: None
+                                            width: '50dp'
+                                            font_size: '11sp'
+                                        CheckBox:
+                                            group: 't3_f_toe'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            on_active: app.t3_f_toe_type = 'MM' if self.active else 'DEG'
+                                        Label:
+                                            text: 'mm'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            font_size: '11sp'
+                                    InputRow:
+                                        id: t3_fToeStd
+                                        lbl_text: "Toe Std *"
+                                        unit_text: 'Val' if app.t3_f_toe_type == 'DEG' else 'mm'
+                                    InputRow:
+                                        id: t3_fToeTol
+                                        lbl_text: "Toe Tol *"
+                                        unit_text: 'Tol' if app.t3_f_toe_type == 'DEG' else 'mm'
+                                    InputRow:
+                                        id: t3_fCamStd
+                                        lbl_text: "Camber Std *"
+                                        unit_text: 'Val'
+                                    InputRow:
+                                        id: t3_fCamCamTol
+                                        lbl_text: "Camber Tol *"
+                                        unit_text: 'Tol'
+                                    InputRow:
+                                        id: t3_fCasStd
+                                        lbl_text: "Castor Std *"
+                                        unit_text: 'Val'
+                                    InputRow:
+                                        id: t3_fCasTol
+                                        lbl_text: "Castor Tol *"
+                                        unit_text: 'Tol'
+                                BoxLayout:
+                                    orientation: 'vertical'
+                                    size_hint_y: None
+                                    height: self.minimum_height
+                                    padding: '3dp'
+                                    spacing: '3dp'
+                                    canvas.before:
+                                        Color:
+                                            rgba: utils.get_color_from_hex('#2a3a50')
+                                        RoundedRectangle:
+                                            pos: self.pos
+                                            size: self.size
+                                            radius: [8]
+                                    SectionTitle:
+                                        text: " REAR WHEEL (OPT)"
+                                    BoxLayout:
+                                        size_hint_y: None
+                                        height: '25dp'
+                                        CheckBox:
+                                            group: 't3_r_toe'
+                                            active: True
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            on_active: app.t3_r_toe_type = 'DEG' if self.active else 'MM'
+                                        Label:
+                                            text: 'Degree'
+                                            size_hint_x: None
+                                            width: '50dp'
+                                            font_size: '11sp'
+                                        CheckBox:
+                                            group: 't3_r_toe'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            on_active: app.t3_r_toe_type = 'MM' if self.active else 'DEG'
+                                        Label:
+                                            text: 'mm'
+                                            size_hint_x: None
+                                            width: '30dp'
+                                            font_size: '11sp'
+                                    InputRow:
+                                        id: t3_rToeStd
+                                        lbl_text: "Toe Std"
+                                        unit_text: 'Val' if app.t3_r_toe_type == 'DEG' else 'mm'
+                                    InputRow:
+                                        id: t3_rToeTol
+                                        lbl_text: "Toe Tol"
+                                        unit_text: 'Tol' if app.t3_r_toe_type == 'DEG' else 'mm'
+                                    InputRow:
+                                        id: t3_rCamStd
+                                        lbl_text: "Camber Std"
+                                        unit_text: 'Val'
+                                    InputRow:
+                                        id: t3_rCamTol
+                                        lbl_text: "Camber Tol"
+                                        unit_text: 'Tol'
 
-        ForceButton:
-            text: 'Force Update Settings'
-            size_hint_y: None
-            height: '48dp'
-            on_press: app.force_update_and_close()
+                    Label:
+                        id: msg_label
+                        text: ""
+                        size_hint_y: None
+                        height: '25dp'
+                        color: utils.get_color_from_hex('#00ff88')
+                        font_size: '12sp'
+                        bold: True
+                        
+                RoundedButton:
+                    text: "+ SAVE & ADD TO LIST"
+                    font_size: '14sp'
+                    bold: True
+                    size_hint_y: None
+                    height: '45dp'
+                    bg_hex: '#00aa55'
+                    radius: 14
+                    color: 1,1,1,1
+                    on_release: app.save_data()
+                    
+                RoundedButton:
+                    text: "VIEW SPECIFICATIONS"
+                    font_size: '14sp'
+                    bold: True
+                    size_hint_y: None
+                    height: '45dp'
+                    bg_hex: '#0055aa'
+                    radius: 14
+                    color: 1,1,1,1
+                    on_release: app.root.current = 'list_screen'
 
-        Button:
-            text: 'Save & Close'
-            background_color: [0.0, 0.78, 0.32, 1]
-            background_normal: ''
-            color: [0.04, 0.1, 0.18, 1]
-            bold: True
-            font_size: '16sp'
-            size_hint_y: None
-            height: '48dp'
-            on_release: app.save_and_close_settings()
-
-# ===== MAIN LAYOUT =====
-BoxLayout:
-    orientation: 'vertical'
-
-    StatusLabel:
-        id: status_lbl
-        text: 'System Starting...'
-        size_hint_y: None
-        height: '55dp'
-        bold: True
-        font_size: '20sp'
-        color: [1, 1, 1, 1]
-        bg_color: [0.85, 0.53, 0.1, 1]
-        on_touch_up: 
-            if self.collide_point(*args[1].pos): app.reconnect_bluetooth()
-
+<ListScreen>:
+    name: 'list_screen'
     BoxLayout:
-        size_hint_y: 0.3
-        padding: '10dp'
-        TextInput:
-            id: monitor
-            readonly: True
-            background_normal: ''
-            background_color: [0, 0, 0, 1]
-            foreground_color: [0.39, 1.0, 0.85, 1]
-            font_size: '12sp'
-            text: 'System Ready...\\n'
-            use_bubble: False
-            use_handles: False
+        orientation: 'vertical'
+        
+        BoxLayout:
+            size_hint_y: None
+            height: '50dp'
+            padding: ['10dp', '5dp']
+            spacing: '10dp'
+            canvas.before:
+                Color:
+                    rgba: utils.get_color_from_hex('#001a33')
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+            RoundedButton:
+                text: 'BACK'
+                size_hint_x: 0.25
+                font_size: '12sp'
+                bold: True
+                bg_hex: '#1e2a3a'
+                radius: 10
+                color: 1,1,1,1
+                on_release: app.root.current = 'main'
+            Label:
+                text: "Saved Vehicles"
+                font_size: '16sp'
+                bold: True
+                color: utils.get_color_from_hex('#00ddff')
+                size_hint_x: 0.4
+                halign: 'left'
+                valign: 'middle'
+                text_size: self.size
+            RoundedButton:
+                text: 'IMPORT FILE'
+                size_hint_x: 0.35
+                font_size: '12sp'
+                bold: True
+                bg_hex: '#d97706'
+                radius: 10
+                color: 1,1,1,1
+                on_release: app.import_from_file()
 
-    GridLayout:
-        cols: 3
-        rows: 3
-        spacing: '6dp'
-        padding: '10dp'
-        size_hint_y: 0.7
+        BoxLayout:
+            size_hint_y: None
+            height: '40dp'
+            padding: '5dp'
+            canvas.before:
+                Color:
+                    rgba: utils.get_color_from_hex('#0a0f1a')
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+            TextInput:
+                id: search_bar
+                hint_text: 'Search Brand or Model...'
+                background_color: utils.get_color_from_hex('#1b2a47')
+                foreground_color: 1,1,1,1
+                multiline: False
+                font_size: '14sp'
+                on_text: root.filter_list(self.text)
 
-        SliderCell:
-            slider_name: app.s1_name
-            slider_id: 1
-        SliderCell:
-            slider_name: app.s2_name
-            slider_id: 2
-        SliderCell:
-            slider_name: app.s3_name
-            slider_id: 3
-        SliderCell:
-            slider_name: app.s4_name
-            slider_id: 4
-        SliderCell:
-            slider_name: app.s5_name
-            slider_id: 5
-        SliderCell:
-            slider_name: app.s6_name
-            slider_id: 6
-        SliderCell:
-            slider_name: app.s7_name
-            slider_id: 7
-        SliderCell:
-            slider_name: app.s8_name
-            slider_id: 8
-        SliderCell:
-            slider_name: app.s9_name
-            slider_id: 9
+        ScrollView:
+            do_scroll_x: False
+            GridLayout:
+                id: list_container
+                cols: 1
+                spacing: '5dp'
+                padding: '10dp'
+                size_hint_y: None
+                height: self.minimum_height
+"""
 
-    AnchorLayout:
-        size_hint_y: None
-        height: '50dp'
-        anchor_x: 'center'
-        anchor_y: 'center'
-        RoundedButton:
-            text: 'Settings'
-            size_hint: None, None
-            size: '140dp', '40dp'
-            bg_color: [0.39, 1.0, 0.85, 1]
-            bold: True
-            font_size: '16sp'
-            on_release: app.open_settings()
-'''
 
-class SettingsPopup(Popup):
-    pass
-
-class DataFormatPopup(Popup):
-    pass
-
-class BluetoothApp(App):
-    hc05_mac = StringProperty("98:D3:31:F4:XX:XX")
-    on_delay = StringProperty("1000")
-    off_delay = StringProperty("1000")
+class AlignmentApp(App):
+    t1_f_toe_type = StringProperty('DM')
+    t1_r_toe_type = StringProperty('DM')
+    t2_f_toe_type = StringProperty('DD')
+    t2_r_toe_type = StringProperty('DD')
+    t3_f_toe_type = StringProperty('DEG')
+    t3_r_toe_type = StringProperty('DEG')
+    t3_sub_mode = StringProperty('DM')
     
-    s1_name = StringProperty("S1")
-    s2_name = StringProperty("S2")
-    s3_name = StringProperty("S3")
-    s4_name = StringProperty("S4")
-    s5_name = StringProperty("S5")
-    s6_name = StringProperty("S6")
-    s7_name = StringProperty("S7")
-    s8_name = StringProperty("S8")
-    s9_name = StringProperty("S9")
-    
-    s1_state = NumericProperty(0)
-    s2_state = NumericProperty(0)
-    s3_state = NumericProperty(0)
-    s4_state = NumericProperty(0)
-    s5_state = NumericProperty(0)
-    s6_state = NumericProperty(0)
-    s7_state = NumericProperty(0)
-    s8_state = NumericProperty(0)
-    s9_state = NumericProperty(0)
-    
-    force_state = NumericProperty(0)
+    db = []
+    editing_index = None  # Track editing vehicle index
 
     def build(self):
-        self.bt_socket = None
-        self.bt_out = None
-        self.bt_in = None
-        self.is_connected = False
-        self.waiting_ack = False
-        self.pending_data = ""
-        self.is_connecting = False
-
-        self.load_settings()
-        self.root = Builder.load_string(KV)
-        self.settings_popup = SettingsPopup()
-        self.data_format_popup = DataFormatPopup()
-        return self.root
-
-    def on_start(self):
-        self.log(f"Loaded MAC: {self.hc05_mac}")
-
-        if is_real_android:
-            try:
-                from android.permissions import request_permissions
-                request_permissions([
-                    'android.permission.BLUETOOTH_CONNECT',
-                    'android.permission.BLUETOOTH_SCAN',
-                    'android.permission.ACCESS_FINE_LOCATION',
-                    'android.permission.BLUETOOTH',
-                    'android.permission.BLUETOOTH_ADMIN'
-                ])
-                self.update_status("Waiting for Permissions...", [0.85, 0.53, 0.1, 1])
-                Clock.schedule_once(lambda dt: threading.Thread(target=self.connect_bluetooth, daemon=True).start(), 4)
-            except:
-                Clock.schedule_once(lambda dt: threading.Thread(target=self.connect_bluetooth, daemon=True).start(), 1)
-        else:
-            Clock.schedule_once(lambda dt: threading.Thread(target=self.connect_bluetooth, daemon=True).start(), 1)
-
-    def reconnect_bluetooth(self):
-        if self.is_connected:
-            self.log("Already connected. Ignoring reconnect request.")
-            return
-        if self.is_connecting:
-            self.log("Reconnect already in progress...")
-            return
+        self.db_path = os.path.join(self.user_data_dir, 'foc_specs_db.json')
+        self.load_db()
+        Builder.load_string(KV)
         
-        self.is_connecting = True
-        self.log("Manual reconnect requested...")
-        self.update_status("Reconnecting...", [0.85, 0.53, 0.1, 1])
+        sm = ScreenManager()
+        sm.add_widget(MainScreen())
+        sm.add_widget(ListScreen())
+        return sm
         
-        if self.bt_socket:
-            try:
-                self.bt_socket.close()
-            except:
-                pass
-            self.bt_socket = None
-            self.bt_out = None
-            self.bt_in = None
-        
-        self.is_connected = False
-        self.waiting_ack = False
-        
-        threading.Thread(target=self.connect_bluetooth, daemon=True).start()
+    def get_all_textinputs(self, parent):
+        inputs = []
+        if not parent: return inputs
+        for child in reversed(parent.children):
+            if isinstance(child, TextInput):
+                inputs.append(child)
+            else:
+                inputs.extend(self.get_all_textinputs(child))
+        return inputs
 
-    def load_settings(self):
-        if os.path.exists("bt_settings.json"):
-            try:
-                with open("bt_settings.json", "r") as f:
-                    data = json.load(f)
-                    if "mac" in data: self.hc05_mac = data["mac"]
-                    if "on_delay" in data: self.on_delay = data["on_delay"]
-                    if "off_delay" in data: self.off_delay = data["off_delay"]
-                    for i in range(1, 10):
-                        key = f"s{i}_name"
-                        if key in data:
-                            setattr(self, key, data[key])
-            except: pass
-
-    def save_settings_to_file(self):
-        data = {
-            "mac": self.hc05_mac.strip(),
-            "on_delay": self.on_delay,
-            "off_delay": self.off_delay,
-        }
-        for i in range(1, 10):
-            data[f"s{i}_name"] = getattr(self, f"s{i}_name")
-        
+    def focus_next(self, current_input):
+        main = self.root.get_screen('main')
+        all_inputs = self.get_all_textinputs(main)
         try:
-            with open("bt_settings.json", "w") as f:
-                json.dump(data, f)
-        except: pass
-
-    def open_settings(self):
-        self.settings_popup.open()
-
-    def show_data_format_popup(self):
-        self.data_format_popup.open()
-
-    def save_and_close_settings(self):
-        self.force_state = 0
-        self.save_settings_to_file()
-        self.send_full_state()
-        self.settings_popup.dismiss()
-
-    def force_update_and_close(self):
-        self.force_state = 1
-        self.log("Force Update -> applying settings & closing popup")
-        
-        self.save_settings_to_file()
-        self.send_full_state()
-        
-        Clock.schedule_once(lambda dt: self._close_popup_after_force(), 0.35)
-
-    def _close_popup_after_force(self):
-        try:
-            self.settings_popup.dismiss()
-        except:
+            idx = all_inputs.index(current_input)
+            if idx + 1 < len(all_inputs):
+                all_inputs[idx + 1].focus = True
+        except ValueError:
             pass
-        Clock.schedule_once(lambda dt: self._reset_force_after_close(), 0.6)
 
-    def _reset_force_after_close(self):
-        if self.force_state == 1:
-            self.force_state = 0
-            self.log("Force reset to 0 (post-update)")
-            self.send_full_state()
+    def load_db(self):
+        if os.path.exists(self.db_path):
+            try:
+                with open(self.db_path, 'r') as f:
+                    self.db = json.load(f)
+            except:
+                self.db = []
+        else:
+            self.db = []
 
-    @mainthread
-    def log(self, msg):
-        monitor = self.root.ids.monitor
-        monitor.text += msg + "\n"
-        monitor.cursor = (0, len(monitor.text))
+    def save_db(self):
+        with open(self.db_path, 'w') as f:
+            json.dump(self.db, f)
 
-    @mainthread
-    def update_status(self, text, bg_color):
-        self.root.ids.status_lbl.text = text
-        self.root.ids.status_lbl.bg_color = bg_color
-
-    def connect_bluetooth(self):
-        mac = self.hc05_mac.strip()
-        self.log(f"Connecting to {mac}...")
-        self.update_status("Connecting...", [0.85, 0.53, 0.1, 1])
+    # ==========================================
+    # IMPORT FROM FILE (Phone memory)
+    # ==========================================
+    def import_from_file(self):
+        if not HAS_PLYER:
+            self._show_message("plyer missing! Cannot open file picker.")
+            return
         
         try:
-            if is_real_android:
-                adapter = BluetoothAdapter.getDefaultAdapter()
-                device = adapter.getRemoteDevice(mac)
-                spp_uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-                self.bt_socket = device.createRfcommSocketToServiceRecord(spp_uuid)
-                adapter.cancelDiscovery()
-                self.bt_socket.connect()
-                self.bt_out = self.bt_socket.getOutputStream()
-                self.bt_in = BufferedReader(InputStreamReader(self.bt_socket.getInputStream()))
-                self.is_connected = True
-            else:
-                if hasattr(socket, 'AF_BLUETOOTH'):
-                    self.bt_socket = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
-                    self.bt_socket.connect((mac, 1))
-                    self.is_connected = True
-                else:
-                    self.log("AF_BLUETOOTH missing. Simulated Mode.")
-
-            if self.is_connected:
-                threading.Thread(target=self.listen_for_ack, daemon=True).start()
-                self.update_status("Connected via Bluetooth!", [0.0, 0.78, 0.32, 1])
-                self.log("HC-05 Connected Successfully!")
-
+            filechooser.open_file(
+                on_selection=self._on_file_selected,
+                filters=[("JSON Files", "*.json"), ("All Files", "*.*")]
+            )
         except Exception as e:
-            self.is_connected = False
-            self.update_status("Disconnected", [0.82, 0.18, 0.18, 1])
-            self.log(f"Failed: {str(e)}")
+            self._show_message(f"File picker error: {str(e)}")
+
+    def _on_file_selected(self, selection):
+        if not selection:
+            return
+        file_path = selection[0]
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, list):
+                raise ValueError("File ma JSON array nathi!")
+            
+            added = 0
+            existing_ids = set()
+            for d in self.db:
+                key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
+                existing_ids.add(key)
+            for d in data:
+                if not isinstance(d, dict): continue
+                key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
+                if key not in existing_ids:
+                    self.db.append(d)
+                    existing_ids.add(key)
+                    added += 1
+            self.save_db()
+            
+            if self.root.current == 'list_screen':
+                self.root.get_screen('list_screen').populate_list(self.db)
+            
+            self._show_message(f"Imported {added} new records!")
+        except Exception as e:
+            self._show_message(f"Error: {str(e)}")
+
+    def _show_message(self, msg):
+        content = BoxLayout(orientation='vertical', padding='15dp', spacing='10dp')
+        lbl = Label(
+            text=msg,
+            color=get_color_from_hex('#ffffff'),
+            font_size='14sp',
+            halign='center', valign='middle'
+        )
+        lbl.bind(size=lbl.setter('text_size'))
+        content.add_widget(lbl)
         
-        finally:
-            self.is_connecting = False
+        btn = Button(
+            text='OK', size_hint_y=None, height='45dp',
+            background_normal='', background_color=get_color_from_hex('#0055aa'),
+            color=(1,1,1,1), bold=True, font_size='15sp'
+        )
+        content.add_widget(btn)
+        
+        popup = Popup(
+            title='Info', title_color=get_color_from_hex('#00ddff'),
+            content=content, size_hint=(0.85, 0.35),
+            background_color=get_color_from_hex('#0a0f1a'),
+            separator_color=get_color_from_hex('#00ddff')
+        )
+        btn.bind(on_release=popup.dismiss)
+        popup.open()
 
-    def listen_for_ack(self):
-        while self.is_connected and self.bt_socket:
+    # ==========================================
+    # OPEN SPEC POPUP (Excel style + Edit)
+    # ==========================================
+    def open_spec_popup(self, data):
+        app = self
+        content = BoxLayout(orientation='vertical', padding='10dp', spacing='8dp')
+
+        # Title
+        title = Label(
+            text=f"{data.get('brand','')}  -  {data.get('model','')}",
+            size_hint_y=None, height='40dp',
+            color=get_color_from_hex('#ffdd00'),
+            font_size='18sp', bold=True,
+            halign='center', valign='middle'
+        )
+        title.bind(size=title.setter('text_size'))
+        content.add_widget(title)
+
+        # === EDIT BUTTON (top) ===
+        btn_edit = Button(
+            text='EDIT THIS SPEC',
+            size_hint_y=None, height='42dp',
+            background_normal='',
+            background_color=get_color_from_hex('#d97706'),
+            color=(1,1,1,1), bold=True, font_size='14sp'
+        )
+        content.add_widget(btn_edit)
+
+        # === Excel-style table ===
+        scroll = ScrollView(size_hint=(1, 1))
+        table = BoxLayout(orientation='vertical', size_hint_y=None, spacing=0)
+        table.bind(minimum_height=table.setter('height'))
+
+        # Header row
+        header = GridLayout(cols=5, size_hint_y=None, height='45dp', spacing=0)
+        for t in ["PARAM", "MIN", "MAX", "STD", "TOL"]:
+            header.add_widget(ExcelHeaderCell(lbl_text=t))
+        table.add_widget(header)
+
+        def add_row(label, std, tol, min_v, max_v):
+            if min_v == "-" or min_v is None: return
+            r = GridLayout(cols=5, size_hint_y=None, height='55dp', spacing=0)
+            r.add_widget(ExcelParamCell(lbl_text=label))
+            r.add_widget(ExcelValueCell(
+                lbl_text=f"{app.dd_to_dm_str(min_v)}\n({min_v:.2f}°)" if isinstance(min_v, float) else "-"
+            ))
+            r.add_widget(ExcelValueCell(
+                lbl_text=f"{app.dd_to_dm_str(max_v)}\n({max_v:.2f}°)" if isinstance(max_v, float) else "-"
+            ))
+            r.add_widget(ExcelValueCell(
+                lbl_text=f"{app.dd_to_dm_str(std)}\n({std:.2f}°)" if isinstance(std, float) else "-"
+            ))
+            r.add_widget(ExcelValueCell(
+                lbl_text=f"{app.dd_to_dm_str(tol)}\n({tol:.2f}°)" if isinstance(tol, float) else "-"
+            ))
+            table.add_widget(r)
+
+        add_row("F. Toe", data.get('fToeStd'), data.get('fToeTol'), data.get('fToeMin'), data.get('fToeMax'))
+        add_row("F. Camber", data.get('fCamStd'), data.get('fCamTol'), data.get('fCamMin'), data.get('fCamMax'))
+        add_row("F. Castor", data.get('fCasStd'), data.get('fCasTol'), data.get('fCasMin'), data.get('fCasMax'))
+        add_row("R. Toe", data.get('rToeStd'), data.get('rToeTol'), data.get('rToeMin'), data.get('rToeMax'))
+        add_row("R. Camber", data.get('rCamStd'), data.get('rCamTol'), data.get('rCamMin'), data.get('rCamMax'))
+
+        scroll.add_widget(table)
+        content.add_widget(scroll)
+
+        # Close button
+        btn_close = Button(
+            text='CLOSE',
+            size_hint_y=None, height='48dp',
+            background_normal='',
+            background_color=get_color_from_hex('#d32f2f'),
+            color=(1,1,1,1), bold=True, font_size='15sp'
+        )
+        content.add_widget(btn_close)
+
+        popup = Popup(
+            title='Specifications',
+            title_color=get_color_from_hex('#00ddff'),
+            title_size='16sp',
+            content=content,
+            size_hint=(0.98, 0.9),
+            background_color=get_color_from_hex('#0a0f1a'),
+            separator_color=get_color_from_hex('#00ddff')
+        )
+        btn_close.bind(on_release=popup.dismiss)
+        
+        def do_edit(instance):
+            popup.dismiss()
+            app.load_spec_for_edit(data)
+        
+        btn_edit.bind(on_release=do_edit)
+        popup.open()
+
+    # ==========================================
+    # LOAD SPEC FOR EDITING
+    # ==========================================
+    def load_spec_for_edit(self, data):
+        """Load vehicle data into main form for editing"""
+        main = self.root.get_screen('main')
+        
+        # Find index of this vehicle
+        try:
+            self.editing_index = self.db.index(data)
+        except ValueError:
+            self.editing_index = None
+        
+        # Fill brand, model, rim
+        main.ids.inp_brand.ids.inner_input.text = data.get('brand', '')
+        main.ids.inp_model_name.ids.inner_input.text = data.get('model', '')
+        # Estimate rim (assume decimal if not stored)
+        main.ids.inp_common_rim.ids.inner_input.text = '15'  # default; user can edit
+        
+        # Switch to tab1 (DM mode) and fill
+        main.ids.sm.current = 'tab1'
+        self.t1_f_toe_type = 'DM'
+        self.t1_r_toe_type = 'DM'
+        
+        def set_val(id_name, val):
             try:
-                if is_real_android:
-                    if self.bt_in.ready():
-                        recv_data = self.bt_in.readLine()
-                        if recv_data:
-                            self.log(f"RCV: {recv_data.strip()}")
-                            if "OK" in recv_data.upper(): self.waiting_ack = False
+                if val == "-" or val is None: return
+                main.ids[id_name].ids.inner_input.text = self.dd_to_input_dm(val)
+            except: pass
+        
+        set_val('t1_fToeMin', data.get('fToeMin'))
+        set_val('t1_fToeMax', data.get('fToeMax'))
+        set_val('t1_fCamMin', data.get('fCamMin'))
+        set_val('t1_fCamMax', data.get('fCamMax'))
+        set_val('t1_fCasMin', data.get('fCasMin'))
+        set_val('t1_fCasMax', data.get('fCasMax'))
+        set_val('t1_rToeMin', data.get('rToeMin'))
+        set_val('t1_rToeMax', data.get('rToeMax'))
+        set_val('t1_rCamMin', data.get('rCamMin'))
+        set_val('t1_rCamMax', data.get('rCamMax'))
+        
+        # Change Save button to Update
+        main.ids.msg_label.text = "Editing existing spec. Press SAVE to update."
+        main.ids.msg_label.color = get_color_from_hex('#ffdd00')
+        
+        self.root.current = 'main'
+
+    def dd_to_input_dm(self, dd_val):
+        if dd_val == "-" or dd_val is None or isinstance(dd_val, str): return ""
+        neg = dd_val < 0
+        abs_v = abs(dd_val)
+        d = math.floor(abs_v)
+        m = round((abs_v - d) * 60.0)
+        if m >= 60: d += 1; m = 0
+        m_str = f"{m:02d}"
+        return f"{'-' if neg else ''}{d}.{m_str}"
+
+    # ==========================================
+    # MATH HELPERS
+    # ==========================================
+    def dm_to_dd(self, val_str):
+        if not val_str or str(val_str).strip() == "": return None
+        try:
+            num = float(val_str)
+            sign = -1.0 if num < 0 or math.copysign(1.0, num) < 0 else 1.0
+            abs_v = abs(num)
+            deg = math.floor(abs_v)
+            m = (abs_v - deg) * 100.0
+            return sign * (deg + m/60.0)
+        except: return None
+
+    def mm_to_dd(self, mm_val, rim_inch):
+        if not mm_val or not rim_inch or rim_inch <= 0: return 0.0
+        try:
+            r_mm = rim_inch * 25.4
+            return math.asin(float(mm_val) / r_mm) * (180.0 / math.pi)
+        except: return 0.0
+
+    def dd_to_dm_str(self, dd_val):
+        if dd_val == "-" or dd_val is None or isinstance(dd_val, str): return "-"
+        neg = dd_val < 0 or math.copysign(1.0, dd_val) < 0
+        abs_v = abs(dd_val)
+        d = math.floor(abs_v)
+        m = round((abs_v - d) * 60.0)
+        if m >= 60: 
+            d += 1
+            m = 0
+        return f"{'-' if neg else ''}{d}°{m:02d}'"
+
+    def safe_float(self, s):
+        try: return float(s) if str(s).strip()!="" else None
+        except: return None
+
+    def get_val(self, id_name):
+        main_screen = self.root.get_screen('main')
+        return main_screen.ids[id_name].ids.inner_input.text
+
+    # ==========================================
+    # SAVE / UPDATE LOGIC
+    # ==========================================
+    def save_data(self):
+        main = self.root.get_screen('main')
+        brand = main.ids.inp_brand.ids.inner_input.text.strip()
+        model = main.ids.inp_model_name.ids.inner_input.text.strip()
+        
+        if not brand or not model:
+            main.ids.msg_label.text = "Brand and Model required!"
+            main.ids.msg_label.color = get_color_from_hex('#ff3333')
+            return
+
+        common_rim = self.safe_float(main.ids.inp_common_rim.ids.inner_input.text)
+        current_tab = main.ids.sm.current
+        
+        fToeMin, fToeMax, fToeStd, fToeTol = "-", "-", "-", "-"
+        fCamMin, fCamMax, fCamStd, fCamTol = "-", "-", "-", "-"
+        fCasMin, fCasMax, fCasStd, fCasTol = "-", "-", "-", "-"
+        rToeMin, rToeMax, rToeStd, rToeTol = "-", "-", "-", "-"
+        rCamMin, rCamMax, rCamStd, rCamTol = "-", "-", "-", "-"
+
+        try:
+            if current_tab == 'tab1':
+                t_min, t_max = self.get_val('t1_fToeMin'), self.get_val('t1_fToeMax')
+                if self.t1_f_toe_type == "MM" and (common_rim is None or common_rim <= 0):
+                    raise ValueError("Rim size required for MM!")
+                fToeMin = self.mm_to_dd(self.safe_float(t_min), common_rim) if self.t1_f_toe_type=="MM" else self.dm_to_dd(t_min)
+                fToeMax = self.mm_to_dd(self.safe_float(t_max), common_rim) if self.t1_f_toe_type=="MM" else self.dm_to_dd(t_max)
+                if fToeMin is not None and fToeMax is not None:
+                    fToeStd = (fToeMax + fToeMin)/2; fToeTol = abs(fToeMax - fToeMin)/2
+                
+                fCamMin = self.dm_to_dd(self.get_val('t1_fCamMin')); fCamMax = self.dm_to_dd(self.get_val('t1_fCamMax'))
+                if fCamMin is not None and fCamMax is not None: fCamStd = (fCamMax+fCamMin)/2; fCamTol = abs(fCamMax-fCamMin)/2
+                
+                fCasMin = self.dm_to_dd(self.get_val('t1_fCasMin')); fCasMax = self.dm_to_dd(self.get_val('t1_fCasMax'))
+                if fCasMin is not None and fCasMax is not None: fCasStd = (fCasMax+fCasMin)/2; fCasTol = abs(fCasMax-fCasMin)/2
+
+                rt_min, rt_max = self.get_val('t1_rToeMin'), self.get_val('t1_rToeMax')
+                if rt_min and rt_max:
+                    if self.t1_r_toe_type == "MM" and (common_rim is None or common_rim <= 0):
+                        raise ValueError("Rim size required for rear MM!")
+                    rToeMin = self.mm_to_dd(self.safe_float(rt_min), common_rim) if self.t1_r_toe_type=="MM" else self.dm_to_dd(rt_min)
+                    rToeMax = self.mm_to_dd(self.safe_float(rt_max), common_rim) if self.t1_r_toe_type=="MM" else self.dm_to_dd(rt_max)
+                    if rToeMin is not None and rToeMax is not None:
+                        rToeStd = (rToeMax+rToeMin)/2; rToeTol = abs(rToeMax-rToeMin)/2
+                    
+                rc_min, rc_max = self.get_val('t1_rCamMin'), self.get_val('t1_rCamMax')
+                if rc_min and rc_max:
+                    rCamMin = self.dm_to_dd(rc_min); rCamMax = self.dm_to_dd(rc_max)
+                    if rCamMin is not None and rCamMax is not None:
+                        rCamStd = (rCamMax+rCamMin)/2; rCamTol = abs(rCamMax-rCamMin)/2
+
+            elif current_tab == 'tab2':
+                t_min, t_max = self.get_val('t2_fToeMin'), self.get_val('t2_fToeMax')
+                if self.t2_f_toe_type == "MM" and (common_rim is None or common_rim <= 0):
+                    raise ValueError("Rim size required for MM!")
+                fToeMin = self.mm_to_dd(self.safe_float(t_min), common_rim) if self.t2_f_toe_type=="MM" else self.safe_float(t_min)
+                fToeMax = self.mm_to_dd(self.safe_float(t_max), common_rim) if self.t2_f_toe_type=="MM" else self.safe_float(t_max)
+                if fToeMin is not None and fToeMax is not None: fToeStd = (fToeMax+fToeMin)/2; fToeTol = abs(fToeMax-fToeMin)/2
+                
+                fCamMin = self.safe_float(self.get_val('t2_fCamMin')); fCamMax = self.safe_float(self.get_val('t2_fCamMax'))
+                if fCamMin is not None and fCamMax is not None: fCamStd = (fCamMax+fCamMin)/2; fCamTol = abs(fCamMax-fCamMin)/2
+                
+                fCasMin = self.safe_float(self.get_val('t2_fCasMin')); fCasMax = self.safe_float(self.get_val('t2_fCasMax'))
+                if fCasMin is not None and fCasMax is not None: fCasStd = (fCasMax+fCasMin)/2; fCasTol = abs(fCasMax-fCasMin)/2
+
+                rt_min, rt_max = self.get_val('t2_rToeMin'), self.get_val('t2_rToeMax')
+                if rt_min and rt_max:
+                    if self.t2_r_toe_type == "MM" and (common_rim is None or common_rim <= 0):
+                        raise ValueError("Rim size required for rear MM!")
+                    rToeMin = self.mm_to_dd(self.safe_float(rt_min), common_rim) if self.t2_r_toe_type=="MM" else self.safe_float(rt_min)
+                    rToeMax = self.mm_to_dd(self.safe_float(rt_max), common_rim) if self.t2_r_toe_type=="MM" else self.safe_float(rt_max)
+                    if rToeMin is not None and rToeMax is not None:
+                        rToeStd = (rToeMax+rToeMin)/2; rToeTol = abs(rToeMax-rToeMin)/2
+                    
+                rc_min, rc_max = self.safe_float(self.get_val('t2_rCamMin')), self.safe_float(self.get_val('t2_rCamMax'))
+                if rc_min is not None and rc_max is not None:
+                    rCamMin = rc_min; rCamMax = rc_max; rCamStd = (rc_max+rc_min)/2; rCamTol = abs(rc_max-rc_min)/2
+
+            elif current_tab == 'tab3':
+                std_raw, tol_raw = self.get_val('t3_fToeStd'), self.get_val('t3_fToeTol')
+                if self.t3_f_toe_type == "MM":
+                    if common_rim is None or common_rim <= 0:
+                        raise ValueError("Rim size required for MM!")
+                    fToeStd = self.mm_to_dd(self.safe_float(std_raw), common_rim)
+                    fToeTol = abs(self.mm_to_dd(self.safe_float(tol_raw), common_rim))
+                elif self.t3_sub_mode == "DM":
+                    fToeStd = self.dm_to_dd(std_raw); fToeTol = abs(self.dm_to_dd(tol_raw) or 0)
                 else:
-                    recv_data = self.bt_socket.recv(1024).decode("utf-8").strip()
-                    if recv_data:
-                        self.log(f"RCV: {recv_data}")
-                        if "OK" in recv_data.upper(): self.waiting_ack = False
-            except:
-                break
-
-    def build_state_message(self):
-        parts = [self.on_delay, self.off_delay]
-        for i in range(1, 10):
-            parts.append(str(int(getattr(self, f"s{i}_state"))))
-        parts.append(str(int(self.force_state)))
-        return ",".join(parts)
-
-    def send_full_state(self):
-        data = self.build_state_message()
-        self.send_data(data)
-
-    def send_data(self, data, is_retry=False):
-        if self.is_connected and self.bt_socket:
-            try:
-                msg = data + "\n"
-                if is_real_android:
-                    java_msg = JavaString(msg).getBytes()
-                    self.bt_out.write(java_msg)
-                    self.bt_out.flush()
+                    fToeStd = self.safe_float(std_raw); fToeTol = abs(self.safe_float(tol_raw) or 0)
+                
+                if self.t3_sub_mode == "DM":
+                    fCamStd = self.dm_to_dd(self.get_val('t3_fCamStd')); fCamTol = abs(self.dm_to_dd(self.get_val('t3_fCamCamTol')) or 0)
+                    fCasStd = self.dm_to_dd(self.get_val('t3_fCasStd')); fCasTol = abs(self.dm_to_dd(self.get_val('t3_fCasTol')) or 0)
                 else:
-                    self.bt_socket.send(msg.encode("utf-8"))
+                    fCamStd = self.safe_float(self.get_val('t3_fCamStd')); fCamTol = abs(self.safe_float(self.get_val('t3_fCamCamTol')) or 0)
+                    fCasStd = self.safe_float(self.get_val('t3_fCasStd')); fCasTol = abs(self.safe_float(self.get_val('t3_fCasTol')) or 0)
+                
+                if fToeStd is not None and fToeTol is not None: fToeMin = fToeStd - fToeTol; fToeMax = fToeStd + fToeTol
+                if fCamStd is not None and fCamTol is not None: fCamMin = fCamStd - fCamTol; fCamMax = fCamStd + fCamTol
+                if fCasStd is not None and fCasTol is not None: fCasMin = fCasStd - fCasTol; fCasMax = fCasStd + fCasTol
 
-                self.log(f"RE-SENT: {data}" if is_retry else f"SENT: {data}")
-                self.waiting_ack = True
-                self.pending_data = data
-                Clock.schedule_once(lambda dt: self.check_ack(data, is_retry), 3)
-            except:
-                self.update_status("Disconnected", [0.82, 0.18, 0.18, 1])
-                self.is_connected = False
-        else:
-            self.log(f"Simulated SENT: {data}")
+                r_std, r_tol = self.get_val('t3_rToeStd'), self.get_val('t3_rToeTol')
+                if r_std and r_tol:
+                    if self.t3_r_toe_type == "MM":
+                        if common_rim is None or common_rim <= 0:
+                            raise ValueError("Rim size required for rear MM!")
+                        rToeStd = self.mm_to_dd(self.safe_float(r_std), common_rim)
+                        rToeTol = abs(self.mm_to_dd(self.safe_float(r_tol), common_rim))
+                    elif self.t3_sub_mode == "DM":
+                        rToeStd = self.dm_to_dd(r_std); rToeTol = abs(self.dm_to_dd(r_tol) or 0)
+                    else:
+                        rToeStd = self.safe_float(r_std); rToeTol = abs(self.safe_float(r_tol) or 0)
+                    if rToeStd is not None and rToeTol is not None:
+                        rToeMin = rToeStd - rToeTol; rToeMax = rToeStd + rToeTol
 
-    def check_ack(self, data, is_retry):
-        if self.is_connected and self.waiting_ack and self.pending_data == data:
-            if not is_retry:
-                self.log("No message! Retrying...")
-                self.send_data(data, is_retry=True)
+                rc_std, rc_tol = self.get_val('t3_rCamStd'), self.get_val('t3_rCamTol')
+                if rc_std and rc_tol:
+                    if self.t3_sub_mode == "DM":
+                        rCamStd = self.dm_to_dd(rc_std); rCamTol = abs(self.dm_to_dd(rc_tol) or 0)
+                    else:
+                        rCamStd = self.safe_float(rc_std); rCamTol = abs(self.safe_float(rc_tol) or 0)
+                    if rCamStd is not None and rCamTol is not None:
+                        rCamMin = rCamStd - rCamTol; rCamMax = rCamStd + rCamTol
+
+            data = {
+                "brand": brand, "model": model,
+                "fToeMin": fToeMin, "fToeMax": fToeMax, "fToeStd": fToeStd, "fToeTol": fToeTol,
+                "fCamMin": fCamMin, "fCamMax": fCamMax, "fCamStd": fCamStd, "fCamTol": fCamTol,
+                "fCasMin": fCasMin, "fCasMax": fCasMax, "fCasStd": fCasStd, "fCasTol": fCasTol,
+                "rToeMin": rToeMin, "rToeMax": rToeMax, "rToeStd": rToeStd, "rToeTol": rToeTol,
+                "rCamMin": rCamMin, "rCamMax": rCamMax, "rCamStd": rCamStd, "rCamTol": rCamTol
+            }
+            
+            # Update existing or add new
+            if self.editing_index is not None and 0 <= self.editing_index < len(self.db):
+                self.db[self.editing_index] = data
+                main.ids.msg_label.text = "Updated Successfully!"
+                self.editing_index = None
             else:
-                self.log("Controller Not Responding")
-                self.waiting_ack = False
+                self.db.append(data)
+                main.ids.msg_label.text = "Saved Successfully!"
+            
+            self.save_db()
+            main.ids.msg_label.color = get_color_from_hex('#00ff88')
+            
+            for id_name in ['inp_brand', 'inp_model_name']:
+                main.ids[id_name].ids.inner_input.text = ''
+                
+        except Exception as e:
+            main.ids.msg_label.text = f"Error: {str(e)}"
+            main.ids.msg_label.color = get_color_from_hex('#ff3333')
+            print(traceback.format_exc())
 
-    def on_slider_change(self, slider_id, is_active):
-        val = 1 if is_active else 0
-        if 1 <= slider_id <= 9:
-            setattr(self, f"s{slider_id}_state", val)
-        self.send_full_state()
 
 if __name__ == "__main__":
-    try:
-        BluetoothApp().run()
-    except Exception as e:
-        import traceback
-        with open("crash_log.txt", "w") as f:
-            f.write(traceback.format_exc())
+    AlignmentApp().run()
