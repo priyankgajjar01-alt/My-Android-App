@@ -315,7 +315,7 @@ KV = """
         bold: True
         color: utils.get_color_from_hex('#00ddff')
 
-# IN-APP FILE CHOOSER POPUP
+# IN-APP FILE CHOOSER POPUP (For Pydroid3 / PC Fallback)
 <FileChooserPopup@Popup>:
     title: '  Select Backup File (.json)'
     title_color: utils.get_color_from_hex('#00ddff')
@@ -392,7 +392,7 @@ KV = """
                 bold: True
                 color: 1,1,1,1
                 on_release: 
-                    if filechooser.selection: app.process_selected_file(filechooser.selection[0]); root.dismiss()
+                    if filechooser.selection: app.process_kivy_selected_file(filechooser.selection[0]); root.dismiss()
 
 <MainScreen>:
     name: 'main'
@@ -1031,7 +1031,31 @@ class AlignmentApp(App):
     progress_status = None
 
     def build(self):
-        self.db_path = os.path.join(self.user_data_dir, 'foc_specs_db.json')
+        if platform == 'android':
+            try:
+                from android.permissions import request_permissions, Permission
+                request_permissions([
+                    Permission.READ_EXTERNAL_STORAGE,
+                    Permission.WRITE_EXTERNAL_STORAGE
+                ])
+            except Exception as e:
+                print("Permission error:", e)
+
+            # Download ફોલ્ડરની અંદર WaDataBase નામનું નવું ફોલ્ડર
+            download_dir = '/storage/emulated/0/Download'
+            app_folder = os.path.join(download_dir, 'WaDataBase')
+
+            # જો ફોલ્ડર ના હોય તો જાતે જ બનાવશે
+            if not os.path.exists(app_folder):
+                try:
+                    os.makedirs(app_folder)
+                except Exception as e:
+                    print("Folder creation error:", e)
+
+            self.db_path = os.path.join(app_folder, 'foc_specs_db.json')
+        else:
+            self.db_path = os.path.join(os.getcwd(), 'foc_specs_db.json')
+
         self.load_db()
         Builder.load_string(KV)
         
@@ -1076,6 +1100,9 @@ class AlignmentApp(App):
         return os.getcwd()
 
     def get_current_path(self):
+        app_folder = '/storage/emulated/0/Download/WaDataBase'
+        if os.path.exists(app_folder):
+            return app_folder
         return os.getcwd()
 
     def get_all_textinputs(self, parent):
@@ -1177,69 +1204,136 @@ class AlignmentApp(App):
         return main_screen.ids[id_name].ids.inner_input.text
 
     # ==========================================
-    # IMPORT USING IN-APP FILE CHOOSER
+    # IMPORT LOGIC
     # ==========================================
     def import_from_file(self):
-        from kivy.factory import Factory
-        self.fc_popup = Factory.FileChooserPopup()
-        self.fc_popup.open()
+        if platform == 'android':
+            # Run Android Native File Picker
+            try:
+                from jnius import autoclass
+                from android import activity
+                Intent = autoclass('android.content.Intent')
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                
+                intent = Intent(Intent.ACTION_GET_CONTENT)
+                intent.setType('*/*')
+                intent.addCategory(Intent.CATEGORY_OPENABLE)
+                
+                try:
+                    activity.unbind(on_activity_result=self._on_activity_result)
+                except: pass
+                    
+                activity.bind(on_activity_result=self._on_activity_result)
+                PythonActivity.mActivity.startActivityForResult(intent, 1001)
+                
+            except Exception as e:
+                self._show_message(f"Error starting file picker: {str(e)}")
+        else:
+            # Pydroid3/PC In-App File Chooser
+            from kivy.factory import Factory
+            self.fc_popup = Factory.FileChooserPopup()
+            self.fc_popup.open()
 
-    def process_selected_file(self, filepath):
+    def _on_activity_result(self, requestCode, resultCode, intent):
+        if requestCode != 1001:
+            return
+
+        from android import activity
+        try: activity.unbind(on_activity_result=self._on_activity_result)
+        except: pass
+
+        if resultCode != -1 or intent is None:
+            return
+
+        try:
+            uri = intent.getData()
+            self._show_progress_popup()
+            Clock.schedule_once(lambda dt: self._read_android_uri(uri), 0.5)
+        except Exception as e:
+            self._show_message(f"Result Error: {str(e)}")
+
+    def _read_android_uri(self, uri):
+        try:
+            from jnius import autoclass
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            content_resolver = PythonActivity.mActivity.getContentResolver()
+            input_stream = content_resolver.openInputStream(uri)
+
+            BufferedReader = autoclass('java.io.BufferedReader')
+            InputStreamReader = autoclass('java.io.InputStreamReader')
+            reader = BufferedReader(InputStreamReader(input_stream))
+
+            content = ""
+            line = reader.readLine()
+            while line is not None:
+                content += line + "\n"
+                line = reader.readLine()
+
+            reader.close()
+            input_stream.close()
+
+            self._update_progress(50, "Parsing data...")
+            Clock.schedule_once(lambda dt: self._parse_and_save(content), 0.2)
+        except Exception as e:
+            self._close_progress_popup()
+            self._show_message(f"Read URI Error: {str(e)}")
+
+    def process_kivy_selected_file(self, filepath):
         self._show_progress_popup()
-        Clock.schedule_once(lambda dt: self._start_import_worker(filepath), 0.15)
+        Clock.schedule_once(lambda dt: self._start_import_worker_pc(filepath), 0.15)
 
-    def _start_import_worker(self, filepath):
-        threading.Thread(target=self._import_worker, args=(filepath,), daemon=True).start()
+    def _start_import_worker_pc(self, filepath):
+        threading.Thread(target=self._import_worker_pc, args=(filepath,), daemon=True).start()
 
-    def _import_worker(self, filepath):
+    def _import_worker_pc(self, filepath):
         try:
             self._update_progress(10, "Opening file...")
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
+            self._update_progress(50, "Parsing data...")
+            Clock.schedule_once(lambda dt: self._parse_and_save(content), 0.1)
+        except Exception as e:
+            Clock.schedule_once(lambda dt: self._close_progress_popup())
+            Clock.schedule_once(lambda dt: self._show_message(f"Import error: {str(e)}"))
 
-            self._update_progress(40, "Parsing JSON...")
+    def _parse_and_save(self, content):
+        try:
             data = json.loads(content)
-            
             if not isinstance(data, list):
                 self._close_progress_popup()
-                self._show_message("File contains invalid JSON format! Expected a list.")
+                self._show_message("Invalid JSON format! Expected a list.")
                 return
-            
-            self._update_progress(60, f"Parsed {len(data)} records")
-            
+
+            self._update_progress(70, "Updating database...")
+
+            added = 0
             existing_ids = set()
             for d in self.db:
                 key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
                 existing_ids.add(key)
-            
-            self._update_progress(75, "Adding new records...")
-            
-            added = 0
-            total = len(data)
-            for i, d in enumerate(data):
-                if not isinstance(d, dict):
-                    continue
+
+            for d in data:
+                if not isinstance(d, dict): continue
                 key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
                 if key not in existing_ids:
                     self.db.append(d)
                     existing_ids.add(key)
                     added += 1
-                
-                if total > 0 and (i % 5 == 0 or i == total - 1):
-                    progress = 75 + int((i / max(total, 1)) * 20)
-                    self._update_progress(progress, f"Processing {i+1}/{total}...")
-            
-            self._update_progress(95, "Saving database...")
+
+            self._update_progress(90, "Saving...")
             self.save_db()
-            self._update_progress(100, "Complete!")
-            
-            Clock.schedule_once(lambda dt: self._close_progress_popup(), 0.8)
-            Clock.schedule_once(lambda dt: self._finish_import(added), 0.9)
-            
+
+            self._update_progress(100, "Done!")
+
+            if self.root.current == 'list_screen':
+                self.root.get_screen('list_screen').populate_list(self.db)
+
+            Clock.schedule_once(lambda dt: self._close_progress_popup(), 0.5)
+            Clock.schedule_once(lambda dt: self._show_message(f"Successfully imported {added} new records!"), 0.6)
+
         except Exception as e:
-            Clock.schedule_once(lambda dt: self._close_progress_popup())
-            Clock.schedule_once(lambda dt: self._show_message(f"Import error: {str(e)}"))
-            print(traceback.format_exc())
+            self._close_progress_popup()
+            self._show_message(f"Parse error: {str(e)}")
 
     # ==========================================
     # PROGRESS POPUP
@@ -1310,14 +1404,6 @@ class AlignmentApp(App):
                 self.progress_popup.dismiss()
                 self.progress_popup = None
         except: pass
-
-    @mainthread
-    def _finish_import(self, added):
-        try:
-            if self.root.current == 'list_screen':
-                self.root.get_screen('list_screen').populate_list(self.db)
-        except: pass
-        self._show_message(f"Successfully imported {added} new records!")
 
     # ==========================================
     # MESSAGE POPUP
