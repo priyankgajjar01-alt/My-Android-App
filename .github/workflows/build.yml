@@ -74,7 +74,6 @@ jobs:
         mkdir -p app_source
         if [ ! -f "main.py" ]; then echo "ERROR: main.py not found!"; exit 1; fi
         cp main.py app_source/main.py
-        # Icon copy (if exists in repo root)
         if [ -f "icon.png" ]; then
           cp icon.png app_source/icon.png
           echo "Icon copied to app_source"
@@ -101,7 +100,6 @@ jobs:
           --permission=READ_EXTERNAL_STORAGE \
           --permission=WRITE_EXTERNAL_STORAGE \
           --permission=READ_MEDIA_IMAGES \
-          --permission=MANAGE_EXTERNAL_STORAGE \
           --icon=icon.png \
           --presplash=icon.png \
           --presplash-color=#000000 \
@@ -136,4 +134,4 @@ jobs:
           git push origin main
         else
           echo "No new APK changes to commit."
-        fi: 
+        fi
