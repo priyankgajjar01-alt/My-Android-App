@@ -18,11 +18,11 @@ from kivy.utils import get_color_from_hex, platform
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.graphics import Color, RoundedRectangle, Line
 
-try:
-    from plyer import filechooser
-    HAS_PLYER = True
-except:
-    HAS_PLYER = False
+# Android imports
+if platform == 'android':
+    from android import activity
+    from jnius import autoclass
+    from android.permissions import request_permissions, Permission
 
 # Background
 Window.clearcolor = get_color_from_hex('#0a0f1a')
@@ -55,7 +55,6 @@ class RoundedButton(Button):
             RoundedRectangle(pos=self.pos, size=self.size, radius=[self.radius])
 
 
-# Excel-style cells
 class ExcelHeaderCell(BoxLayout):
     lbl_text = StringProperty('')
 
@@ -213,7 +212,6 @@ KV = """
             size_hint_x: None
             width: '35dp'
 
-# ===== EXCEL-STYLE CELLS =====
 <ExcelHeaderCell>:
     size_hint_y: None
     height: '45dp'
@@ -947,9 +945,21 @@ class AlignmentApp(App):
     t3_sub_mode = StringProperty('DM')
     
     db = []
-    editing_index = None  # Track editing vehicle index
+    editing_index = None
 
     def build(self):
+        # Request permissions on start (Android)
+        if platform == 'android':
+            try:
+                request_permissions([
+                    Permission.READ_EXTERNAL_STORAGE,
+                    Permission.WRITE_EXTERNAL_STORAGE,
+                    Permission.READ_MEDIA_IMAGES,
+                    Permission.READ_MEDIA_VIDEO,
+                ])
+            except Exception as e:
+                print("Permission error:", e)
+        
         self.db_path = os.path.join(self.user_data_dir, 'foc_specs_db.json')
         self.load_db()
         Builder.load_string(KV)
@@ -958,6 +968,18 @@ class AlignmentApp(App):
         sm.add_widget(MainScreen())
         sm.add_widget(ListScreen())
         return sm
+    
+    def on_start(self):
+        # Extra permission request (in case build() ma fail thai gayu hoy)
+        if platform == 'android':
+            try:
+                request_permissions([
+                    Permission.READ_EXTERNAL_STORAGE,
+                    Permission.WRITE_EXTERNAL_STORAGE,
+                    Permission.READ_MEDIA_IMAGES,
+                ])
+            except Exception as e:
+                print("on_start permission error:", e)
         
     def get_all_textinputs(self, parent):
         inputs = []
@@ -994,36 +1016,78 @@ class AlignmentApp(App):
             json.dump(self.db, f)
 
     # ==========================================
-    # IMPORT FROM FILE (Phone memory)
+    # IMPORT FROM FILE (Native Android File Picker)
     # ==========================================
     def import_from_file(self):
-        if not HAS_PLYER:
-            self._show_message("plyer missing! Cannot open file picker.")
+        if platform != 'android':
+            self._show_message("File picker faqt Android ma kaam kare che.")
             return
         
         try:
-            filechooser.open_file(
-                on_selection=self._on_file_selected,
-                filters=[("JSON Files", "*.json"), ("All Files", "*.*")]
+            Intent = autoclass('android.content.Intent')
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            
+            intent = Intent(Intent.ACTION_GET_CONTENT)
+            intent.setType('*/*')  # Allow all files
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            
+            # Bind activity result
+            activity.bind(on_activity_result=self._on_activity_result)
+            
+            # Start picker
+            PythonActivity.mActivity.startActivityForResult(
+                Intent.createChooser(intent, "Select JSON File"),
+                1001
             )
         except Exception as e:
-            self._show_message(f"File picker error: {str(e)}")
+            self._show_message(f"Error: {str(e)}")
+            print(traceback.format_exc())
 
-    def _on_file_selected(self, selection):
-        if not selection:
+
+    def _on_activity_result(self, requestCode, resultCode, intent):
+        if requestCode != 1001:
             return
-        file_path = selection[0]
+        
+        # resultCode -1 = RESULT_OK
+        if resultCode != -1 or intent is None:
+            return
+        
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            if not isinstance(data, list):
-                raise ValueError("File ma JSON array nathi!")
+            # Get file URI
+            uri = intent.getData()
             
+            # Open input stream
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            content_resolver = PythonActivity.mActivity.getContentResolver()
+            input_stream = content_resolver.openInputStream(uri)
+            
+            # Read all bytes
+            BufferedReader = autoclass('java.io.BufferedReader')
+            InputStreamReader = autoclass('java.io.InputStreamReader')
+            reader = BufferedReader(InputStreamReader(input_stream))
+            
+            content = ""
+            line = reader.readLine()
+            while line is not None:
+                content += line + "\n"
+                line = reader.readLine()
+            
+            reader.close()
+            input_stream.close()
+            
+            # Parse JSON
+            data = json.loads(content)
+            if not isinstance(data, list):
+                self._show_message("File ma JSON array nathi!")
+                return
+            
+            # Duplicate check + add
             added = 0
             existing_ids = set()
             for d in self.db:
                 key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
                 existing_ids.add(key)
+            
             for d in data:
                 if not isinstance(d, dict): continue
                 key = f"{d.get('brand','')}|{d.get('model','')}|{d.get('fToeMin','')}"
@@ -1031,14 +1095,23 @@ class AlignmentApp(App):
                     self.db.append(d)
                     existing_ids.add(key)
                     added += 1
+            
             self.save_db()
             
             if self.root.current == 'list_screen':
                 self.root.get_screen('list_screen').populate_list(self.db)
             
             self._show_message(f"Imported {added} new records!")
+            
+            # Unbind after use
+            try:
+                activity.unbind(on_activity_result=self._on_activity_result)
+            except: pass
+            
         except Exception as e:
-            self._show_message(f"Error: {str(e)}")
+            self._show_message(f"Import error: {str(e)}")
+            print(traceback.format_exc())
+
 
     def _show_message(self, msg):
         content = BoxLayout(orientation='vertical', padding='15dp', spacing='10dp')
@@ -1067,6 +1140,7 @@ class AlignmentApp(App):
         btn.bind(on_release=popup.dismiss)
         popup.open()
 
+
     # ==========================================
     # OPEN SPEC POPUP (Excel style + Edit)
     # ==========================================
@@ -1074,7 +1148,6 @@ class AlignmentApp(App):
         app = self
         content = BoxLayout(orientation='vertical', padding='10dp', spacing='8dp')
 
-        # Title
         title = Label(
             text=f"{data.get('brand','')}  -  {data.get('model','')}",
             size_hint_y=None, height='40dp',
@@ -1085,7 +1158,6 @@ class AlignmentApp(App):
         title.bind(size=title.setter('text_size'))
         content.add_widget(title)
 
-        # === EDIT BUTTON (top) ===
         btn_edit = Button(
             text='EDIT THIS SPEC',
             size_hint_y=None, height='42dp',
@@ -1095,12 +1167,10 @@ class AlignmentApp(App):
         )
         content.add_widget(btn_edit)
 
-        # === Excel-style table ===
         scroll = ScrollView(size_hint=(1, 1))
         table = BoxLayout(orientation='vertical', size_hint_y=None, spacing=0)
         table.bind(minimum_height=table.setter('height'))
 
-        # Header row
         header = GridLayout(cols=5, size_hint_y=None, height='45dp', spacing=0)
         for t in ["PARAM", "MIN", "MAX", "STD", "TOL"]:
             header.add_widget(ExcelHeaderCell(lbl_text=t))
@@ -1133,7 +1203,6 @@ class AlignmentApp(App):
         scroll.add_widget(table)
         content.add_widget(scroll)
 
-        # Close button
         btn_close = Button(
             text='CLOSE',
             size_hint_y=None, height='48dp',
@@ -1165,22 +1234,17 @@ class AlignmentApp(App):
     # LOAD SPEC FOR EDITING
     # ==========================================
     def load_spec_for_edit(self, data):
-        """Load vehicle data into main form for editing"""
         main = self.root.get_screen('main')
         
-        # Find index of this vehicle
         try:
             self.editing_index = self.db.index(data)
         except ValueError:
             self.editing_index = None
         
-        # Fill brand, model, rim
         main.ids.inp_brand.ids.inner_input.text = data.get('brand', '')
         main.ids.inp_model_name.ids.inner_input.text = data.get('model', '')
-        # Estimate rim (assume decimal if not stored)
-        main.ids.inp_common_rim.ids.inner_input.text = '15'  # default; user can edit
+        main.ids.inp_common_rim.ids.inner_input.text = '15'
         
-        # Switch to tab1 (DM mode) and fill
         main.ids.sm.current = 'tab1'
         self.t1_f_toe_type = 'DM'
         self.t1_r_toe_type = 'DM'
@@ -1202,7 +1266,6 @@ class AlignmentApp(App):
         set_val('t1_rCamMin', data.get('rCamMin'))
         set_val('t1_rCamMax', data.get('rCamMax'))
         
-        # Change Save button to Update
         main.ids.msg_label.text = "Editing existing spec. Press SAVE to update."
         main.ids.msg_label.color = get_color_from_hex('#ffdd00')
         
@@ -1393,7 +1456,6 @@ class AlignmentApp(App):
                 "rCamMin": rCamMin, "rCamMax": rCamMax, "rCamStd": rCamStd, "rCamTol": rCamTol
             }
             
-            # Update existing or add new
             if self.editing_index is not None and 0 <= self.editing_index < len(self.db):
                 self.db[self.editing_index] = data
                 main.ids.msg_label.text = "Updated Successfully!"
