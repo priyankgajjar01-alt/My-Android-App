@@ -306,10 +306,12 @@ KV = """
         text_size: self.size
         halign: 'left'
         valign: 'middle'
+        shorten: True
+        shorten_from: 'right'
     Label:
         text: 'TAP TO VIEW'
         size_hint_x: None
-        width: '100dp'
+        width: '90dp'
         font_size: '11sp'
         bold: True
         color: utils.get_color_from_hex('#00ddff')
@@ -455,7 +457,7 @@ KV = """
                                             active: True
                                             size_hint_x: None
                                             width: '30dp'
-                                            on_active: app.t1_f_toe_type = 'DM' if self.active else 'MM'
+                                            on_active: if self.active: app.t1_f_toe_type = 'DM'
                                         Label:
                                             text: 'D.M'
                                             size_hint_x: None
@@ -465,7 +467,7 @@ KV = """
                                             group: 't1_f_toe'
                                             size_hint_x: None
                                             width: '30dp'
-                                            on_active: app.t1_f_toe_type = 'MM' if self.active else 'DM'
+                                            on_active: if self.active: app.t1_f_toe_type = 'MM'
                                         Label:
                                             text: 'mm'
                                             size_hint_x: None
@@ -514,7 +516,7 @@ KV = """
                                             active: True
                                             size_hint_x: None
                                             width: '30dp'
-                                            on_active: app.t1_r_toe_type = 'DM' if self.active else 'MM'
+                                            on_active: if self.active: app.t1_r_toe_type = 'DM'
                                         Label:
                                             text: 'D.M'
                                             size_hint_x: None
@@ -524,7 +526,7 @@ KV = """
                                             group: 't1_r_toe'
                                             size_hint_x: None
                                             width: '30dp'
-                                            on_active: app.t1_r_toe_type = 'MM' if self.active else 'DM'
+                                            on_active: if self.active: app.t1_r_toe_type = 'MM'
                                         Label:
                                             text: 'mm'
                                             size_hint_x: None
@@ -576,7 +578,7 @@ KV = """
                                             active: True
                                             size_hint_x: None
                                             width: '30dp'
-                                            on_active: app.t2_f_toe_type = 'DD' if self.active else 'MM'
+                                            on_active: if self.active: app.t2_f_toe_type = 'DD'
                                         Label:
                                             text: 'Degree'
                                             size_hint_x: None
@@ -586,7 +588,7 @@ KV = """
                                             group: 't2_f_toe'
                                             size_hint_x: None
                                             width: '30dp'
-                                            on_active: app.t2_f_toe_type = 'MM' if self.active else 'DD'
+                                            on_active: if self.active: app.t2_f_toe_type = 'MM'
                                         Label:
                                             text: 'mm'
                                             size_hint_x: None
@@ -639,7 +641,7 @@ KV = """
                                             active: True
                                             size_hint_x: None
                                             width: '30dp'
-                                            on_active: app.t2_r_toe_type = 'DD' if self.active else 'MM'
+                                            on_active: if self.active: app.t2_r_toe_type = 'DD'
                                         Label:
                                             text: 'Degree'
                                             size_hint_x: None
@@ -649,7 +651,7 @@ KV = """
                                             group: 't2_r_toe'
                                             size_hint_x: None
                                             width: '30dp'
-                                            on_active: app.t2_r_toe_type = 'MM' if self.active else 'DD'
+                                            on_active: if self.active: app.t2_r_toe_type = 'MM'
                                         Label:
                                             text: 'mm'
                                             size_hint_x: None
@@ -733,7 +735,7 @@ KV = """
                                             active: True
                                             size_hint_x: None
                                             width: '30dp'
-                                            on_active: app.t3_f_toe_type = 'DEG' if self.active else 'MM'
+                                            on_active: if self.active: app.t3_f_toe_type = 'DEG'
                                         Label:
                                             text: 'Degree'
                                             size_hint_x: None
@@ -743,7 +745,7 @@ KV = """
                                             group: 't3_f_toe'
                                             size_hint_x: None
                                             width: '30dp'
-                                            on_active: app.t3_f_toe_type = 'MM' if self.active else 'DEG'
+                                            on_active: if self.active: app.t3_f_toe_type = 'MM'
                                         Label:
                                             text: 'mm'
                                             size_hint_x: None
@@ -796,7 +798,7 @@ KV = """
                                             active: True
                                             size_hint_x: None
                                             width: '30dp'
-                                            on_active: app.t3_r_toe_type = 'DEG' if self.active else 'MM'
+                                            on_active: if self.active: app.t3_r_toe_type = 'DEG'
                                         Label:
                                             text: 'Degree'
                                             size_hint_x: None
@@ -806,7 +808,7 @@ KV = """
                                             group: 't3_r_toe'
                                             size_hint_x: None
                                             width: '30dp'
-                                            on_active: app.t3_r_toe_type = 'MM' if self.active else 'DEG'
+                                            on_active: if self.active: app.t3_r_toe_type = 'MM'
                                         Label:
                                             text: 'mm'
                                             size_hint_x: None
@@ -948,7 +950,6 @@ class AlignmentApp(App):
     editing_index = None
 
     def build(self):
-        # Request permissions on start (Android)
         if platform == 'android':
             try:
                 request_permissions([
@@ -970,7 +971,6 @@ class AlignmentApp(App):
         return sm
     
     def on_start(self):
-        # Extra permission request (in case build() ma fail thai gayu hoy)
         if platform == 'android':
             try:
                 request_permissions([
@@ -1020,7 +1020,7 @@ class AlignmentApp(App):
     # ==========================================
     def import_from_file(self):
         if platform != 'android':
-            self._show_message("File picker faqt Android ma kaam kare che.")
+            self._show_message("File picker is only available on Android.")
             return
         
         try:
@@ -1028,17 +1028,13 @@ class AlignmentApp(App):
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
             
             intent = Intent(Intent.ACTION_GET_CONTENT)
-            intent.setType('*/*')  # Allow all files
+            intent.setType('*/*')
             intent.addCategory(Intent.CATEGORY_OPENABLE)
             
-            # Bind activity result
             activity.bind(on_activity_result=self._on_activity_result)
             
-            # Start picker
-            PythonActivity.mActivity.startActivityForResult(
-                Intent.createChooser(intent, "Select JSON File"),
-                1001
-            )
+            PythonActivity.mActivity.startActivityForResult(intent, 1001)
+            
         except Exception as e:
             self._show_message(f"Error: {str(e)}")
             print(traceback.format_exc())
@@ -1048,20 +1044,16 @@ class AlignmentApp(App):
         if requestCode != 1001:
             return
         
-        # resultCode -1 = RESULT_OK
         if resultCode != -1 or intent is None:
             return
         
         try:
-            # Get file URI
             uri = intent.getData()
             
-            # Open input stream
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
             content_resolver = PythonActivity.mActivity.getContentResolver()
             input_stream = content_resolver.openInputStream(uri)
             
-            # Read all bytes
             BufferedReader = autoclass('java.io.BufferedReader')
             InputStreamReader = autoclass('java.io.InputStreamReader')
             reader = BufferedReader(InputStreamReader(input_stream))
@@ -1075,13 +1067,11 @@ class AlignmentApp(App):
             reader.close()
             input_stream.close()
             
-            # Parse JSON
             data = json.loads(content)
             if not isinstance(data, list):
-                self._show_message("File ma JSON array nathi!")
+                self._show_message("File contains invalid JSON format!")
                 return
             
-            # Duplicate check + add
             added = 0
             existing_ids = set()
             for d in self.db:
@@ -1103,7 +1093,6 @@ class AlignmentApp(App):
             
             self._show_message(f"Imported {added} new records!")
             
-            # Unbind after use
             try:
                 activity.unbind(on_activity_result=self._on_activity_result)
             except: pass
@@ -1413,12 +1402,17 @@ class AlignmentApp(App):
                 else:
                     fToeStd = self.safe_float(std_raw); fToeTol = abs(self.safe_float(tol_raw) or 0)
                 
+                # FIX: t3_fCamTol → t3_fCamCamTol
                 if self.t3_sub_mode == "DM":
-                    fCamStd = self.dm_to_dd(self.get_val('t3_fCamStd')); fCamTol = abs(self.dm_to_dd(self.get_val('t3_fCamCamTol')) or 0)
-                    fCasStd = self.dm_to_dd(self.get_val('t3_fCasStd')); fCasTol = abs(self.dm_to_dd(self.get_val('t3_fCasTol')) or 0)
+                    fCamStd = self.dm_to_dd(self.get_val('t3_fCamStd'))
+                    fCamTol = abs(self.dm_to_dd(self.get_val('t3_fCamCamTol')) or 0)
+                    fCasStd = self.dm_to_dd(self.get_val('t3_fCasStd'))
+                    fCasTol = abs(self.dm_to_dd(self.get_val('t3_fCasTol')) or 0)
                 else:
-                    fCamStd = self.safe_float(self.get_val('t3_fCamStd')); fCamTol = abs(self.safe_float(self.get_val('t3_fCamCamTol')) or 0)
-                    fCasStd = self.safe_float(self.get_val('t3_fCasStd')); fCasTol = abs(self.safe_float(self.get_val('t3_fCasTol')) or 0)
+                    fCamStd = self.safe_float(self.get_val('t3_fCamStd'))
+                    fCamTol = abs(self.safe_float(self.get_val('t3_fCamCamTol')) or 0)
+                    fCasStd = self.safe_float(self.get_val('t3_fCasStd'))
+                    fCasTol = abs(self.safe_float(self.get_val('t3_fCasTol')) or 0)
                 
                 if fToeStd is not None and fToeTol is not None: fToeMin = fToeStd - fToeTol; fToeMax = fToeStd + fToeTol
                 if fCamStd is not None and fCamTol is not None: fCamMin = fCamStd - fCamTol; fCamMax = fCamStd + fCamTol
