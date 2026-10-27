@@ -1,4 +1,4 @@
-name: Build Alignment Calculator APK
+name: Build Photon Audio APK
 
 on:
   workflow_dispatch:
@@ -67,7 +67,7 @@ jobs:
     - name: Install Python packages
       run: |
         python3 -m pip install --upgrade pip setuptools wheel
-        python3 -m pip install cython==0.29.33 kivy[base] python-for-android==2024.1.21
+        python3 -m pip install cython==0.29.33 kivy[base] pillow python-for-android==2024.1.21
 
     - name: Prepare app source
       run: |
@@ -78,11 +78,13 @@ jobs:
           cp icon.png app_source/icon.png
           echo "Icon copied to app_source"
         else
-          echo "WARNING: icon.png not found in repo root!"
+          echo "WARNING: icon.png not found! Generating default dark icon so build does not fail..."
+          python3 -c "from PIL import Image, ImageDraw; img = Image.new('RGB', (512, 512), color=(10, 25, 47)); d = ImageDraw.Draw(img); d.ellipse([96, 96, 416, 416], outline=(100, 255, 218), width=24); img.save('icon.png')"
+          cp icon.png app_source/icon.png
         fi
         ls -lh app_source/
 
-    - name: Build Alignment Calculator APK
+    - name: Build Photon Audio APK
       run: |
         export ANDROID_SDK_ROOT=$HOME/android/sdk
         export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/25.1.8937393
@@ -91,20 +93,34 @@ jobs:
         python3 -m pythonforandroid.toolchain apk \
           --debug \
           --private app_source \
-          --package=com.alignment.calculator \
-          --name="Alignment Calculator" \
+          --package=com.photon.audio \
+          --name="Photon Audio" \
           --version=1.0 \
           --bootstrap=sdl2 \
-          --dist_name=alignment_calculator_dist \
-          --requirements=python3,android,kivy,pyjnius \
+          --orientation=portrait \
+          --dist_name=photon_audio_dist \
+          --requirements=hostpython3,python3,android,kivy,pyjnius \
+          --permission=MODIFY_AUDIO_SETTINGS \
+          --permission=RECORD_AUDIO \
+          --permission=BLUETOOTH \
+          --permission=BLUETOOTH_ADMIN \
+          --permission=BLUETOOTH_CONNECT \
+          --permission=BLUETOOTH_SCAN \
+          --permission=ACCESS_FINE_LOCATION \
+          --permission=ACCESS_COARSE_LOCATION \
+          --permission=WAKE_LOCK \
+          --permission=FOREGROUND_SERVICE \
+          --permission=FOREGROUND_SERVICE_MEDIA_PLAYBACK \
+          --permission=REQUEST_IGNORE_BATTERY_OPTIMIZATIONS \
+          --permission=SYSTEM_ALERT_WINDOW \
+          --permission=RECEIVE_BOOT_COMPLETED \
+          --permission=POST_NOTIFICATIONS \
+          --permission=READ_MEDIA_AUDIO \
           --permission=READ_EXTERNAL_STORAGE \
           --permission=WRITE_EXTERNAL_STORAGE \
-          --permission=READ_MEDIA_IMAGES \
-          --permission=READ_MEDIA_VIDEO \
-          --permission=MANAGE_EXTERNAL_STORAGE \
-          --icon=icon.png \
-          --presplash=icon.png \
-          --presplash-color=#000000 \
+          --icon=app_source/icon.png \
+          --presplash=app_source/icon.png \
+          --presplash-color=#0a192f \
           --arch=arm64-v8a \
           --android-api=34 \
           --sdk-dir=$ANDROID_SDK_ROOT \
@@ -116,7 +132,7 @@ jobs:
         mkdir -p APK
         NEW_APK=$(find . -type f -name "*.apk" 2>/dev/null | grep -v "/APK/" | grep -v "/gradle/" | head -n 1)
         if [ -n "$NEW_APK" ]; then
-          OUTPUT_NAME="APK/Alignment-Calculator-$(date +%Y%m%d-%H%M).apk"
+          OUTPUT_NAME="APK/Photon-Audio-$(date +%Y%m%d-%H%M).apk"
           cp "$NEW_APK" "$OUTPUT_NAME"
           ls -lh "$OUTPUT_NAME"
         else
@@ -132,7 +148,7 @@ jobs:
         git pull origin main --rebase || echo "Nothing to pull"
         git add APK/
         if [ -n "$(git status --porcelain APK/)" ]; then
-          git commit -m "Add New Alignment Calculator APK [skip ci]"
+          git commit -m "Add New Photon Audio APK [skip ci]"
           git push origin main
         else
           echo "No new APK changes to commit."
