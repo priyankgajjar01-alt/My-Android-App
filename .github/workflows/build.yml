@@ -75,26 +75,21 @@ jobs:
     - name: Patch p4a manifest safely for Android 14
       run: |
         python3 -c "
-        import os, glob, pythonforandroid
+        import os, glob, re, pythonforandroid
         p4a_dir = os.path.dirname(pythonforandroid.__file__)
         patched = False
         for f in glob.glob(p4a_dir + '/**/AndroidManifest*.tmpl.xml', recursive=True):
             with open(f, 'r') as file:
                 content = file.read()
             
-            # જિન્જા (Jinja) વેરિયેબલ્સને ડાયરેક્ટ સેફ વેલ્યુ સાથે રિપ્લેસ કરો
-            if '{{ service.stop_with_task }}' in content or '{{ service.foreground_service_type }}' in content:
-                print(f'Patching: {f}')
-                content = content.replace('{{ service.stop_with_task }}', 'false')
-                content = content.replace('{{ service.foreground_service_type }}', 'mediaPlayback|dataSync')
+            new_content = re.sub(r'android:stopWithTask=\"[^\"]*\"', 'android:stopWithTask=\"false\"', content)
+            new_content = re.sub(r'android:foregroundServiceType=\"[^\"]*\"', 'android:foregroundServiceType=\"mediaPlayback|dataSync\"', new_content)
+            
+            if new_content != content:
                 with open(f, 'w') as file:
-                    file.write(content)
+                    file.write(new_content)
                 patched = True
-        
-        if patched:
-            print('Successfully patched manifest templates without duplicates!')
-        else:
-            print('WARNING: Could not find template variables. The build might still work.')
+        print('Successfully patched manifest templates!' if patched else 'Warning: No templates were patched.')
         "
 
     - name: Prepare app source, Logo, and Always-On Background Service
@@ -104,12 +99,9 @@ jobs:
         cp main.py app_source/main.py
         sed -i '1s/^Import /import /' app_source/main.py
 
-        # Restore Photon Audio App Logo
         if [ -f "icon.png" ]; then
           cp icon.png app_source/icon.png
-          echo "Custom icon.png copied to app_source"
         else
-          echo "Generating Photon Audio Neon Speaker Logo..."
           python3 -c "
         from PIL import Image, ImageDraw
         img = Image.new('RGBA', (512, 512), (10, 25, 47, 255))
@@ -122,7 +114,6 @@ jobs:
         "
         fi
 
-        # Generate immortal background DSP service
         cat << 'EOF' > app_source/service.py
         import time
         import json
@@ -160,13 +151,8 @@ jobs:
         visualizer = None
 
         cfg = {
-            'always_on': True,
-            'volume': 50,
-            'bass': 50,
-            'low_cut': 50,
-            'low_mid': 50,
-            'mid_upper': 50,
-            'treble': 50
+            'always_on': True, 'volume': 50, 'bass': 50, 'low_cut': 50,
+            'low_mid': 50, 'mid_upper': 50, 'treble': 50
         }
 
         last_mtime = 0
@@ -184,41 +170,31 @@ jobs:
         def init_engines():
             global eq_engine, bass_engine, virtualizer_engine, loudness_engine, visualizer
             try:
-                if eq_engine is None:
-                    eq_engine = Equalizer(100, 0)
+                if eq_engine is None: eq_engine = Equalizer(100, 0)
                 eq_engine.setEnabled(True)
-            except Exception:
-                eq_engine = None
+            except Exception: eq_engine = None
             try:
-                if bass_engine is None:
-                    bass_engine = BassBoost(100, 0)
+                if bass_engine is None: bass_engine = BassBoost(100, 0)
                 bass_engine.setEnabled(True)
-            except Exception:
-                bass_engine = None
+            except Exception: bass_engine = None
             try:
-                if virtualizer_engine is None:
-                    virtualizer_engine = Virtualizer(100, 0)
+                if virtualizer_engine is None: virtualizer_engine = Virtualizer(100, 0)
                 virtualizer_engine.setEnabled(True)
-            except Exception:
-                virtualizer_engine = None
+            except Exception: virtualizer_engine = None
             try:
-                if loudness_engine is None:
-                    loudness_engine = LoudnessEnhancer(0)
+                if loudness_engine is None: loudness_engine = LoudnessEnhancer(0)
                 loudness_engine.setEnabled(True)
-            except Exception:
-                loudness_engine = None
+            except Exception: loudness_engine = None
             try:
                 if visualizer is None:
                     visualizer = Visualizer(0)
                     visualizer.setCaptureSize(128)
                     visualizer.setEnabled(True)
-            except Exception:
-                visualizer = None
+            except Exception: visualizer = None
 
         def apply_eq():
             try:
-                if not eq_engine:
-                    return
+                if not eq_engine: return
                 num_bands = eq_engine.getNumberOfBands()
                 level_range = eq_engine.getBandLevelRange()
                 min_lvl = level_range[0]
@@ -242,10 +218,7 @@ jobs:
                             eq_engine.setBandLevel(b, min_lvl)
                         else:
                             eff_lmid = max(-1.0, min(1.0, lmid_amp + lmid_restorer))
-                            if eff_lmid >= 0:
-                                lmid_lvl = int(max_lvl * eff_lmid)
-                            else:
-                                lmid_lvl = int(abs(eff_lmid) * min_lvl)
+                            lmid_lvl = int(max_lvl * eff_lmid) if eff_lmid >= 0 else int(abs(eff_lmid) * min_lvl)
                             eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lmid_lvl)))
                     elif center_f < 150000:
                         if high_f <= cutoff_milli:
@@ -260,8 +233,7 @@ jobs:
                             eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lvl)))
                         else:
                             punch_lvl = int(max_lvl * min(1.0, bass_drive + synth_extra))
-                            if limiter_on:
-                                punch_lvl = int(punch_lvl * 0.78)
+                            if limiter_on: punch_lvl = int(punch_lvl * 0.78)
                             eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, punch_lvl)))
                     elif 550000 < center_f < 4000000:
                         coupled_ratio = max(-1.0, min(1.0, (mid_ratio * 0.75) + (lmid_amp * 0.35)))
@@ -273,8 +245,7 @@ jobs:
 
                 if virtualizer_engine:
                     virtualizer_engine.setStrength(int(cfg['low_mid'] * 10))
-            except Exception:
-                pass
+            except Exception: pass
 
         init_engines()
 
@@ -284,8 +255,7 @@ jobs:
                     mtime = os.path.getmtime(settings_path)
                     if mtime != last_mtime:
                         last_mtime = mtime
-                        with open(settings_path, 'r') as f:
-                            cfg.update(json.load(f))
+                        with open(settings_path, 'r') as f: cfg.update(json.load(f))
                         if not cfg.get('always_on', True):
                             service.setAutoRestartService(False)
                             service.stopSelf()
@@ -325,10 +295,8 @@ jobs:
                         avg_lmid = (avg_lmid * 0.85) + (lmid_e * 0.15)
 
                         delta = low_e - avg_bass
-                        if delta > 11.0 and cfg['bass'] > 0:
-                            dyn_punch = min(300.0, delta * (cfg['bass'] / 32.0))
-                        else:
-                            dyn_punch *= 0.60
+                        if delta > 11.0 and cfg['bass'] > 0: dyn_punch = min(300.0, delta * (cfg['bass'] / 32.0))
+                        else: dyn_punch *= 0.60
 
                         if 2.0 < avg_bass < 38.0 and cfg['bass'] > 20:
                             synth_on = True
@@ -339,8 +307,7 @@ jobs:
 
                         if 1.5 < avg_lmid < 30.0 and cfg['low_mid'] > 50:
                             lmid_restorer = min(0.45, ((30.0 - avg_lmid) / 30.0) * ((cfg['low_mid'] - 50) / 50.0))
-                        else:
-                            lmid_restorer *= 0.80
+                        else: lmid_restorer *= 0.80
 
                         if avg_bass > 85.0 and cfg['bass'] > 65:
                             limiter_on = True
@@ -355,8 +322,7 @@ jobs:
                         if loudness_engine:
                             amp_mb = int((cfg['bass'] * 7.5) + (bass_restorer * 1.5) - safety_red)
                             loudness_engine.setTargetGain(max(0, min(900, amp_mb)))
-            except Exception:
-                pass
+            except Exception: pass
 
             time.sleep(0.12)
         EOF
