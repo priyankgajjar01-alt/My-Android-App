@@ -9,16 +9,14 @@ from kivy.utils import get_color_from_hex
 from kivy.utils import platform
 from kivy.clock import Clock
 
-# Android System Audio, Visualizer (Live Track Monitor), EQ, DynamicsProcessing & WakeLock
+# Android System Audio, Visualizer (Live Track Monitor), EQ & WakeLock
 PythonActivity = None
 Context = None
 AudioManager = None
 Equalizer = None
 BassBoost = None
 Visualizer = None
-LoudnessEnhancer = None
 PowerManager = None
-Intent = None
 
 if platform == 'android':
     try:
@@ -30,7 +28,6 @@ if platform == 'android':
         BassBoost = autoclass('android.media.audiofx.BassBoost')
         Visualizer = autoclass('android.media.audiofx.Visualizer')
         PowerManager = autoclass('android.os.PowerManager')
-        Intent = autoclass('android.content.Intent')
 
         try:
             from android.permissions import request_permissions
@@ -57,23 +54,25 @@ class ProCard(BoxLayout):
         self.canvas.before.clear()
         with self.canvas.before:
             Color(rgba=get_color_from_hex(self.bg_hex))
-            RoundedRectangle(pos=self.pos, size=self.size, radius=[14])
+            RoundedRectangle(pos=self.pos, size=self.size, radius=[12])
 
 
 class AudioControllerApp(App):
     def build(self):
         self.title = "Photon Audio"
 
-        # Default Values
-        self.volume = 50       # 0 to 100%
-        self.bass = 50         # 0 to 100% (Punch & Kick Power)
-        self.treble = 50       # 0 to 100% (Clarity)
-        self.bass_freq = 50    # High-Pass Cut-Off (Min 50Hz - Anything below this is CUT)
+        # 6-Band Professional Audio Settings Defaults (0 to 100 scale, except Cut-off in Hz)
+        self.volume = 50       # Master Volume
+        self.bass = 50         # Bass Booster (Punch)
+        self.low_cut = 50      # Low Cut-Off High-Pass Filter (50Hz to 250Hz)
+        self.low_mid = 50      # Low-Mid Range (250Hz - 500Hz)
+        self.mid_upper = 50    # Mid & Upper-Mid Range (500Hz - 4kHz)
+        self.treble = 50       # Treble / Highs (4kHz - 20kHz)
 
         self.device_name = "Detecting Audio Device..."
         self.was_music_active = False
 
-        # Audio Engines
+        # Audio Hardware Engines
         self.eq_engine = None
         self.bass_engine = None
         self.visualizer = None
@@ -88,67 +87,85 @@ class AudioControllerApp(App):
         self.load_settings()
 
         # Main Layout
-        self.main_layout = BoxLayout(orientation='vertical', padding='14dp', spacing='10dp')
+        self.main_layout = BoxLayout(orientation='vertical', padding='10dp', spacing='8dp')
         with self.main_layout.canvas.before:
             Color(rgba=get_color_from_hex('#0a192f'))
             self.bg_rect = RoundedRectangle(pos=self.main_layout.pos, size=self.main_layout.size)
         self.main_layout.bind(pos=self.update_bg, size=self.update_bg)
 
         # 1. TOP BAR: Connected Audio Device Name
-        device_bar = ProCard(bg_hex='#004d40', size_hint_y=None, height='48dp', padding='8dp')
+        device_bar = ProCard(bg_hex='#004d40', size_hint_y=None, height='42dp', padding='6dp')
         self.lbl_device = Label(
             text=f"🔊 Output: {self.device_name}",
-            font_size='15sp',
+            font_size='14sp',
             bold=True,
             color=get_color_from_hex('#64ffda')
         )
         device_bar.add_widget(self.lbl_device)
         self.main_layout.add_widget(device_bar)
 
-        # 2. SMART DSP MONITOR BAR (Shows Live Thap Punch & Speaker Protection Status)
-        dsp_bar = ProCard(bg_hex='#1e3a5f', size_hint_y=None, height='46dp', padding='6dp')
+        # 2. STATUS MONITOR BAR (Live DSP & Limiter status)
+        dsp_bar = ProCard(bg_hex='#1e3a5f', size_hint_y=None, height='40dp', padding='6dp')
         self.lbl_status = Label(
             text=self.get_status_text(),
-            font_size='13sp',
+            font_size='12sp',
             bold=True,
             color=get_color_from_hex('#ccd6f6')
         )
         dsp_bar.add_widget(self.lbl_status)
         self.main_layout.add_widget(dsp_bar)
 
-        # 3. SLIDERS CONTAINER
-        sliders_box = BoxLayout(orientation='vertical', spacing='10dp')
+        # 3. 6 SLIDERS CONTAINER
+        sliders_box = BoxLayout(orientation='vertical', spacing='8dp')
 
-        # VOLUME SLIDER (0 - 100%)
+        # 1. Master Volume (0 - 100%)
         self.card_vol, self.lbl_vol_val, self.slider_vol = self.create_slider_card(
-            title="MASTER VOLUME",
+            title="1. MASTER VOLUME",
             min_val=0, max_val=100, cur_val=self.volume,
             unit="%", accent_hex='#00e676',
             callback=self.on_volume_change
         )
         sliders_box.add_widget(self.card_vol)
 
-        # BASS SLIDER (0 - 100% Dynamic Thap & Kick Punch)
+        # 2. Bass Booster (0 - 100%)
         self.card_bass, self.lbl_bass_val, self.slider_bass = self.create_slider_card(
-            title="BASS PUNCH (DHOL / TABLA KICK)",
+            title="2. BASS BOOSTER (PUNCH)",
             min_val=0, max_val=100, cur_val=self.bass,
             unit="%", accent_hex='#ff6d00',
             callback=self.on_bass_change
         )
         sliders_box.add_widget(self.card_bass)
 
-        # BASS CUT-OFF FREQUENCY SLIDER (Min 50Hz - 150Hz High-Pass Filter)
-        self.card_freq, self.lbl_freq_val, self.slider_freq = self.create_slider_card(
-            title="LOW CUT-OFF (CUT BELOW THIS HZ)",
-            min_val=50, max_val=150, cur_val=self.bass_freq,
+        # 3. Low Cut-Off High-Pass Filter (50Hz - 250Hz)
+        self.card_cut, self.lbl_cut_val, self.slider_cut = self.create_slider_card(
+            title="3. LOW CUT-OFF (HPF)",
+            min_val=50, max_val=250, cur_val=self.low_cut,
             unit=" Hz", accent_hex='#ffab40',
-            callback=self.on_freq_change
+            callback=self.on_cut_change
         )
-        sliders_box.add_widget(self.card_freq)
+        sliders_box.add_widget(self.card_cut)
 
-        # TREBLE SLIDER (0 - 100%)
+        # 4. Low-Mid Range (0 - 100%)
+        self.card_lmid, self.lbl_lmid_val, self.slider_lmid = self.create_slider_card(
+            title="4. LOW-MID RANGE (250-500Hz)",
+            min_val=0, max_val=100, cur_val=self.low_mid,
+            unit="%", accent_hex='#ab47bc',
+            callback=self.on_lmid_change
+        )
+        sliders_box.add_widget(self.card_lmid)
+
+        # 5. Mid & Upper-Mid Range (0 - 100%)
+        self.card_mid, self.lbl_mid_val, self.slider_mid = self.create_slider_card(
+            title="5. MID & UPPER (VOCAL)",
+            min_val=0, max_val=100, cur_val=self.mid_upper,
+            unit="%", accent_hex='#26a69a',
+            callback=self.on_mid_change
+        )
+        sliders_box.add_widget(self.card_mid)
+
+        # 6. Treble / Highs (0 - 100%)
         self.card_treble, self.lbl_treble_val, self.slider_treble = self.create_slider_card(
-            title="TREBLE (VOCAL & CLARITY)",
+            title="6. TREBLE (CLARITY)",
             min_val=0, max_val=100, cur_val=self.treble,
             unit="%", accent_hex='#00b0ff',
             callback=self.on_treble_change
@@ -159,16 +176,14 @@ class AudioControllerApp(App):
         return self.main_layout
 
     # ==========================================
-    # APP LIFECYCLE (LOCK SCREEN & BACKGROUND)
+    # APP LIFECYCLE & WAKELOCK
     # ==========================================
     def on_start(self):
         self.acquire_wakelock()
         self.init_audio_engine()
         self.detect_connected_audio_device()
         self.apply_all_audio_data()
-        # Device & Music state check every 1.5s
         Clock.schedule_interval(self.background_monitor, 1.5)
-        # Real-time Smart Track Bass & Beat Analyzer (10 times per second = 0.1s)
         Clock.schedule_interval(self.smart_track_analyzer, 0.1)
 
     def on_pause(self):
@@ -184,14 +199,14 @@ class AudioControllerApp(App):
             try:
                 activity = PythonActivity.mActivity
                 pm = activity.getSystemService(Context.POWER_SERVICE)
-                self.wake_lock = pm.newWakeLock(1, "PhotonAudio::SmartDSPWakeLock")
+                self.wake_lock = pm.newWakeLock(1, "PhotonAudio::6BandWakeLock")
                 if not self.wake_lock.isHeld():
                     self.wake_lock.acquire()
             except Exception as e:
                 print("WakeLock Error:", e)
 
     # ==========================================
-    # GLOBAL AUDIO ENGINE & LIVE VISUALIZER INIT
+    # AUDIO ENGINE INIT
     # ==========================================
     def init_audio_engine(self):
         if platform == 'android':
@@ -203,7 +218,6 @@ class AudioControllerApp(App):
                     self.bass_engine = BassBoost(100, 0)
                     self.bass_engine.setEnabled(True)
                 if self.visualizer is None and Visualizer:
-                    # Session 0 reads live audio output from ANY playing app
                     self.visualizer = Visualizer(0)
                     self.visualizer.setCaptureSize(128)
                     self.visualizer.setEnabled(True)
@@ -211,14 +225,9 @@ class AudioControllerApp(App):
                 print("AudioFX Init Error:", e)
 
     # ==========================================
-    # SMART REAL-TIME TRACK ANALYZER & SPEAKER GUARD
+    # SMART TRACK ANALYZER (SPEAKER GUARD)
     # ==========================================
     def smart_track_analyzer(self, dt):
-        """
-        Reads real-time audio spectrum (FFT) from the currently playing song:
-        1. Detects sharp Tabla/Dhol beats (transients) -> Triggers instant peak punch.
-        2. Detects already heavy-bass tracks -> Activates Smart Limiter so speaker never distorts.
-        """
         if platform != 'android' or not self.visualizer or not self.was_music_active:
             return
 
@@ -228,49 +237,34 @@ class AudioControllerApp(App):
             if status != 0:
                 return
 
-            # Calculate Low-Frequency (Sub & Kick Bass) energy from FFT bins 2 to 10
             low_energy = 0.0
             for i in range(2, 12, 2):
                 real = fft_bytes[i]
                 imag = fft_bytes[i + 1]
-                # Convert signed byte
-                if real > 127:
-                    real -= 256
-                if imag > 127:
-                    imag -= 256
+                if real > 127: real -= 256
+                if imag > 127: imag -= 256
                 mag = (real * real + imag * imag) ** 0.5
                 low_energy += mag
 
-            low_energy = low_energy / 5.0  # Normalize (0 to ~180)
-
-            # Smooth running average of track's inherent bass
+            low_energy = low_energy / 5.0
             self.avg_bass_energy = (self.avg_bass_energy * 0.88) + (low_energy * 0.12)
 
-            # 1. TRANSIENT BEAT DETECTION (Tabla / Dhol Thap)
-            # If instant bass spikes above running average -> It's a drum/tabla hit!
             beat_delta = low_energy - self.avg_bass_energy
             if beat_delta > 14.0 and self.bass > 0:
-                # Boost kick punch dynamically proportional to user's Bass setting
-                self.dynamic_punch_boost = min(220.0, beat_delta * (self.bass / 45.0))
+                self.dynamic_punch_boost = min(200.0, beat_delta * (self.bass / 45.0))
             else:
-                # Fast decay right after the thap so sound never gets muddy/boomy
                 self.dynamic_punch_boost *= 0.55
 
-            # 2. SMART SPEAKER PROTECTION LIMITER
-            # If the track is ALREADY heavily bass-boosted (high continuous avg_bass_energy)
             overload_threshold = 72.0
             if self.avg_bass_energy > overload_threshold and self.bass > 55:
                 self.limiter_active = True
                 excess = self.avg_bass_energy - overload_threshold
-                # Automatically scale back excessive boost to protect speaker cone
                 self.safety_reduction = min(350.0, excess * 5.5 * (self.bass / 100.0))
             else:
                 self.limiter_active = False
                 self.safety_reduction *= 0.7
 
-            # Apply dynamic punch & safety limiter to hardware in real-time
             self.apply_dynamic_dsp()
-
         except Exception:
             pass
 
@@ -278,9 +272,7 @@ class AudioControllerApp(App):
         if platform != 'android':
             return
         try:
-            # Base clean strength (kept controlled at 65% scale so vocals don't get muddy)
             base_strength = self.bass * 6.5
-            # Add instant Tabla/Dhol peak punch, subtract speaker protection limiter
             final_strength = int(base_strength + self.dynamic_punch_boost - self.safety_reduction)
             final_strength = max(0, min(1000, final_strength))
 
@@ -292,7 +284,7 @@ class AudioControllerApp(App):
             pass
 
     # ==========================================
-    # APPLY CORE EQ (HIGH-PASS CUT-OFF & ANTI-MUD PUNCH)
+    # APPLY PRO 6-BAND EQUALIZER CURVE
     # ==========================================
     def apply_all_audio_data(self):
         self.lbl_status.text = self.get_status_text()
@@ -303,24 +295,26 @@ class AudioControllerApp(App):
                 activity = PythonActivity.mActivity
                 audio_manager = activity.getSystemService(Context.AUDIO_SERVICE)
 
-                # 1. Master Volume (0 to 100%)
+                # 1. Master Volume
                 max_vol = audio_manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                 target_vol = int((self.volume / 100.0) * max_vol)
                 audio_manager.setStreamVolume(AudioManager.STREAM_MUSIC, target_vol, 0)
 
-                # 2. Dynamic Bass Engine Initial Strength
+                # 2. Dynamic Bass Booster
                 self.apply_dynamic_dsp()
 
-                # 3. Smart Multi-Band Equalizer Curve
+                # 3. Multi-Band Equalizer Curve Mapping
                 if self.eq_engine:
                     num_bands = self.eq_engine.getNumberOfBands()
                     level_range = self.eq_engine.getBandLevelRange()
-                    min_lvl = level_range[0]  # e.g., -1500 mB
-                    max_lvl = level_range[1]  # e.g., +1500 mB
+                    min_lvl = level_range[0]
+                    max_lvl = level_range[1]
 
-                    cutoff_milli = max(50, self.bass_freq) * 1000  # User's High-Pass Cut-off in mHz
-                    bass_ratio = self.bass / 100.0                 # 0.0 to 1.0
-                    treble_ratio = (self.treble - 50) / 50.0       # -1.0 to +1.0
+                    cutoff_milli = self.low_cut * 1000        # User Low Cut-Off in mHz (50 to 250 Hz)
+                    bass_ratio = self.bass / 100.0
+                    lmid_ratio = (self.low_mid - 50) / 50.0   # -1.0 to +1.0
+                    mid_ratio = (self.mid_upper - 50) / 50.0  # -1.0 to +1.0
+                    treble_ratio = (self.treble - 50) / 50.0  # -1.0 to +1.0
 
                     for b in range(num_bands):
                         freq_range = self.eq_engine.getBandFreqRange(b)
@@ -328,44 +322,38 @@ class AudioControllerApp(App):
                         high_f = freq_range[1]
                         center_f = self.eq_engine.getCenterFreq(b)
 
-                        # RULE 1: STRICT HIGH-PASS FILTER (Cut frequencies BELOW user's setting)
+                        # RULE 1: LOW CUT-OFF (HPF) - Hard Cut below user setting
                         if high_f <= cutoff_milli:
-                            # Entire band is below cutoff -> Full Hard Cut
                             self.eq_engine.setBandLevel(b, min_lvl)
 
                         elif low_f < cutoff_milli < high_f:
-                            # Cutoff falls inside this band -> Steep roll-off below cutoff,
-                            # while keeping frequencies above cutoff strong
                             above_ratio = (high_f - cutoff_milli) / float(high_f - low_f)
-                            if above_ratio < 0.45:
+                            if above_ratio < 0.4:
                                 lvl = int(min_lvl * (1.0 - above_ratio))
                             else:
-                                # Boost the upper portion of this band for tight punch
-                                lvl = int(max_lvl * 0.75 * bass_ratio * above_ratio)
+                                lvl = int(max_lvl * 0.7 * bass_ratio * above_ratio)
                             self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lvl)))
 
-                        # RULE 2: ALL FREQUENCIES ABOVE CUT-OFF REMAIN ACTIVE!
+                        # RULE 2: FREQUencies ABOVE LOW CUT-OFF
                         else:
-                            # A) PUNCH & THAP ZONE (Cut-off up to 170Hz -> Dhol/Tabla Kick Peak)
-                            if center_f <= 170000:
-                                punch_lvl = int(max_lvl * 0.90 * bass_ratio)
+                            # A) Punch & Thap Zone (Cut-off up to 180Hz)
+                            if center_f <= 180000:
+                                punch_lvl = int(max_lvl * 0.85 * bass_ratio)
                                 if self.limiter_active:
-                                    punch_lvl = int(punch_lvl * 0.72)  # Guard speaker on heavy tracks
+                                    punch_lvl = int(punch_lvl * 0.72)
                                 self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, punch_lvl)))
 
-                            # B) ANTI-MUD ZONE (180Hz to 480Hz -> Prevents boxy/muddy sound!)
-                            elif 180000 < center_f <= 480000:
-                                # Slight precision dip when bass is turned up so vocals stay crystal clear
-                                # and tabla/dhol hits sound "Dhoom" instead of muffled
-                                mud_cut = -int(max_lvl * 0.28 * bass_ratio)
-                                self.eq_engine.setBandLevel(b, max(min_lvl, mud_cut))
+                            # B) Low-Mid Range (250Hz to 500Hz)
+                            elif 240000 <= center_f <= 500000:
+                                lmid_lvl = int(max_lvl * 0.6 * lmid_ratio)
+                                self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lmid_lvl)))
 
-                            # C) NATURAL MIDRANGE (480Hz to 3000Hz -> Untouched / Pure Voice & Tabla Tone)
-                            elif 480000 < center_f < 3000000:
-                                attack_presence = int(max_lvl * 0.12 * bass_ratio)
-                                self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, attack_presence)))
+                            # C) Mid & Upper-Mid Range (Vocal clarity: 500Hz to 4000Hz)
+                            elif 500000 < center_f < 4000000:
+                                mid_lvl = int(max_lvl * 0.6 * mid_ratio)
+                                self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, mid_lvl)))
 
-                            # D) TREBLE & CLARITY ZONE (>= 3000Hz)
+                            # D) Treble / Highs (>= 4000Hz)
                             else:
                                 treble_lvl = int(max_lvl * treble_ratio)
                                 self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, treble_lvl)))
@@ -374,12 +362,12 @@ class AudioControllerApp(App):
                 print("Apply Audio Data Error:", e)
         else:
             print(
-                f"APPLIED -> VOL:{self.volume}% | PUNCH:{self.bass}% | "
-                f"HPF CUT:<{self.bass_freq}Hz | TREBLE:{self.treble}%"
+                f"VOL:{self.volume}% | BASS:{self.bass}% | CUT:<{self.low_cut}Hz | "
+                f"LMID:{self.low_mid}% | MID:{self.mid_upper}% | TREB:{self.treble}%"
             )
 
     # ==========================================
-    # DEVICE DETECTION & AUTO-LAUNCH MONITOR
+    # DEVICE DETECTION & AUTO-LAUNCH
     # ==========================================
     def detect_connected_audio_device(self):
         if platform != 'android':
@@ -391,7 +379,7 @@ class AudioControllerApp(App):
         try:
             activity = PythonActivity.mActivity
             audio_manager = activity.getSystemService(Context.AUDIO_SERVICE)
-            devices = audio_manager.getDevices(2)  # GET_DEVICES_OUTPUTS = 2
+            devices = audio_manager.getDevices(2)
             if devices:
                 for dev in devices:
                     dev_type = dev.getType()
@@ -443,19 +431,19 @@ class AudioControllerApp(App):
                 print("Auto-Launch Error:", e)
 
     # ==========================================
-    # UI HELPERS & SLIDER EVENTS
+    # UI HELPERS & SLIDER CALLBACKS
     # ==========================================
     def update_bg(self, instance, *args):
         self.bg_rect.pos = instance.pos
         self.bg_rect.size = instance.size
 
     def create_slider_card(self, title, min_val, max_val, cur_val, unit, accent_hex, callback):
-        card = ProCard(orientation='vertical', padding=['15dp', '10dp'], spacing='5dp')
+        card = ProCard(orientation='vertical', padding=['12dp', '6dp'], spacing='2dp')
 
-        top_row = BoxLayout(orientation='horizontal', size_hint_y=0.45)
+        top_row = BoxLayout(orientation='horizontal', size_hint_y=0.42)
         lbl_title = Label(
             text=title,
-            font_size='14sp',
+            font_size='13sp',
             bold=True,
             color=get_color_from_hex('#ccd6f6'),
             halign='left',
@@ -465,7 +453,7 @@ class AudioControllerApp(App):
 
         lbl_val = Label(
             text=f"{int(cur_val)}{unit}",
-            font_size='19sp',
+            font_size='16sp',
             bold=True,
             color=get_color_from_hex(accent_hex),
             size_hint_x=0.35,
@@ -482,12 +470,12 @@ class AudioControllerApp(App):
             max=max_val,
             value=cur_val,
             step=1,
-            cursor_size=('34dp', '34dp'),
-            background_width='20dp',
+            cursor_size=('30dp', '30dp'),
+            background_width='16dp',
             value_track=True,
             value_track_color=get_color_from_hex(accent_hex),
-            value_track_width='6dp',
-            size_hint_y=0.55
+            value_track_width='5dp',
+            size_hint_y=0.58
         )
         slider.bind(value=callback)
 
@@ -496,8 +484,8 @@ class AudioControllerApp(App):
         return card, lbl_val, slider
 
     def get_status_text(self):
-        guard_tag = "🛡️ LIMITER ON" if self.limiter_active else "⚡ DYNAMIC PUNCH"
-        return f"CUT: <{self.bass_freq}Hz  |  PUNCH: {self.bass}%  |  {guard_tag}"
+        guard_tag = "🛡️ LIMITER" else "⚡ DYNAMIC"
+        return f"CUT: <{self.low_cut}Hz | PUNCH: {self.bass}% | LM:{self.low_mid}% | MID:{self.mid_upper}% | TR:{self.treble}%"
 
     def on_volume_change(self, instance, value):
         self.volume = int(value)
@@ -509,9 +497,19 @@ class AudioControllerApp(App):
         self.lbl_bass_val.text = f"{self.bass}%"
         self.apply_all_audio_data()
 
-    def on_freq_change(self, instance, value):
-        self.bass_freq = max(50, int(value))
-        self.lbl_freq_val.text = f"<{self.bass_freq} Hz"
+    def on_cut_change(self, instance, value):
+        self.low_cut = int(value)
+        self.lbl_cut_val.text = f"{self.low_cut} Hz"
+        self.apply_all_audio_data()
+
+    def on_lmid_change(self, instance, value):
+        self.low_mid = int(value)
+        self.lbl_lmid_val.text = f"{self.low_mid}%"
+        self.apply_all_audio_data()
+
+    def on_mid_change(self, instance, value):
+        self.mid_upper = int(value)
+        self.lbl_mid_val.text = f"{self.mid_upper}%"
         self.apply_all_audio_data()
 
     def on_treble_change(self, instance, value):
@@ -526,8 +524,10 @@ class AudioControllerApp(App):
         data = {
             'volume': self.volume,
             'bass': self.bass,
-            'treble': self.treble,
-            'bass_freq': max(50, self.bass_freq)
+            'low_cut': self.low_cut,
+            'low_mid': self.low_mid,
+            'mid_upper': self.mid_upper,
+            'treble': self.treble
         }
         try:
             with open('audio_eq_settings.json', 'w') as f:
@@ -542,8 +542,10 @@ class AudioControllerApp(App):
                     data = json.load(f)
                     self.volume = data.get('volume', 50)
                     self.bass = data.get('bass', 50)
+                    self.low_cut = data.get('low_cut', 50)
+                    self.low_mid = data.get('low_mid', 50)
+                    self.mid_upper = data.get('mid_upper', 50)
                     self.treble = data.get('treble', 50)
-                    self.bass_freq = max(50, data.get('bass_freq', 50))
             except Exception:
                 pass
 
