@@ -70,8 +70,44 @@ jobs:
         python3 -m pip install cython==0.29.33 kivy[base] pillow python-for-android==2024.1.21
 
     # ============================================================
-    # 🔥 સુધારેલું સ્ટેપ: Duplicate વગર મેનિફેસ્ટ પેચ કરવા માટે Python વાપર્યું
+    # 🔥 સૌથી મહત્વનું સ્ટેપ: જાવા ફાઇલ પેચ કરવી જેથી એપ સ્વાઇપ કરતાં બંધ ન થાય
     # ============================================================
+    - name: Patch p4a PythonService.java for Android 14 & Kill-Proof
+      run: |
+        python3 -c "
+        import os, glob, re, pythonforandroid
+        p4a_dir = os.path.dirname(pythonforandroid.__file__)
+        patched = False
+        for f in glob.glob(p4a_dir + '/**/PythonService.java', recursive=True):
+            with open(f, 'r') as file:
+                content = file.read()
+            
+            # 1. Android 14 ફોરગ્રાઉન્ડ સર્વિસ ટાઇપ ફિક્સ
+            if 'startForeground(1, mBuilder.build());' in content:
+                content = content.replace(
+                    'startForeground(1, mBuilder.build());',
+                    'if (Build.VERSION.SDK_INT >= 29) {\n                    startForeground(1, mBuilder.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK | ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);\n                } else {\n                    startForeground(1, mBuilder.build());\n                }'
+                )
+                if 'import android.content.pm.ServiceInfo;' not in content:
+                    content = content.replace('import android.os.Build;', 'import android.os.Build;\nimport android.content.pm.ServiceInfo;')
+            
+            # 2. એપ સ્વાઇપ (Recent) થાય ત્યારે સર્વિસ બંધ ન થાય તે માટે
+            content = re.sub(r'public void onTaskRemoved\(Intent rootIntent\) \{\s*if\s*\(stopWithTask\)\s*\{\s*stopSelf\(\);\s*\}\s*\}', 
+                             'public void onTaskRemoved(Intent rootIntent) { /* KEEP ALIVE */ }', 
+                             content)
+                             
+            # 3. ફોર્સફુલી સર્વિસને એક્ટિવ રાખો
+            content = re.sub(r'if\s*\(intent.hasExtra\("stopWithTask"\)\)\s*\{\s*stopWithTask\s*=\s*intent.getBooleanExtra\("stopWithTask",\s*true\);\s*\}', 
+                             'stopWithTask = false;', 
+                             content)
+
+            with open(f, 'w') as file:
+                file.write(content)
+            patched = True
+            print(f'Patched Java: {f}')
+        print('Success!' if patched else 'Warning: PythonService.java not found!')
+        "
+
     - name: Patch p4a manifest safely for Android 14
       run: |
         python3 -c "
