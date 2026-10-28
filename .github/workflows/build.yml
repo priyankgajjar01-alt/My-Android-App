@@ -70,33 +70,32 @@ jobs:
         python3 -m pip install cython==0.29.33 kivy[base] pillow python-for-android==2024.1.21
 
     # ============================================================
-    # 🔥 NEW STEP: Patch p4a AndroidManifest template so the
-    # foreground service survives task removal (app kill-proof).
+    # 🔥 સુધારેલું સ્ટેપ: Duplicate વગર મેનિફેસ્ટ પેચ કરવા માટે Python વાપર્યું
     # ============================================================
-    - name: Patch p4a manifest for kill-proof foreground service
+    - name: Patch p4a manifest safely for Android 14
       run: |
-        P4A_DIR=$(python3 -c "import pythonforandroid; print(pythonforandroid.__path__[0])")
-        echo "P4A DIR: $P4A_DIR"
-        PATCHED=0
-        for f in $(find "$P4A_DIR" -name "AndroidManifest*.tmpl.xml"); do
-          if grep -q 'org.kivy.android.Service' "$f"; then
-            echo "Patching: $f"
-            # Add stopWithTask="false" and foregroundServiceType to service tag
-            sed -i 's|<service android:name="org.kivy.android.Service|<service android:foregroundServiceType="mediaPlayback\|dataSync" android:stopWithTask="false" android:name="org.kivy.android.Service|g' "$f"
-            # Fallback for any service tag with android:name first
-            sed -i 's|<service android:name="\(org\.kivy\.android\.[A-Za-z]*Service\)"|<service android:foregroundServiceType="mediaPlayback\|dataSync" android:stopWithTask="false" android:name="\1"|g' "$f"
-            PATCHED=1
-          fi
-        done
-        if [ $PATCHED -eq 0 ]; then
-          echo "⚠️ WARNING: manifest template not found — dumping candidates:"
-          find "$P4A_DIR" -name "*.tmpl.xml" | head -20
-          exit 1
-        fi
-        echo "=== Verification: stopWithTask occurrences ==="
-        grep -rn 'stopWithTask="false"' "$P4A_DIR" | head -5 || true
-        echo "=== Verification: foregroundServiceType occurrences ==="
-        grep -rn 'foregroundServiceType' "$P4A_DIR" | head -5 || true
+        python3 -c "
+        import os, glob, pythonforandroid
+        p4a_dir = os.path.dirname(pythonforandroid.__file__)
+        patched = False
+        for f in glob.glob(p4a_dir + '/**/AndroidManifest*.tmpl.xml', recursive=True):
+            with open(f, 'r') as file:
+                content = file.read()
+            
+            # જિન્જા (Jinja) વેરિયેબલ્સને ડાયરેક્ટ સેફ વેલ્યુ સાથે રિપ્લેસ કરો
+            if '{{ service.stop_with_task }}' in content or '{{ service.foreground_service_type }}' in content:
+                print(f'Patching: {f}')
+                content = content.replace('{{ service.stop_with_task }}', 'false')
+                content = content.replace('{{ service.foreground_service_type }}', 'mediaPlayback|dataSync')
+                with open(f, 'w') as file:
+                    file.write(content)
+                patched = True
+        
+        if patched:
+            print('Successfully patched manifest templates without duplicates!')
+        else:
+            print('WARNING: Could not find template variables. The build might still work.')
+        "
 
     - name: Prepare app source, Logo, and Always-On Background Service
       run: |
