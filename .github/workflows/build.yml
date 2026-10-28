@@ -67,17 +67,34 @@ jobs:
     - name: Install Python packages
       run: |
         python3 -m pip install --upgrade pip setuptools wheel
-        python3 -m pip install cython==0.29.33 kivy[base] python-for-android==2024.1.21
+        python3 -m pip install cython==0.29.33 kivy[base] pillow python-for-android==2024.1.21
 
-    - name: Prepare app source and Always-On Background Service
+    - name: Prepare app source, Logo, and Always-On Background Service
       run: |
         mkdir -p app_source
         if [ ! -f "main.py" ]; then echo "ERROR: main.py not found!"; exit 1; fi
         cp main.py app_source/main.py
-        # Auto-fix accidental capital 'Import' on line 1 from mobile keyboard
         sed -i '1s/^Import /import /' app_source/main.py
 
-        # Generate immortal background DSP service (runs even when UI is killed)
+        # Restore Photon Audio App Logo (Uses repo icon.png or auto-generates Pro Speaker/EQ Logo)
+        if [ -f "icon.png" ]; then
+          cp icon.png app_source/icon.png
+          echo "Custom icon.png copied to app_source"
+        else
+          echo "Generating Photon Audio Neon Speaker Logo..."
+          python3 -c "
+        from PIL import Image, ImageDraw
+        img = Image.new('RGBA', (512, 512), (10, 25, 47, 255))
+        d = ImageDraw.Draw(img)
+        d.ellipse([36, 36, 476, 476], outline=(0, 230, 118, 255), width=16)
+        d.ellipse([96, 96, 416, 416], outline=(100, 255, 218, 255), width=22)
+        d.ellipse([176, 176, 336, 336], fill=(255, 109, 0, 255), outline=(255, 171, 64, 255), width=12)
+        d.ellipse([226, 226, 286, 286], fill=(10, 25, 47, 255))
+        img.save('app_source/icon.png')
+        "
+        fi
+
+        # Generate immortal background DSP service with +30% Bass, Auto-Bass Synth & Low-Mid fix
         cat << 'EOF' > app_source/service.py
         import time
         import json
@@ -89,13 +106,14 @@ jobs:
         AudioManager = autoclass('android.media.AudioManager')
         Equalizer = autoclass('android.media.audiofx.Equalizer')
         BassBoost = autoclass('android.media.audiofx.BassBoost')
+        Virtualizer = autoclass('android.media.audiofx.Virtualizer')
+        LoudnessEnhancer = autoclass('android.media.audiofx.LoudnessEnhancer')
         Visualizer = autoclass('android.media.audiofx.Visualizer')
         PowerManager = autoclass('android.os.PowerManager')
 
         service = PythonService.mService
         service.setAutoRestartService(True)
 
-        # Keep CPU awake when screen is locked
         try:
             pm = service.getSystemService(Context.POWER_SERVICE)
             wake_lock = pm.newWakeLock(1, "PhotonAudio::ServiceWakeLock")
@@ -109,6 +127,8 @@ jobs:
 
         eq_engine = None
         bass_engine = None
+        virtualizer_engine = None
+        loudness_engine = None
         visualizer = None
 
         cfg = {
@@ -124,13 +144,17 @@ jobs:
         last_mtime = 0
         was_playing = False
         avg_bass = 0.0
+        avg_lmid = 0.0
         dyn_punch = 0.0
+        bass_restorer = 0.0
+        lmid_restorer = 0.0
         safety_red = 0.0
         limiter_on = False
+        synth_on = False
         tick = 0
 
         def init_engines():
-            global eq_engine, bass_engine, visualizer
+            global eq_engine, bass_engine, virtualizer_engine, loudness_engine, visualizer
             try:
                 if eq_engine is None:
                     eq_engine = Equalizer(100, 0)
@@ -143,6 +167,18 @@ jobs:
                 bass_engine.setEnabled(True)
             except Exception:
                 bass_engine = None
+            try:
+                if virtualizer_engine is None:
+                    virtualizer_engine = Virtualizer(100, 0)
+                virtualizer_engine.setEnabled(True)
+            except Exception:
+                virtualizer_engine = None
+            try:
+                if loudness_engine is None:
+                    loudness_engine = LoudnessEnhancer(0)
+                loudness_engine.setEnabled(True)
+            except Exception:
+                loudness_engine = None
             try:
                 if visualizer is None:
                     visualizer = Visualizer(0)
@@ -161,10 +197,11 @@ jobs:
                 max_lvl = level_range[1]
 
                 cutoff_milli = cfg['low_cut'] * 1000
-                bass_ratio = cfg['bass'] / 100.0
-                lmid_ratio = (cfg['low_mid'] - 50) / 50.0
+                bass_drive = min(1.35, (cfg['bass'] / 100.0) * 1.30)
+                lmid_amp = (cfg['low_mid'] - 50) / 50.0
                 mid_ratio = (cfg['mid_upper'] - 50) / 50.0
                 treble_ratio = (cfg['treble'] - 50) / 50.0
+                synth_extra = 0.30 if synth_on else 0.0
 
                 for b in range(num_bands):
                     freq_range = eq_engine.getBandFreqRange(b)
@@ -172,30 +209,42 @@ jobs:
                     high_f = freq_range[1]
                     center_f = eq_engine.getCenterFreq(b)
 
-                    if high_f <= cutoff_milli:
-                        eq_engine.setBandLevel(b, min_lvl)
-                    elif low_f < cutoff_milli < high_f:
-                        above_ratio = (high_f - cutoff_milli) / float(high_f - low_f)
-                        if above_ratio < 0.4:
-                            lvl = int(min_lvl * (1.0 - above_ratio))
+                    if 150000 <= center_f <= 550000:
+                        if high_f <= cutoff_milli:
+                            eq_engine.setBandLevel(b, min_lvl)
                         else:
-                            lvl = int(max_lvl * 0.7 * bass_ratio * above_ratio)
-                        eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lvl)))
-                    else:
-                        if center_f <= 180000:
-                            punch_lvl = int(max_lvl * 0.85 * bass_ratio)
-                            if limiter_on:
-                                punch_lvl = int(punch_lvl * 0.72)
-                            eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, punch_lvl)))
-                        elif 240000 <= center_f <= 500000:
-                            lmid_lvl = int(max_lvl * 0.6 * lmid_ratio)
+                            eff_lmid = max(-1.0, min(1.0, lmid_amp + lmid_restorer))
+                            if eff_lmid >= 0:
+                                lmid_lvl = int(max_lvl * eff_lmid)
+                            else:
+                                lmid_lvl = int(abs(eff_lmid) * min_lvl)
                             eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lmid_lvl)))
-                        elif 500000 < center_f < 4000000:
-                            mid_lvl = int(max_lvl * 0.6 * mid_ratio)
-                            eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, mid_lvl)))
+                    elif center_f < 150000:
+                        if high_f <= cutoff_milli:
+                            eq_engine.setBandLevel(b, min_lvl)
+                        elif low_f < cutoff_milli < high_f:
+                            above_ratio = (high_f - cutoff_milli) / float(high_f - low_f)
+                            if above_ratio < 0.28 and not synth_on:
+                                lvl = int(min_lvl * (1.0 - above_ratio))
+                            else:
+                                boost_factor = min(1.0, (bass_drive + synth_extra) * max(0.65, above_ratio))
+                                lvl = int(max_lvl * boost_factor)
+                            eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lvl)))
                         else:
-                            treble_lvl = int(max_lvl * treble_ratio)
-                            eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, treble_lvl)))
+                            punch_lvl = int(max_lvl * min(1.0, bass_drive + synth_extra))
+                            if limiter_on:
+                                punch_lvl = int(punch_lvl * 0.78)
+                            eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, punch_lvl)))
+                    elif 550000 < center_f < 4000000:
+                        coupled_ratio = max(-1.0, min(1.0, (mid_ratio * 0.75) + (lmid_amp * 0.35)))
+                        mid_lvl = int(max_lvl * 0.70 * coupled_ratio)
+                        eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, mid_lvl)))
+                    else:
+                        treble_lvl = int(max_lvl * treble_ratio)
+                        eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, treble_lvl)))
+
+                if virtualizer_engine:
+                    virtualizer_engine.setStrength(int(cfg['low_mid'] * 10))
             except Exception:
                 pass
 
@@ -218,18 +267,15 @@ jobs:
 
                 is_playing = audio_manager.isMusicActive()
                 if is_playing and not was_playing:
-                    # Song just started in any app -> Lock EQ & apply immediately
                     init_engines()
                     apply_eq()
                 was_playing = is_playing
 
-                # Periodic re-enforcement every ~4 seconds while music plays
                 tick += 1
-                if is_playing and tick % 25 == 0:
+                if is_playing and tick % 20 == 0:
                     init_engines()
                     apply_eq()
 
-                # Real-time Smart Beat Punch & Limiter in background
                 if is_playing and visualizer and bass_engine:
                     fft_bytes = bytearray(128)
                     if visualizer.getFft(fft_bytes) == 0:
@@ -239,26 +285,52 @@ jobs:
                             im = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
                             low_e += (r * r + im * im) ** 0.5
                         low_e /= 5.0
-                        avg_bass = (avg_bass * 0.88) + (low_e * 0.12)
-                        delta = low_e - avg_bass
-                        if delta > 14.0 and cfg['bass'] > 0:
-                            dyn_punch = min(200.0, delta * (cfg['bass'] / 45.0))
-                        else:
-                            dyn_punch *= 0.55
 
-                        if avg_bass > 72.0 and cfg['bass'] > 55:
+                        lmid_e = 0.0
+                        for i in range(12, 26, 2):
+                            r = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
+                            im = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
+                            lmid_e += (r * r + im * im) ** 0.5
+                        lmid_e /= 7.0
+
+                        avg_bass = (avg_bass * 0.85) + (low_e * 0.15)
+                        avg_lmid = (avg_lmid * 0.85) + (lmid_e * 0.15)
+
+                        delta = low_e - avg_bass
+                        if delta > 11.0 and cfg['bass'] > 0:
+                            dyn_punch = min(300.0, delta * (cfg['bass'] / 32.0))
+                        else:
+                            dyn_punch *= 0.60
+
+                        if 2.0 < avg_bass < 38.0 and cfg['bass'] > 20:
+                            synth_on = True
+                            bass_restorer = min(280.0, (38.0 - avg_bass) * 7.5 * (cfg['bass'] / 100.0))
+                        else:
+                            synth_on = False
+                            bass_restorer *= 0.75
+
+                        if 1.5 < avg_lmid < 30.0 and cfg['low_mid'] > 50:
+                            lmid_restorer = min(0.45, ((30.0 - avg_lmid) / 30.0) * ((cfg['low_mid'] - 50) / 50.0))
+                        else:
+                            lmid_restorer *= 0.80
+
+                        if avg_bass > 85.0 and cfg['bass'] > 65:
                             limiter_on = True
-                            safety_red = min(350.0, (avg_bass - 72.0) * 5.5 * (cfg['bass'] / 100.0))
+                            safety_red = min(300.0, (avg_bass - 85.0) * 4.5 * (cfg['bass'] / 100.0))
                         else:
                             limiter_on = False
-                            safety_red *= 0.7
+                            safety_red *= 0.70
 
-                        strength = int((cfg['bass'] * 6.5) + dyn_punch - safety_red)
+                        strength = int((cfg['bass'] * 9.5) + dyn_punch + bass_restorer - safety_red)
                         bass_engine.setStrength(max(0, min(1000, strength)))
+
+                        if loudness_engine:
+                            amp_mb = int((cfg['bass'] * 7.5) + (bass_restorer * 1.5) - safety_red)
+                            loudness_engine.setTargetGain(max(0, min(900, amp_mb)))
             except Exception:
                 pass
 
-            time.sleep(0.15)
+            time.sleep(0.12)
         EOF
 
         python3 -m py_compile app_source/main.py app_source/service.py
@@ -280,7 +352,7 @@ jobs:
           --orientation=portrait \
           --dist_name=photon_audio_dist \
           --requirements=hostpython3,python3,android,kivy,pyjnius \
-          --service=Photondsp:service.py \
+          --service=Photondsp:service.py:foreground:sticky \
           --permission=MODIFY_AUDIO_SETTINGS \
           --permission=RECORD_AUDIO \
           --permission=BLUETOOTH \
@@ -299,6 +371,9 @@ jobs:
           --permission=READ_MEDIA_AUDIO \
           --permission=READ_EXTERNAL_STORAGE \
           --permission=WRITE_EXTERNAL_STORAGE \
+          --icon=app_source/icon.png \
+          --presplash=app_source/icon.png \
+          --presplash-color=#0a192f \
           --arch=arm64-v8a \
           --android-api=34 \
           --sdk-dir=$ANDROID_SDK_ROOT \
