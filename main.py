@@ -6,7 +6,6 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.slider import Slider
-from kivy.uix.scrollview import ScrollView
 from kivy.uix.modalview import ModalView
 from kivy.uix.widget import Widget
 from kivy.graphics import Color, RoundedRectangle, Line
@@ -76,9 +75,6 @@ class ProCard(BoxLayout):
             RoundedRectangle(pos=self.pos, size=self.size, radius=[12])
 
 
-# ==========================================
-# નવું ફીચર: એનિમેટેડ ઓડિયો વેવફોર્મ
-# ==========================================
 class AudioWaveWidget(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -96,7 +92,6 @@ class AudioWaveWidget(Widget):
             return
 
         with self.canvas:
-            # 3 અલગ અલગ રંગની લહેરો (Green, Cyan, Orange)
             colors = ['#00e676', '#00b0ff', '#ff6d00']
             amps = [0.25, 0.15, 0.35]
             speeds = [4.0, 6.5, 3.5]
@@ -131,10 +126,9 @@ class SettingsPopup(ModalView):
         )
         root.add_widget(title_lbl)
 
-        scroll = ScrollView(size_hint=(1, 1))
-        sliders_box = BoxLayout(orientation='vertical', spacing='10dp', size_hint_y=None)
-        sliders_box.bind(minimum_height=sliders_box.setter('height'))
-
+        # લેઆઉટ ફિક્સ: ScrollView કાઢી નાખ્યું છે અને ફિક્સ હાઈટ આપી છે
+        sliders_box = BoxLayout(orientation='vertical', spacing='10dp', size_hint_y=None, height=dp(420))
+        
         self.card_cut, self.lbl_cut_val, self.slider_cut = self.app.create_slider_card(
             title="3. LOW CUT-OFF & AUTO-BASS (HPF)",
             min_val=50, max_val=250, cur_val=self.app.low_cut,
@@ -167,10 +161,11 @@ class SettingsPopup(ModalView):
         )
         sliders_box.add_widget(self.card_treble)
 
-        scroll.add_widget(sliders_box)
-        root.add_widget(scroll)
+        root.add_widget(sliders_box)
+        
+        # ખાલી જગ્યા ભરવા માટે સ્પેસર (જેથી Save બટન નીચે રહે)
+        root.add_widget(Widget())
 
-        # Single Button - Save & Close
         btn_save = Button(
             text="💾 SAVE & CLOSE",
             size_hint_y=None, height='50dp',
@@ -191,7 +186,6 @@ class SettingsPopup(ModalView):
 class AudioControllerApp(App):
     def build(self):
         self.title = "Photon Audio"
-
         self.always_on = True
         self.volume = 50
         self.bass = 50
@@ -199,7 +193,6 @@ class AudioControllerApp(App):
         self.low_mid = 50
         self.mid_upper = 50
         self.treble = 50
-
         self.device_name = "Detecting Audio Device..."
         self.was_music_active = False
 
@@ -218,6 +211,9 @@ class AudioControllerApp(App):
         self.bass_restorer_boost = 0.0
         self.lmid_restorer_boost = 0.0
         self.safety_reduction = 0.0
+        
+        self.update_event = None
+        self.save_event = None
 
         self.load_settings()
 
@@ -227,7 +223,6 @@ class AudioControllerApp(App):
             self.bg_rect = RoundedRectangle(pos=root.pos, size=root.size)
         root.bind(pos=self._update_bg, size=self._update_bg)
 
-        # Top Device Bar
         device_bar = ProCard(bg_hex='#004d40', size_hint_y=None, height=dp(40), padding=dp(6))
         self.lbl_device = Label(
             text=f"🔊 Output: {self.device_name}",
@@ -236,7 +231,6 @@ class AudioControllerApp(App):
         device_bar.add_widget(self.lbl_device)
         root.add_widget(device_bar)
 
-        # Always On Toggle
         self.btn_always_on = Button(
             text=self.get_always_on_text(),
             size_hint_y=None, height=dp(42),
@@ -247,7 +241,6 @@ class AudioControllerApp(App):
         self.btn_always_on.bind(on_release=self.toggle_always_on)
         root.add_widget(self.btn_always_on)
 
-        # Status Monitor
         dsp_bar = ProCard(bg_hex='#1e3a5f', size_hint_y=None, height=dp(36), padding=dp(4))
         self.lbl_status = Label(
             text=self.get_status_text(),
@@ -256,13 +249,21 @@ class AudioControllerApp(App):
         dsp_bar.add_widget(self.lbl_status)
         root.add_widget(dsp_bar)
 
-        # ==========================================
-        # ઉપરની ખાલી જગ્યામાં ઓડિયો વેવ ઉમેર્યું
-        # ==========================================
-        self.audio_wave = AudioWaveWidget(size_hint_y=0.8)
+        # ADVANCED DSP SETTINGS BUTTON (ઉપર)
+        btn_settings = Button(
+            text="⚙️ ADVANCED DSP SETTINGS",
+            size_hint_y=None, height=dp(48),
+            font_size='14sp', bold=True, background_normal='',
+            background_color=get_color_from_hex('#26a69a'),
+            color=get_color_from_hex('#0a192f')
+        )
+        btn_settings.bind(on_release=self.open_settings)
+        root.add_widget(btn_settings)
+
+        # વચ્ચેની જગ્યા વેવ માટે (size_hint_y=1 એટલે બરાબર ફિટ થશે)
+        self.audio_wave = AudioWaveWidget(size_hint_y=1)
         root.add_widget(self.audio_wave)
 
-        # Slider 1
         self.card_vol, self.lbl_vol_val, self.slider_vol = self.create_slider_card(
             title="1. MASTER VOLUME",
             min_val=0, max_val=100, cur_val=self.volume,
@@ -271,7 +272,6 @@ class AudioControllerApp(App):
         )
         root.add_widget(self.card_vol)
 
-        # Slider 2
         self.card_bass, self.lbl_bass_val, self.slider_bass = self.create_slider_card(
             title="2. BASS BOOSTER (+30% AMP POWER)",
             min_val=0, max_val=100, cur_val=self.bass,
@@ -280,11 +280,9 @@ class AudioControllerApp(App):
         )
         root.add_widget(self.card_bass)
 
-        # ==========================================
-        # નીચેની ખાલી જગ્યામાં પ્રીમિયમ બ્રાન્ડિંગ ઉમેર્યું
-        # ==========================================
-        branding_box = BoxLayout(orientation='vertical', size_hint_y=0.6, spacing=dp(2))
-        branding_box.add_widget(Widget()) # Top spacer
+        # નીચેની જગ્યા બ્રાન્ડિંગ માટે (size_hint_y=1)
+        branding_box = BoxLayout(orientation='vertical', size_hint_y=1, spacing=dp(2))
+        branding_box.add_widget(Widget())
         
         lbl_logo = Label(
             text="PHOTON AUDIO", font_size='22sp', bold=True,
@@ -296,19 +294,8 @@ class AudioControllerApp(App):
         )
         branding_box.add_widget(lbl_logo)
         branding_box.add_widget(lbl_sub)
-        branding_box.add_widget(Widget()) # Bottom spacer
+        branding_box.add_widget(Widget())
         root.add_widget(branding_box)
-
-        # Settings Button
-        btn_settings = Button(
-            text="⚙️ ADVANCED DSP SETTINGS",
-            size_hint_y=None, height=dp(50),
-            font_size='14sp', bold=True, background_normal='',
-            background_color=get_color_from_hex('#26a69a'),
-            color=get_color_from_hex('#0a192f')
-        )
-        btn_settings.bind(on_release=self.open_settings)
-        root.add_widget(btn_settings)
 
         return root
 
@@ -343,20 +330,26 @@ class AudioControllerApp(App):
         top_row.add_widget(lbl_title)
         top_row.add_widget(lbl_val)
 
+        # સ્ટાન્ડર્ડ Slider
         slider = Slider(
             min=min_val, max=max_val, value=cur_val, step=1,
             cursor_size=('28dp', '28dp'), background_width='14dp',
             value_track=True, value_track_color=get_color_from_hex(accent_hex),
             value_track_width='5dp', size_hint_y=0.6
         )
-        slider.bind(value=callback)
+        
+        def on_value(instance, value):
+            lbl_val.text = f"{int(value)}{unit}"
+            callback(instance, value)
+            
+        slider.bind(value=on_value)
 
         card.add_widget(top_row)
         card.add_widget(slider)
         return card, lbl_val, slider
 
     # ==========================================
-    # ALWAYS ON SERVICE & BATTERY
+    # ALWAYS ON SERVICE
     # ==========================================
     def on_start(self):
         self.acquire_wakelock()
@@ -576,12 +569,18 @@ class AudioControllerApp(App):
             if hasattr(self, 'lbl_status'): self.lbl_status.text = self.get_status_text()
         except: pass
 
+    def schedule_audio_update(self):
+        if self.update_event:
+            self.update_event.cancel()
+        self.update_event = Clock.schedule_once(self._do_audio_update, 0.15)
+
+    def _do_audio_update(self, dt):
+        self.save_settings()
+        self.apply_all_audio_data()
+
     def apply_all_audio_data(self):
         if hasattr(self, 'lbl_status'): self.lbl_status.text = self.get_status_text()
-        self.save_settings()
-        if self.always_on: self.start_background_service()
         if platform != 'android': return
-
         try:
             activity = PythonActivity.mActivity
             audio_manager = activity.getSystemService(Context.AUDIO_SERVICE)
@@ -690,33 +689,27 @@ class AudioControllerApp(App):
     # ==========================================
     def on_volume_change(self, instance, value):
         self.volume = int(value)
-        if hasattr(self, 'lbl_vol_val'): self.lbl_vol_val.text = f"{self.volume}%"
-        self.apply_all_audio_data()
+        self.schedule_audio_update()
 
     def on_bass_change(self, instance, value):
         self.bass = int(value)
-        if hasattr(self, 'lbl_bass_val'): self.lbl_bass_val.text = f"{self.bass}%"
-        self.apply_all_audio_data()
+        self.schedule_audio_update()
 
     def on_cut_change(self, instance, value):
         self.low_cut = int(value)
-        if hasattr(self, 'lbl_cut_val'): self.lbl_cut_val.text = f"{self.low_cut} Hz"
-        self.apply_all_audio_data()
+        self.schedule_audio_update()
 
     def on_lmid_change(self, instance, value):
         self.low_mid = int(value)
-        if hasattr(self, 'lbl_lmid_val'): self.lbl_lmid_val.text = f"{self.low_mid}%"
-        self.apply_all_audio_data()
+        self.schedule_audio_update()
 
     def on_mid_change(self, instance, value):
         self.mid_upper = int(value)
-        if hasattr(self, 'lbl_mid_val'): self.lbl_mid_val.text = f"{self.mid_upper}%"
-        self.apply_all_audio_data()
+        self.schedule_audio_update()
 
     def on_treble_change(self, instance, value):
         self.treble = int(value)
-        if hasattr(self, 'lbl_treble_val'): self.lbl_treble_val.text = f"{self.treble}%"
-        self.apply_all_audio_data()
+        self.schedule_audio_update()
 
     # ==========================================
     # SETTINGS FILE
@@ -750,7 +743,6 @@ class AudioControllerApp(App):
                 self.mid_upper = data.get('mid_upper', 50)
                 self.treble = data.get('treble', 50)
             except: pass
-
 
 if __name__ == "__main__":
     AudioControllerApp().run()
