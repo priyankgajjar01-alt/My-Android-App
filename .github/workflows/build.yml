@@ -69,6 +69,35 @@ jobs:
         python3 -m pip install --upgrade pip setuptools wheel
         python3 -m pip install cython==0.29.33 kivy[base] pillow python-for-android==2024.1.21
 
+    # ============================================================
+    # 🔥 NEW STEP: Patch p4a AndroidManifest template so the
+    # foreground service survives task removal (app kill-proof).
+    # ============================================================
+    - name: Patch p4a manifest for kill-proof foreground service
+      run: |
+        P4A_DIR=$(python3 -c "import pythonforandroid; print(pythonforandroid.__path__[0])")
+        echo "P4A DIR: $P4A_DIR"
+        PATCHED=0
+        for f in $(find "$P4A_DIR" -name "AndroidManifest*.tmpl.xml"); do
+          if grep -q 'org.kivy.android.Service' "$f"; then
+            echo "Patching: $f"
+            # Add stopWithTask="false" and foregroundServiceType to service tag
+            sed -i 's|<service android:name="org.kivy.android.Service|<service android:foregroundServiceType="mediaPlayback\|dataSync" android:stopWithTask="false" android:name="org.kivy.android.Service|g' "$f"
+            # Fallback for any service tag with android:name first
+            sed -i 's|<service android:name="\(org\.kivy\.android\.[A-Za-z]*Service\)"|<service android:foregroundServiceType="mediaPlayback\|dataSync" android:stopWithTask="false" android:name="\1"|g' "$f"
+            PATCHED=1
+          fi
+        done
+        if [ $PATCHED -eq 0 ]; then
+          echo "⚠️ WARNING: manifest template not found — dumping candidates:"
+          find "$P4A_DIR" -name "*.tmpl.xml" | head -20
+          exit 1
+        fi
+        echo "=== Verification: stopWithTask occurrences ==="
+        grep -rn 'stopWithTask="false"' "$P4A_DIR" | head -5 || true
+        echo "=== Verification: foregroundServiceType occurrences ==="
+        grep -rn 'foregroundServiceType' "$P4A_DIR" | head -5 || true
+
     - name: Prepare app source, Logo, and Always-On Background Service
       run: |
         mkdir -p app_source
@@ -76,7 +105,7 @@ jobs:
         cp main.py app_source/main.py
         sed -i '1s/^Import /import /' app_source/main.py
 
-        # Restore Photon Audio App Logo (Uses repo icon.png or auto-generates Pro Speaker/EQ Logo)
+        # Restore Photon Audio App Logo
         if [ -f "icon.png" ]; then
           cp icon.png app_source/icon.png
           echo "Custom icon.png copied to app_source"
@@ -94,7 +123,7 @@ jobs:
         "
         fi
 
-        # Generate immortal background DSP service with +30% Bass, Auto-Bass Synth & Low-Mid fix
+        # Generate immortal background DSP service
         cat << 'EOF' > app_source/service.py
         import time
         import json
@@ -364,6 +393,7 @@ jobs:
           --permission=WAKE_LOCK \
           --permission=FOREGROUND_SERVICE \
           --permission=FOREGROUND_SERVICE_MEDIA_PLAYBACK \
+          --permission=FOREGROUND_SERVICE_DATA_SYNC \
           --permission=REQUEST_IGNORE_BATTERY_OPTIMIZATIONS \
           --permission=SYSTEM_ALERT_WINDOW \
           --permission=RECEIVE_BOOT_COMPLETED \
