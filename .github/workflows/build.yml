@@ -82,7 +82,7 @@ jobs:
             with open(f, 'r') as file:
                 content = file.read()
 
-            # 1. Android 14 Foreground Service Type (Safe single-line match)
+            # 1. Android 14 Foreground Service Type
             content = re.sub(
                 r'startForeground\s*\(\s*getServiceId\(\)\s*,\s*notification\s*\)\s*;',
                 'if (Build.VERSION.SDK_INT >= 29) { startForeground(getServiceId(), notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK); } else { startForeground(getServiceId(), notification); }',
@@ -96,7 +96,7 @@ jobs:
                 content
             )
 
-            # 3. Keep service sticky & prevent stopping when swiped from Recents (no brace mismatch)
+            # 3. Keep service sticky & prevent stopping when swiped from Recents
             content = content.replace('return START_NOT_STICKY;', 'return START_STICKY;')
             content = re.sub(r'stopWithTask\s*=\s*[^;]+;', 'stopWithTask = false;', content)
             content = re.sub(r'if\s*\(\s*stopWithTask\s*\)', 'if (false)', content)
@@ -165,6 +165,7 @@ jobs:
         try:
             pm = service.getSystemService(Context.POWER_SERVICE)
             wake_lock = pm.newWakeLock(1, "PhotonAudio::ServiceWakeLock")
+            wake_lock.setReferenceCounted(False)
             if not wake_lock.isHeld():
                 wake_lock.acquire()
         except Exception as e:
@@ -180,81 +181,124 @@ jobs:
         visualizer = None
 
         cfg = {
-            'always_on': True, 'volume': 50, 'bass': 50, 'low_cut': 50,
+            'volume': 50, 'bass': 50, 'low_cut': 50,
             'low_mid': 50, 'mid_upper': 50, 'treble': 50
         }
 
         last_mtime = 0
+        last_vol = -1
         was_playing = False
         avg_bass = 0.0
         avg_lmid = 0.0
         dyn_punch = 0.0
         bass_restorer = 0.0
         lmid_restorer = 0.0
+        last_lmid_restorer = 0.0
         safety_red = 0.0
         limiter_on = False
         synth_on = False
+        last_bass_strength = -1
+        last_amp_mb = -1
         tick = 0
+        control_lost_ticks = 0
+
+        def release_engines():
+            global eq_engine, bass_engine, virtualizer_engine, loudness_engine, visualizer
+            for eng in (eq_engine, bass_engine, virtualizer_engine, loudness_engine, visualizer):
+                if eng is not None:
+                    try:
+                        eng.setEnabled(False)
+                        eng.release()
+                    except Exception:
+                        pass
+            eq_engine = None
+            bass_engine = None
+            virtualizer_engine = None
+            loudness_engine = None
+            visualizer = None
 
         def init_engines(force=False):
-            global eq_engine, bass_engine, virtualizer_engine, loudness_engine, visualizer
+            global eq_engine, bass_engine, virtualizer_engine, loudness_engine, visualizer, last_bass_strength, last_amp_mb
+            if force:
+                release_engines()
+                last_bass_strength = -1
+                last_amp_mb = -1
+
             try:
-                if force or eq_engine is None or not eq_engine.hasControl():
-                    if eq_engine is not None:
-                        try: eq_engine.release()
-                        except Exception: pass
-                    eq_engine = Equalizer(200, 0)
+                if eq_engine is None:
+                    eq_engine = Equalizer(1000, 0)
                 eq_engine.setEnabled(True)
             except Exception:
                 eq_engine = None
 
             try:
-                if force or bass_engine is None or not bass_engine.hasControl():
-                    if bass_engine is not None:
-                        try: bass_engine.release()
-                        except Exception: pass
-                    bass_engine = BassBoost(200, 0)
+                if bass_engine is None:
+                    bass_engine = BassBoost(1000, 0)
                 bass_engine.setEnabled(True)
             except Exception:
                 bass_engine = None
 
             try:
-                if force or virtualizer_engine is None or not virtualizer_engine.hasControl():
-                    if virtualizer_engine is not None:
-                        try: virtualizer_engine.release()
-                        except Exception: pass
-                    virtualizer_engine = Virtualizer(200, 0)
+                if virtualizer_engine is None:
+                    virtualizer_engine = Virtualizer(1000, 0)
                 virtualizer_engine.setEnabled(True)
             except Exception:
                 virtualizer_engine = None
 
             try:
-                if force or loudness_engine is None or not loudness_engine.hasControl():
-                    if loudness_engine is not None:
-                        try: loudness_engine.release()
-                        except Exception: pass
+                if loudness_engine is None:
                     loudness_engine = LoudnessEnhancer(0)
                 loudness_engine.setEnabled(True)
             except Exception:
                 loudness_engine = None
 
             try:
-                if force or visualizer is None:
-                    if visualizer is not None:
-                        try: visualizer.release()
-                        except Exception: pass
+                if visualizer is None:
                     visualizer = Visualizer(0)
                     visualizer.setCaptureSize(128)
                     visualizer.setEnabled(True)
             except Exception:
                 visualizer = None
 
+        def apply_volume():
+            global last_vol
+            try:
+                vol = int(cfg.get('volume', 50))
+                if vol != last_vol:
+                    max_vol = audio_manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                    target_vol = int(round((vol / 100.0) * max_vol))
+                    audio_manager.setStreamVolume(AudioManager.STREAM_MUSIC, target_vol, 0)
+                    last_vol = vol
+            except Exception:
+                pass
+
+        def apply_dynamic_dsp(force=False):
+            global last_bass_strength, last_amp_mb
+            try:
+                if bass_engine and bass_engine.hasControl():
+                    base_strength = cfg['bass'] * 9.5
+                    final_strength = max(0, min(1000, int(base_strength + dyn_punch + bass_restorer - safety_red)))
+                    if force or abs(final_strength - last_bass_strength) >= 8:
+                        bass_engine.setStrength(final_strength)
+                        last_bass_strength = final_strength
+            except Exception:
+                pass
+
+            try:
+                if loudness_engine and loudness_engine.hasControl():
+                    amp_mb = max(0, min(900, int((cfg['bass'] * 7.5) + (bass_restorer * 1.5) - safety_red)))
+                    if force or abs(amp_mb - last_amp_mb) >= 8:
+                        loudness_engine.setTargetGain(amp_mb)
+                        last_amp_mb = amp_mb
+            except Exception:
+                pass
+
         def apply_eq():
+            global last_lmid_restorer
             try:
                 if not eq_engine or not eq_engine.hasControl():
-                    init_engines(force=True)
-                if not eq_engine:
-                    return
+                    return False
+
                 num_bands = eq_engine.getNumberOfBands()
                 level_range = eq_engine.getBandLevelRange()
                 min_lvl = level_range[0]
@@ -266,6 +310,7 @@ jobs:
                 mid_ratio = (cfg['mid_upper'] - 50) / 50.0
                 treble_ratio = (cfg['treble'] - 50) / 50.0
                 synth_extra = 0.30 if synth_on else 0.0
+                last_lmid_restorer = lmid_restorer
 
                 for b in range(num_bands):
                     freq_range = eq_engine.getBandFreqRange(b)
@@ -303,34 +348,35 @@ jobs:
                     else:
                         treble_lvl = int(max_lvl * treble_ratio)
                         eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, treble_lvl)))
+            except Exception:
+                return False
 
+            try:
                 if virtualizer_engine and virtualizer_engine.hasControl():
                     virtualizer_engine.setStrength(int(cfg['low_mid'] * 10))
-                if bass_engine and bass_engine.hasControl():
-                    bass_engine.setStrength(max(0, min(1000, int(cfg['bass'] * 9.5))))
-                if loudness_engine and loudness_engine.hasControl():
-                    loudness_engine.setTargetGain(max(0, min(900, int(cfg['bass'] * 7.5))))
             except Exception:
                 pass
+
+            apply_dynamic_dsp(force=True)
+            return True
 
         init_engines(force=True)
         apply_eq()
 
         while True:
             try:
+                # 1. ફાઇલ અપડેટ ચેક કરો (ક્યારેય સર્વિસ બંધ નહીં થાય)
                 if os.path.exists(settings_path):
                     mtime = os.path.getmtime(settings_path)
                     if mtime != last_mtime:
-                        last_mtime = mtime
                         with open(settings_path, 'r') as f:
-                            cfg.update(json.load(f))
-                        if not cfg.get('always_on', True):
-                            service.setAutoRestartService(False)
-                            service.stopSelf()
-                            break
-                        init_engines()
+                            loaded_data = json.load(f)
+                        cfg.update(loaded_data)
+                        last_mtime = mtime
+                        apply_volume()
                         apply_eq()
 
+                # 2. ઓડિયો વાગે છે કે નહીં તે ચેક કરો
                 is_playing = audio_manager.isMusicActive()
                 if is_playing and not was_playing:
                     init_engines(force=True)
@@ -338,63 +384,86 @@ jobs:
                 was_playing = is_playing
 
                 tick += 1
-                if tick % 16 == 0:
-                    init_engines()
-                    apply_eq()
 
-                if is_playing and bass_engine:
+                if is_playing and visualizer is None and tick % 25 == 0:
+                    init_engines(force=False)
+
+                # 3. કંટ્રોલ લોસ ચેક કરો
+                status_ok = True
+                if eq_engine is None or not eq_engine.hasControl():
+                    status_ok = False
+                if bass_engine is None or not bass_engine.hasControl():
+                    status_ok = False
+
+                if not status_ok:
+                    control_lost_ticks += 1
+                    if control_lost_ticks >= 5:
+                        init_engines(force=True)
+                        apply_eq()
+                        control_lost_ticks = 0
+                else:
+                    control_lost_ticks = 0
+
+                if is_playing:
+                    prev_synth = synth_on
+                    prev_limiter = limiter_on
+
                     if visualizer:
-                        fft_bytes = bytearray(128)
-                        if visualizer.getFft(fft_bytes) == 0:
-                            low_e = 0.0
-                            for i in range(2, 12, 2):
-                                r = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
-                                im = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
-                                low_e += (r * r + im * im) ** 0.5
-                            low_e /= 5.0
+                        try:
+                            fft_bytes = bytearray(128)
+                            if visualizer.getFft(fft_bytes) == 0:
+                                low_e = 0.0
+                                for i in range(2, 12, 2):
+                                    r = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
+                                    im = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
+                                    low_e += (r * r + im * im) ** 0.5
+                                low_e /= 5.0
 
-                            lmid_e = 0.0
-                            for i in range(12, 26, 2):
-                                r = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
-                                im = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
-                                lmid_e += (r * r + im * im) ** 0.5
-                            lmid_e /= 7.0
+                                lmid_e = 0.0
+                                for i in range(12, 26, 2):
+                                    r = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
+                                    im = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
+                                    lmid_e += (r * r + im * im) ** 0.5
+                                lmid_e /= 7.0
 
-                            avg_bass = (avg_bass * 0.85) + (low_e * 0.15)
-                            avg_lmid = (avg_lmid * 0.85) + (lmid_e * 0.15)
+                                avg_bass = (avg_bass * 0.85) + (low_e * 0.15)
+                                avg_lmid = (avg_lmid * 0.85) + (lmid_e * 0.15)
 
-                            delta = low_e - avg_bass
-                            if delta > 11.0 and cfg['bass'] > 0:
-                                dyn_punch = min(300.0, delta * (cfg['bass'] / 32.0))
-                            else:
-                                dyn_punch *= 0.60
+                                delta = low_e - avg_bass
+                                if delta > 11.0 and cfg['bass'] > 0:
+                                    dyn_punch = min(300.0, delta * (cfg['bass'] / 32.0))
+                                else:
+                                    dyn_punch *= 0.60
 
-                            if 2.0 < avg_bass < 38.0 and cfg['bass'] > 20:
-                                synth_on = True
-                                bass_restorer = min(280.0, (38.0 - avg_bass) * 7.5 * (cfg['bass'] / 100.0))
-                            else:
-                                synth_on = False
-                                bass_restorer *= 0.75
+                                if 2.0 < avg_bass < 38.0 and cfg['bass'] > 20:
+                                    synth_on = True
+                                    bass_restorer = min(280.0, (38.0 - avg_bass) * 7.5 * (cfg['bass'] / 100.0))
+                                else:
+                                    synth_on = False
+                                    bass_restorer *= 0.75
 
-                            if 1.5 < avg_lmid < 30.0 and cfg['low_mid'] > 50:
-                                lmid_restorer = min(0.45, ((30.0 - avg_lmid) / 30.0) * ((cfg['low_mid'] - 50) / 50.0))
-                            else:
-                                lmid_restorer *= 0.80
+                                if 1.5 < avg_lmid < 30.0 and cfg['low_mid'] > 50:
+                                    lmid_restorer = min(0.45, ((30.0 - avg_lmid) / 30.0) * ((cfg['low_mid'] - 50) / 50.0))
+                                else:
+                                    lmid_restorer *= 0.80
 
-                            if avg_bass > 85.0 and cfg['bass'] > 65:
-                                limiter_on = True
-                                safety_red = min(300.0, (avg_bass - 85.0) * 4.5 * (cfg['bass'] / 100.0))
-                            else:
-                                limiter_on = False
-                                safety_red *= 0.70
+                                if avg_bass > 85.0 and cfg['bass'] > 65:
+                                    limiter_on = True
+                                    safety_red = min(300.0, (avg_bass - 85.0) * 4.5 * (cfg['bass'] / 100.0))
+                                else:
+                                    limiter_on = False
+                                    safety_red *= 0.70
+                        except Exception:
+                            try:
+                                visualizer.release()
+                            except Exception:
+                                pass
+                            visualizer = None
 
-                    strength = int((cfg['bass'] * 9.5) + dyn_punch + bass_restorer - safety_red)
-                    if bass_engine.hasControl():
-                        bass_engine.setStrength(max(0, min(1000, strength)))
-
-                    if loudness_engine and loudness_engine.hasControl():
-                        amp_mb = int((cfg['bass'] * 7.5) + (bass_restorer * 1.5) - safety_red)
-                        loudness_engine.setTargetGain(max(0, min(900, amp_mb)))
+                    if (synth_on != prev_synth) or (limiter_on != prev_limiter) or (abs(lmid_restorer - last_lmid_restorer) > 0.05):
+                        apply_eq()
+                    else:
+                        apply_dynamic_dsp(force=False)
             except Exception:
                 pass
 
