@@ -44,20 +44,6 @@ if platform == 'android':
         Settings = autoclass('android.provider.Settings')
         Uri = autoclass('android.net.Uri')
         Build = autoclass('android.os.Build')
-
-        try:
-            from android.permissions import request_permissions
-            request_permissions([
-                'android.permission.BLUETOOTH_CONNECT',
-                'android.permission.BLUETOOTH_SCAN',
-                'android.permission.MODIFY_AUDIO_SETTINGS',
-                'android.permission.RECORD_AUDIO',
-                'android.permission.WAKE_LOCK',
-                'android.permission.FOREGROUND_SERVICE',
-                'android.permission.POST_NOTIFICATIONS'
-            ])
-        except Exception:
-            pass
     except Exception as e:
         print("Android Import Error:", e)
 
@@ -126,9 +112,8 @@ class SettingsPopup(ModalView):
         )
         root.add_widget(title_lbl)
 
-        # લેઆઉટ ફિક્સ: ScrollView કાઢી નાખ્યું છે અને ફિક્સ હાઈટ આપી છે
         sliders_box = BoxLayout(orientation='vertical', spacing='10dp', size_hint_y=None, height=dp(420))
-        
+
         self.card_cut, self.lbl_cut_val, self.slider_cut = self.app.create_slider_card(
             title="3. LOW CUT-OFF & AUTO-BASS (HPF)",
             min_val=50, max_val=250, cur_val=self.app.low_cut,
@@ -162,8 +147,6 @@ class SettingsPopup(ModalView):
         sliders_box.add_widget(self.card_treble)
 
         root.add_widget(sliders_box)
-        
-        # ખાલી જગ્યા ભરવા માટે સ્પેસર (જેથી Save બટન નીચે રહે)
         root.add_widget(Widget())
 
         btn_save = Button(
@@ -195,6 +178,7 @@ class AudioControllerApp(App):
         self.treble = 50
         self.device_name = "Detecting Audio Device..."
         self.was_music_active = False
+        self.in_foreground = True
 
         self.eq_engine = None
         self.bass_engine = None
@@ -211,10 +195,8 @@ class AudioControllerApp(App):
         self.bass_restorer_boost = 0.0
         self.lmid_restorer_boost = 0.0
         self.safety_reduction = 0.0
-        
-        self.update_event = None
-        self.save_event = None
 
+        self.update_event = None
         self.load_settings()
 
         root = BoxLayout(orientation='vertical', padding=[dp(12), dp(10), dp(12), dp(10)], spacing=dp(8))
@@ -249,7 +231,6 @@ class AudioControllerApp(App):
         dsp_bar.add_widget(self.lbl_status)
         root.add_widget(dsp_bar)
 
-        # ADVANCED DSP SETTINGS BUTTON (ઉપર)
         btn_settings = Button(
             text="⚙️ ADVANCED DSP SETTINGS",
             size_hint_y=None, height=dp(48),
@@ -260,7 +241,6 @@ class AudioControllerApp(App):
         btn_settings.bind(on_release=self.open_settings)
         root.add_widget(btn_settings)
 
-        # વચ્ચેની જગ્યા વેવ માટે (size_hint_y=1 એટલે બરાબર ફિટ થશે)
         self.audio_wave = AudioWaveWidget(size_hint_y=1)
         root.add_widget(self.audio_wave)
 
@@ -280,10 +260,9 @@ class AudioControllerApp(App):
         )
         root.add_widget(self.card_bass)
 
-        # નીચેની જગ્યા બ્રાન્ડિંગ માટે (size_hint_y=1)
         branding_box = BoxLayout(orientation='vertical', size_hint_y=1, spacing=dp(2))
         branding_box.add_widget(Widget())
-        
+
         lbl_logo = Label(
             text="PHOTON AUDIO", font_size='22sp', bold=True,
             color=get_color_from_hex('#64ffda'), halign='center'
@@ -330,18 +309,17 @@ class AudioControllerApp(App):
         top_row.add_widget(lbl_title)
         top_row.add_widget(lbl_val)
 
-        # સ્ટાન્ડર્ડ Slider
         slider = Slider(
             min=min_val, max=max_val, value=cur_val, step=1,
             cursor_size=('28dp', '28dp'), background_width='14dp',
             value_track=True, value_track_color=get_color_from_hex(accent_hex),
             value_track_width='5dp', size_hint_y=0.6
         )
-        
+
         def on_value(instance, value):
             lbl_val.text = f"{int(value)}{unit}"
             callback(instance, value)
-            
+
         slider.bind(value=on_value)
 
         card.add_widget(top_row)
@@ -349,9 +327,11 @@ class AudioControllerApp(App):
         return card, lbl_val, slider
 
     # ==========================================
-    # ALWAYS ON SERVICE
+    # LIFECYCLE & ALWAYS ON SERVICE
     # ==========================================
     def on_start(self):
+        self.in_foreground = True
+        Clock.schedule_once(self.request_android_permissions, 0.5)
         self.acquire_wakelock()
         self.request_battery_unrestricted()
         self.init_audio_engine()
@@ -361,15 +341,33 @@ class AudioControllerApp(App):
             self.start_background_service()
         Clock.schedule_interval(self.background_monitor, 1.5)
         Clock.schedule_interval(self.smart_track_analyzer, 0.1)
-        Clock.schedule_interval(self.service_health_check, 45)
+        Clock.schedule_interval(self.service_health_check, 20)
+
+    def request_android_permissions(self, dt):
+        if platform == 'android':
+            try:
+                from android.permissions import request_permissions
+                request_permissions([
+                    'android.permission.BLUETOOTH_CONNECT',
+                    'android.permission.BLUETOOTH_SCAN',
+                    'android.permission.MODIFY_AUDIO_SETTINGS',
+                    'android.permission.RECORD_AUDIO',
+                    'android.permission.POST_NOTIFICATIONS'
+                ])
+            except Exception as e:
+                print("Permission request error:", e)
 
     def on_pause(self):
+        self.in_foreground = False
         self.save_settings()
         if self.always_on:
+            # મેઈન એપના ઓડિયો એન્જિન રીલીઝ કરો જેથી બેકગ્રાઉન્ડ સર્વિસને 100% કંટ્રોલ મળે
+            self.release_audio_engine()
             self.start_background_service()
         return True
 
     def on_resume(self):
+        self.in_foreground = True
         self.detect_connected_audio_device()
         self.init_audio_engine()
         self.apply_all_audio_data()
@@ -388,38 +386,46 @@ class AudioControllerApp(App):
 
         if self.always_on:
             self.request_battery_unrestricted()
-            self.start_background_service()
+            self.start_background_service(force=True)
         else:
             self.stop_background_service()
 
-    def start_background_service(self):
-        if platform != 'android': return
+    def is_service_running(self):
+        if platform != 'android':
+            return False
         try:
             activity = PythonActivity.mActivity
+            am = activity.getSystemService(Context.ACTIVITY_SERVICE)
+            target = "com.photon.audio.ServicePhotondsp"
+            running = am.getRunningServices(100)
+            if running:
+                for svc in running.toArray():
+                    if str(svc.service.getClassName()) == target:
+                        return True
+        except Exception as e:
+            print("Service check error:", e)
+        return False
+
+    def start_background_service(self, force=False):
+        if platform != 'android':
+            return
+        try:
+            if not force and self.is_service_running():
+                return
+            activity = PythonActivity.mActivity
             service_class = autoclass('com.photon.audio.ServicePhotondsp')
-            title = "🟢 Photon Audio EQ Active"
+            title = "Photon Audio EQ Active"
             info = f"Bass:{self.bass}% | Cut:<{self.low_cut}Hz | L-Mid:{self.low_mid}% | Treble:{self.treble}%"
             try:
-                service_class.start(activity, title, info, '', '')
-                return
+                service_class.start(activity, 'icon', title, info, '')
             except Exception:
-                pass
-            try:
-                intent = Intent(activity, service_class)
-                intent.putExtra('android.intent.extra.NOTIFICATION_TITLE', title)
-                intent.putExtra('android.intent.extra.NOTIFICATION_DESCRIPTION', info)
-                if Build and Build.VERSION.SDK_INT >= 26:
-                    activity.startForegroundService(intent)
-                else:
-                    activity.startService(intent)
-                return
-            except Exception as e:
-                print("Intent Service Start Error:", e)
+                service_class.start(activity, '')
         except Exception as e:
             print("Start Service Error:", e)
 
     def stop_background_service(self):
-        if platform != 'android': return
+        if platform != 'android':
+            return
         try:
             activity = PythonActivity.mActivity
             service_class = autoclass('com.photon.audio.ServicePhotondsp')
@@ -429,21 +435,9 @@ class AudioControllerApp(App):
             print("Stop Service Error:", e)
 
     def service_health_check(self, dt):
-        if not self.always_on or platform != 'android': return
-        try:
-            activity = PythonActivity.mActivity
-            am = activity.getSystemService(Context.ACTIVITY_SERVICE)
-            target = "com.photon.audio.ServicePhotondsp"
-            try:
-                running = am.getRunningServices(80)
-                for svc in running.toArray():
-                    if str(svc.service.getClassName()) == target:
-                        return
-            except Exception:
-                pass
-            self.start_background_service()
-        except Exception as e:
-            print("Health check error:", e)
+        if self.always_on and platform == 'android':
+            if not self.is_service_running():
+                self.start_background_service(force=True)
 
     def request_battery_unrestricted(self):
         if platform == 'android' and PowerManager and Settings and Uri:
@@ -472,36 +466,76 @@ class AudioControllerApp(App):
     # ==========================================
     # AUDIO & DSP
     # ==========================================
+    def release_audio_engine(self):
+        for attr in ('visualizer', 'eq_engine', 'bass_engine', 'virtualizer_engine', 'loudness_engine'):
+            eng = getattr(self, attr, None)
+            if eng is not None:
+                try:
+                    eng.release()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
     def init_audio_engine(self):
-        if platform != 'android': return
+        if platform != 'android' or not self.in_foreground:
+            return
         try:
-            if self.eq_engine is None: self.eq_engine = Equalizer(100, 0)
+            if self.eq_engine is None or not self.eq_engine.hasControl():
+                if self.eq_engine:
+                    try: self.eq_engine.release()
+                    except Exception: pass
+                self.eq_engine = Equalizer(100, 0)
             self.eq_engine.setEnabled(True)
-        except: self.eq_engine = None
+        except Exception:
+            self.eq_engine = None
+
         try:
-            if self.bass_engine is None: self.bass_engine = BassBoost(100, 0)
+            if self.bass_engine is None or not self.bass_engine.hasControl():
+                if self.bass_engine:
+                    try: self.bass_engine.release()
+                    except Exception: pass
+                self.bass_engine = BassBoost(100, 0)
             self.bass_engine.setEnabled(True)
-        except: self.bass_engine = None
+        except Exception:
+            self.bass_engine = None
+
         try:
-            if self.virtualizer_engine is None and Virtualizer: self.virtualizer_engine = Virtualizer(100, 0)
-            if self.virtualizer_engine: self.virtualizer_engine.setEnabled(True)
-        except: self.virtualizer_engine = None
+            if Virtualizer and (self.virtualizer_engine is None or not self.virtualizer_engine.hasControl()):
+                if self.virtualizer_engine:
+                    try: self.virtualizer_engine.release()
+                    except Exception: pass
+                self.virtualizer_engine = Virtualizer(100, 0)
+            if self.virtualizer_engine:
+                self.virtualizer_engine.setEnabled(True)
+        except Exception:
+            self.virtualizer_engine = None
+
         try:
-            if self.loudness_engine is None and LoudnessEnhancer: self.loudness_engine = LoudnessEnhancer(0)
-            if self.loudness_engine: self.loudness_engine.setEnabled(True)
-        except: self.loudness_engine = None
+            if LoudnessEnhancer and (self.loudness_engine is None or not self.loudness_engine.hasControl()):
+                if self.loudness_engine:
+                    try: self.loudness_engine.release()
+                    except Exception: pass
+                self.loudness_engine = LoudnessEnhancer(0)
+            if self.loudness_engine:
+                self.loudness_engine.setEnabled(True)
+        except Exception:
+            self.loudness_engine = None
+
         try:
-            if self.visualizer is None and Visualizer:
+            if Visualizer and self.visualizer is None:
                 self.visualizer = Visualizer(0)
                 self.visualizer.setCaptureSize(128)
                 self.visualizer.setEnabled(True)
-        except: self.visualizer = None
+        except Exception:
+            self.visualizer = None
 
     def smart_track_analyzer(self, dt):
-        if platform != 'android' or not self.visualizer or not self.was_music_active: return
+        if platform != 'android' or not self.in_foreground or not self.visualizer or not self.was_music_active:
+            return
         try:
             fft_bytes = bytearray(128)
-            if self.visualizer.getFft(fft_bytes) != 0: return
+            if self.visualizer.getFft(fft_bytes) != 0:
+                return
 
             low_energy = 0.0
             for i in range(2, 12, 2):
@@ -549,46 +583,55 @@ class AudioControllerApp(App):
                 self.safety_reduction *= 0.70
 
             self.apply_dynamic_dsp()
-        except: pass
+        except Exception:
+            pass
 
     def apply_dynamic_dsp(self):
-        if platform != 'android': return
+        if platform != 'android' or not self.in_foreground:
+            return
         try:
             base_strength = self.bass * 9.5
             final_strength = int(base_strength + self.dynamic_punch_boost + self.bass_restorer_boost - self.safety_reduction)
             final_strength = max(0, min(1000, final_strength))
 
-            if self.bass_engine: self.bass_engine.setStrength(final_strength)
+            if self.bass_engine and self.bass_engine.hasControl():
+                self.bass_engine.setStrength(final_strength)
 
-            if self.loudness_engine:
+            if self.loudness_engine and self.loudness_engine.hasControl():
                 amp_boost_mb = int((self.bass * 7.5) + (self.bass_restorer_boost * 1.5) - self.safety_reduction)
                 self.loudness_engine.setTargetGain(max(0, min(900, amp_boost_mb)))
 
-            if self.virtualizer_engine: self.virtualizer_engine.setStrength(int(self.low_mid * 10))
+            if self.virtualizer_engine and self.virtualizer_engine.hasControl():
+                self.virtualizer_engine.setStrength(int(self.low_mid * 10))
 
-            if hasattr(self, 'lbl_status'): self.lbl_status.text = self.get_status_text()
-        except: pass
+            if hasattr(self, 'lbl_status'):
+                self.lbl_status.text = self.get_status_text()
+        except Exception:
+            pass
 
     def schedule_audio_update(self):
         if self.update_event:
             self.update_event.cancel()
-        self.update_event = Clock.schedule_once(self._do_audio_update, 0.15)
+        self.update_event = Clock.schedule_once(self._do_audio_update, 0.12)
 
     def _do_audio_update(self, dt):
         self.save_settings()
         self.apply_all_audio_data()
 
     def apply_all_audio_data(self):
-        if hasattr(self, 'lbl_status'): self.lbl_status.text = self.get_status_text()
-        if platform != 'android': return
+        if hasattr(self, 'lbl_status'):
+            self.lbl_status.text = self.get_status_text()
+        if platform != 'android' or not self.in_foreground:
+            return
         try:
             activity = PythonActivity.mActivity
             audio_manager = activity.getSystemService(Context.AUDIO_SERVICE)
             max_vol = audio_manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
             audio_manager.setStreamVolume(AudioManager.STREAM_MUSIC, int((self.volume / 100.0) * max_vol), 0)
+            self.init_audio_engine()
             self.apply_dynamic_dsp()
 
-            if self.eq_engine:
+            if self.eq_engine and self.eq_engine.hasControl():
                 num_bands = self.eq_engine.getNumberOfBands()
                 level_range = self.eq_engine.getBandLevelRange()
                 min_lvl, max_lvl = level_range[0], level_range[1]
@@ -625,7 +668,8 @@ class AudioControllerApp(App):
                             self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lvl)))
                         else:
                             punch = int(max_lvl * min(1.0, bass_drive + synth_extra))
-                            if self.limiter_active: punch = int(punch * 0.78)
+                            if self.limiter_active:
+                                punch = int(punch * 0.78)
                             self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, punch)))
                     elif 550000 < center_f < 4000000:
                         coupled = max(-1.0, min(1.0, (mid_ratio * 0.75) + (lmid_amp * 0.35)))
@@ -638,7 +682,8 @@ class AudioControllerApp(App):
     def detect_connected_audio_device(self):
         if platform != 'android':
             self.device_name = "PC / Simulated Speaker"
-            if hasattr(self, 'lbl_device'): self.lbl_device.text = f"🔊 Output: {self.device_name}"
+            if hasattr(self, 'lbl_device'):
+                self.lbl_device.text = f"🔊 Output: {self.device_name}"
             return
 
         detected = "Phone Speaker"
@@ -653,9 +698,11 @@ class AudioControllerApp(App):
                         p_name = dev.getProductName()
                         if p_name:
                             detected = p_name.toString()
-                            if dev_type in (8, 7, 22): detected = f"BT: {detected}"
+                            if dev_type in (8, 7, 22):
+                                detected = f"BT: {detected}"
                             break
-        except Exception as e: print("Device Scan Error:", e)
+        except Exception as e:
+            print("Device Scan Error:", e)
 
         if detected != self.device_name:
             self.device_name = detected
@@ -664,8 +711,11 @@ class AudioControllerApp(App):
             self.apply_all_audio_data()
 
     def background_monitor(self, dt):
+        if not self.in_foreground:
+            return
         self.detect_connected_audio_device()
-        if platform != 'android': return
+        if platform != 'android':
+            return
         try:
             activity = PythonActivity.mActivity
             audio_manager = activity.getSystemService(Context.AUDIO_SERVICE)
@@ -677,8 +727,10 @@ class AudioControllerApp(App):
 
             self.was_music_active = is_playing
             state = "🎵 Active" if is_playing else "⏸ Idle"
-            if hasattr(self, 'lbl_device'): self.lbl_device.text = f"🔊 {self.device_name}  [{state}]"
-        except Exception as e: print("Monitor Error:", e)
+            if hasattr(self, 'lbl_device'):
+                self.lbl_device.text = f"🔊 {self.device_name}  [{state}]"
+        except Exception as e:
+            print("Monitor Error:", e)
 
     def get_status_text(self):
         tag = "🛡️ LIMITER" if self.limiter_active else ("🔥 AUTO-BASS ADD" if self.bass_synth_active else "⚡ +30% AMP PUNCH")
@@ -716,8 +768,10 @@ class AudioControllerApp(App):
     # ==========================================
     def get_settings_path(self):
         if platform == 'android':
-            try: return os.path.join(PythonActivity.mActivity.getFilesDir().getAbsolutePath(), 'audio_eq_settings.json')
-            except: pass
+            try:
+                return os.path.join(PythonActivity.mActivity.getFilesDir().getAbsolutePath(), 'audio_eq_settings.json')
+            except Exception:
+                pass
         return 'audio_eq_settings.json'
 
     def save_settings(self):
@@ -727,14 +781,17 @@ class AudioControllerApp(App):
             'mid_upper': self.mid_upper, 'treble': self.treble
         }
         try:
-            with open(self.get_settings_path(), 'w') as f: json.dump(data, f)
-        except: pass
+            with open(self.get_settings_path(), 'w') as f:
+                json.dump(data, f)
+        except Exception:
+            pass
 
     def load_settings(self):
         path = self.get_settings_path()
         if os.path.exists(path):
             try:
-                with open(path, 'r') as f: data = json.load(f)
+                with open(path, 'r') as f:
+                    data = json.load(f)
                 self.always_on = data.get('always_on', True)
                 self.volume = data.get('volume', 50)
                 self.bass = data.get('bass', 50)
@@ -742,7 +799,9 @@ class AudioControllerApp(App):
                 self.low_mid = data.get('low_mid', 50)
                 self.mid_upper = data.get('mid_upper', 50)
                 self.treble = data.get('treble', 50)
-            except: pass
+            except Exception:
+                pass
+
 
 if __name__ == "__main__":
     AudioControllerApp().run()
