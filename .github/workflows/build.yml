@@ -70,11 +70,11 @@ jobs:
         python3 -m pip install cython==0.29.33 kivy[base] pillow python-for-android==2024.1.21
 
     # ============================================================
-    # 🔥 PATCH 1: PythonService.java & Service.tmpl.java (Kill-Proof + Android 14 FGS)
+    # 🔥 SAFE PATCH: PythonService.java & AndroidManifest.tmpl.xml
     # ============================================================
-    - name: Patch p4a PythonService.java and Service.tmpl.java
+    - name: Patch p4a PythonService.java and AndroidManifest for Android 14
       run: |
-        python3 -c "
+        python3 - << 'EOF'
         import os, glob, re, pythonforandroid
         p4a_dir = os.path.dirname(pythonforandroid.__file__)
 
@@ -82,68 +82,44 @@ jobs:
             with open(f, 'r') as file:
                 content = file.read()
 
-            # 1. Android 14 Foreground Service Type (matches both getServiceId() and 1)
+            # 1. Android 14 Foreground Service Type (Safe single-line match)
             content = re.sub(
-                r'startForeground\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*;',
-                r'if (Build.VERSION.SDK_INT >= 29) { startForeground(\1, \2, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK); } else { startForeground(\1, \2); }',
+                r'startForeground\s*\(\s*getServiceId\(\)\s*,\s*notification\s*\)\s*;',
+                'if (Build.VERSION.SDK_INT >= 29) { startForeground(getServiceId(), notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK); } else { startForeground(getServiceId(), notification); }',
                 content
             )
 
             # 2. Prevent NullPointerException when service restarts with null Intent
             content = re.sub(
                 r'(public\s+int\s+onStartCommand\s*\(\s*Intent\s+intent\s*,\s*int\s+flags\s*,\s*int\s+startId\s*\)\s*\{)',
-                r'\1\n        if (intent == null || intent.getExtras() == null) { return START_STICKY; }',
+                r'\1 if (intent == null || intent.getExtras() == null) { return START_STICKY; }',
                 content
             )
 
-            # 3. Never return START_NOT_STICKY when service is already running
-            content = content.replace('return START_NOT_STICKY;', 'return START_REDELIVER_INTENT;')
-
-            # 4. Force stopWithTask = false everywhere and disable stopSelf() in onTaskRemoved
+            # 3. Keep service sticky & prevent stopping when swiped from Recents (no brace mismatch)
+            content = content.replace('return START_NOT_STICKY;', 'return START_STICKY;')
             content = re.sub(r'stopWithTask\s*=\s*[^;]+;', 'stopWithTask = false;', content)
-            content = re.sub(
-                r'public\s+void\s+onTaskRemoved\s*\(\s*Intent\s+rootIntent\s*\)\s*\{[\s\S]*?\}',
-                'public void onTaskRemoved(Intent rootIntent) { super.onTaskRemoved(rootIntent); /* KEEP ALIVE */ }',
-                content
-            )
+            content = re.sub(r'if\s*\(\s*stopWithTask\s*\)', 'if (false)', content)
 
             with open(f, 'w') as file:
                 file.write(content)
-            print('Patched PythonService.java:', f)
+            print('Successfully patched PythonService.java:', f)
 
-        for f in glob.glob(p4a_dir + '/**/Service.tmpl.java', recursive=True):
-            with open(f, 'r') as file:
-                content = file.read()
-            content = content.replace('return START_STICKY;', 'return START_REDELIVER_INTENT;')
-            content = content.replace('return START_NOT_STICKY;', 'return START_REDELIVER_INTENT;')
-            with open(f, 'w') as file:
-                file.write(content)
-            print('Patched Service.tmpl.java:', f)
-        "
-
-    # ============================================================
-    # 🔥 PATCH 2: AndroidManifest.tmpl.xml માં foregroundServiceType ઉમેરો
-    # ============================================================
-    - name: Patch p4a AndroidManifest templates for Android 14
-      run: |
-        python3 -c "
-        import os, glob, re, pythonforandroid
-        p4a_dir = os.path.dirname(pythonforandroid.__file__)
         for f in glob.glob(p4a_dir + '/**/AndroidManifest*.tmpl.xml', recursive=True):
             with open(f, 'r') as file:
                 content = file.read()
 
-            content = re.sub(r'\s*android:stopWithTask=\"[^\"]*\"', '', content)
-            content = re.sub(r'\s*android:foregroundServiceType=\"[^\"]*\"', '', content)
+            content = re.sub(r'\s*android:stopWithTask="[^"]*"', '', content)
+            content = re.sub(r'\s*android:foregroundServiceType="[^"]*"', '', content)
             new_content = content.replace(
                 '<service ',
-                '<service android:stopWithTask=\"false\" android:foregroundServiceType=\"mediaPlayback\" '
+                '<service android:stopWithTask="false" android:foregroundServiceType="mediaPlayback" '
             )
 
             with open(f, 'w') as file:
                 file.write(new_content)
-            print('Patched Manifest template:', f)
-        "
+            print('Successfully patched Manifest template:', f)
+        EOF
 
     - name: Prepare app source, Logo, and Always-On Background Service
       run: |
@@ -227,7 +203,6 @@ jobs:
                     if eq_engine is not None:
                         try: eq_engine.release()
                         except Exception: pass
-                    # Priority = 200 (High), AudioSession = 0 (Global Output Mix)
                     eq_engine = Equalizer(200, 0)
                 eq_engine.setEnabled(True)
             except Exception:
