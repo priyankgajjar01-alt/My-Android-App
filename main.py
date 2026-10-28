@@ -15,6 +15,8 @@ Context = None
 AudioManager = None
 Equalizer = None
 BassBoost = None
+Virtualizer = None
+LoudnessEnhancer = None
 Visualizer = None
 PowerManager = None
 Intent = None
@@ -29,6 +31,8 @@ if platform == 'android':
         AudioManager = autoclass('android.media.AudioManager')
         Equalizer = autoclass('android.media.audiofx.Equalizer')
         BassBoost = autoclass('android.media.audiofx.BassBoost')
+        Virtualizer = autoclass('android.media.audiofx.Virtualizer')
+        LoudnessEnhancer = autoclass('android.media.audiofx.LoudnessEnhancer')
         Visualizer = autoclass('android.media.audiofx.Visualizer')
         PowerManager = autoclass('android.os.PowerManager')
         Intent = autoclass('android.content.Intent')
@@ -71,24 +75,32 @@ class AudioControllerApp(App):
 
         # 6-Band Professional Audio Settings + Always On Flag
         self.always_on = True  # Kill-Proof Background Mode (Default ON)
-        self.volume = 50       # Master Volume
-        self.bass = 50         # Bass Booster (Punch)
-        self.low_cut = 50      # Low Cut-Off High-Pass Filter (50Hz to 250Hz)
-        self.low_mid = 50      # Low-Mid Range (250Hz - 500Hz)
-        self.mid_upper = 50    # Mid & Upper-Mid Range (500Hz - 4kHz)
-        self.treble = 50       # Treble / Highs (4kHz - 20kHz)
+        self.volume = 50       # 1. Master Volume (0 to 100%)
+        self.bass = 50         # 2. Bass Booster (+30% Heavy Amp Drive, 0 to 100%)
+        self.low_cut = 50      # 3. Low Cut-Off HPF + Auto Bass Exciter (50Hz to 250Hz)
+        self.low_mid = 50      # 4. Low-Mid Amplitude & Restorer (250Hz - 500Hz)
+        self.mid_upper = 50    # 5. Mid & Upper-Mid Range (500Hz - 4kHz)
+        self.treble = 50       # 6. Treble / Highs (4kHz - 20kHz)
 
         self.device_name = "Detecting Audio Device..."
         self.was_music_active = False
 
+        # Audio Hardware Engines
         self.eq_engine = None
         self.bass_engine = None
+        self.virtualizer_engine = None
+        self.loudness_engine = None
         self.visualizer = None
         self.wake_lock = None
 
+        # Smart Track Monitor States
         self.avg_bass_energy = 0.0
+        self.avg_lmid_energy = 0.0
         self.limiter_active = False
+        self.bass_synth_active = False
         self.dynamic_punch_boost = 0.0
+        self.bass_restorer_boost = 0.0
+        self.lmid_restorer_boost = 0.0
         self.safety_reduction = 0.0
 
         self.load_settings()
@@ -125,7 +137,7 @@ class AudioControllerApp(App):
         self.btn_always_on.bind(on_release=self.toggle_always_on)
         self.main_layout.add_widget(self.btn_always_on)
 
-        # 3. STATUS MONITOR BAR (Live DSP & Limiter status)
+        # 3. STATUS MONITOR BAR (Live DSP, Auto-Bass & Limiter status)
         dsp_bar = ProCard(bg_hex='#1e3a5f', size_hint_y=None, height='34dp', padding='4dp')
         self.lbl_status = Label(
             text=self.get_status_text(),
@@ -148,7 +160,7 @@ class AudioControllerApp(App):
         sliders_box.add_widget(self.card_vol)
 
         self.card_bass, self.lbl_bass_val, self.slider_bass = self.create_slider_card(
-            title="2. BASS BOOSTER (PUNCH)",
+            title="2. BASS BOOSTER (+30% AMP POWER)",
             min_val=0, max_val=100, cur_val=self.bass,
             unit="%", accent_hex='#ff6d00',
             callback=self.on_bass_change
@@ -156,7 +168,7 @@ class AudioControllerApp(App):
         sliders_box.add_widget(self.card_bass)
 
         self.card_cut, self.lbl_cut_val, self.slider_cut = self.create_slider_card(
-            title="3. LOW CUT-OFF (HPF)",
+            title="3. LOW CUT-OFF & AUTO-BASS (HPF)",
             min_val=50, max_val=250, cur_val=self.low_cut,
             unit=" Hz", accent_hex='#ffab40',
             callback=self.on_cut_change
@@ -164,7 +176,7 @@ class AudioControllerApp(App):
         sliders_box.add_widget(self.card_cut)
 
         self.card_lmid, self.lbl_lmid_val, self.slider_lmid = self.create_slider_card(
-            title="4. LOW-MID RANGE (250-500Hz)",
+            title="4. LOW-MID AMPLITUDE (250-500Hz)",
             min_val=0, max_val=100, cur_val=self.low_mid,
             unit="%", accent_hex='#ab47bc',
             callback=self.on_lmid_change
@@ -238,7 +250,12 @@ class AudioControllerApp(App):
             try:
                 activity = PythonActivity.mActivity
                 service = autoclass('com.photon.audio.ServicePhotondsp')
-                service.start(activity, "")
+                title = "🟢 Photon Audio EQ Active"
+                info = f"Bass: {self.bass}% | Cut: <{self.low_cut}Hz | L-Mid: {self.low_mid}% | Treble: {self.treble}%"
+                try:
+                    service.start(activity, 'icon', title, info, '')
+                except Exception:
+                    service.start(activity, '')
             except Exception as e:
                 print("Start Service Error:", e)
 
@@ -277,7 +294,7 @@ class AudioControllerApp(App):
                 print("WakeLock Error:", e)
 
     # ==========================================
-    # AUDIO ENGINE INIT & SMART ANALYZER
+    # AUDIO ENGINE INIT (WITH +30% AMP PRE-AMP)
     # ==========================================
     def init_audio_engine(self):
         if platform == 'android':
@@ -285,16 +302,41 @@ class AudioControllerApp(App):
                 if self.eq_engine is None:
                     self.eq_engine = Equalizer(100, 0)
                     self.eq_engine.setEnabled(True)
+            except Exception as e:
+                print("EQ Init Error:", e)
+
+            try:
                 if self.bass_engine is None:
                     self.bass_engine = BassBoost(100, 0)
                     self.bass_engine.setEnabled(True)
+            except Exception as e:
+                print("BassBoost Init Error:", e)
+
+            try:
+                if self.virtualizer_engine is None and Virtualizer:
+                    self.virtualizer_engine = Virtualizer(100, 0)
+                    self.virtualizer_engine.setEnabled(True)
+            except Exception:
+                self.virtualizer_engine = None
+
+            try:
+                if self.loudness_engine is None and LoudnessEnhancer:
+                    self.loudness_engine = LoudnessEnhancer(0)
+                    self.loudness_engine.setEnabled(True)
+            except Exception:
+                self.loudness_engine = None
+
+            try:
                 if self.visualizer is None and Visualizer:
                     self.visualizer = Visualizer(0)
                     self.visualizer.setCaptureSize(128)
                     self.visualizer.setEnabled(True)
             except Exception as e:
-                print("AudioFX Init Error:", e)
+                print("Visualizer Init Error:", e)
 
+    # ==========================================
+    # SMART TRACK ANALYZER (AUTO-BASS SYNTH + LOW-MID FILL + LIMITER)
+    # ==========================================
     def smart_track_analyzer(self, dt):
         if platform != 'android' or not self.visualizer or not self.was_music_active:
             return
@@ -305,34 +347,58 @@ class AudioControllerApp(App):
             if status != 0:
                 return
 
+            # 1. Measure Sub & Kick Bass Energy (Bins 2 to 10: ~40Hz to 200Hz)
             low_energy = 0.0
             for i in range(2, 12, 2):
-                real = fft_bytes[i]
-                imag = fft_bytes[i + 1]
-                if real > 127:
-                    real -= 256
-                if imag > 127:
-                    imag -= 256
-                mag = (real * real + imag * imag) ** 0.5
-                low_energy += mag
+                real = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
+                imag = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
+                low_energy += (real * real + imag * imag) ** 0.5
+            low_energy /= 5.0
 
-            low_energy = low_energy / 5.0
-            self.avg_bass_energy = (self.avg_bass_energy * 0.88) + (low_energy * 0.12)
+            # 2. Measure Low-Mid Energy (Bins 12 to 24: ~250Hz to 500Hz)
+            lmid_energy = 0.0
+            for i in range(12, 26, 2):
+                real = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
+                imag = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
+                lmid_energy += (real * real + imag * imag) ** 0.5
+            lmid_energy /= 7.0
 
+            self.avg_bass_energy = (self.avg_bass_energy * 0.85) + (low_energy * 0.15)
+            self.avg_lmid_energy = (self.avg_lmid_energy * 0.85) + (lmid_energy * 0.15)
+
+            # A) TRANSIENT BEAT DETECTION (Tabla / Dhol Thap -> +30% Harder Kick)
             beat_delta = low_energy - self.avg_bass_energy
-            if beat_delta > 14.0 and self.bass > 0:
-                self.dynamic_punch_boost = min(200.0, beat_delta * (self.bass / 45.0))
+            if beat_delta > 11.0 and self.bass > 0:
+                self.dynamic_punch_boost = min(300.0, beat_delta * (self.bass / 32.0))
             else:
-                self.dynamic_punch_boost *= 0.55
+                self.dynamic_punch_boost *= 0.60
 
-            overload_threshold = 72.0
-            if self.avg_bass_energy > overload_threshold and self.bass > 55:
+            # B) AUTO-BASS EXCITER / RESTORER (If playing track has weak/no bass!)
+            if 2.0 < self.avg_bass_energy < 38.0 and self.bass > 20:
+                self.bass_synth_active = True
+                deficit = 38.0 - self.avg_bass_energy
+                # Inject missing bass frequency power proportional to user's Bass slider
+                self.bass_restorer_boost = min(280.0, deficit * 7.5 * (self.bass / 100.0))
+            else:
+                self.bass_synth_active = False
+                self.bass_restorer_boost *= 0.75
+
+            # C) AUTO LOW-MID RESTORER (If track lacks 250-500Hz warmth/body)
+            if 1.5 < self.avg_lmid_energy < 30.0 and self.low_mid > 50:
+                lmid_deficit = 30.0 - self.avg_lmid_energy
+                self.lmid_restorer_boost = min(0.45, (lmid_deficit / 30.0) * ((self.low_mid - 50) / 50.0))
+            else:
+                self.lmid_restorer_boost *= 0.80
+
+            # D) SPEAKER PROTECTION LIMITER (Only when track is dangerously overloaded)
+            overload_threshold = 85.0
+            if self.avg_bass_energy > overload_threshold and self.bass > 65:
                 self.limiter_active = True
                 excess = self.avg_bass_energy - overload_threshold
-                self.safety_reduction = min(350.0, excess * 5.5 * (self.bass / 100.0))
+                self.safety_reduction = min(300.0, excess * 4.5 * (self.bass / 100.0))
             else:
                 self.limiter_active = False
-                self.safety_reduction *= 0.7
+                self.safety_reduction *= 0.70
 
             self.apply_dynamic_dsp()
         except Exception:
@@ -342,12 +408,25 @@ class AudioControllerApp(App):
         if platform != 'android':
             return
         try:
-            base_strength = self.bass * 6.5
-            final_strength = int(base_strength + self.dynamic_punch_boost - self.safety_reduction)
+            # +30% Higher Base Drive for Big Amplifiers (9.5x instead of 6.5x)
+            base_strength = self.bass * 9.5
+            final_strength = int(
+                base_strength + self.dynamic_punch_boost + self.bass_restorer_boost - self.safety_reduction
+            )
             final_strength = max(0, min(1000, final_strength))
 
             if self.bass_engine:
                 self.bass_engine.setStrength(final_strength)
+
+            # Drive LoudnessEnhancer Pre-Amp for +30% heavier physical punch on external amps
+            if self.loudness_engine:
+                amp_boost_mb = int((self.bass * 7.5) + (self.bass_restorer_boost * 1.5) - self.safety_reduction)
+                amp_boost_mb = max(0, min(900, amp_boost_mb))
+                self.loudness_engine.setTargetGain(amp_boost_mb)
+
+            # Drive Virtualizer for Low-Mid (250-500Hz) body thickness
+            if self.virtualizer_engine:
+                self.virtualizer_engine.setStrength(int(self.low_mid * 10))
 
             self.lbl_status.text = self.get_status_text()
         except Exception:
@@ -360,28 +439,39 @@ class AudioControllerApp(App):
         self.lbl_status.text = self.get_status_text()
         self.save_settings()
 
+        if self.always_on:
+            self.start_background_service()
+
         if platform == 'android':
             try:
                 activity = PythonActivity.mActivity
                 audio_manager = activity.getSystemService(Context.AUDIO_SERVICE)
 
+                # 1. Master Volume (Unchanged)
                 max_vol = audio_manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                 target_vol = int((self.volume / 100.0) * max_vol)
                 audio_manager.setStreamVolume(AudioManager.STREAM_MUSIC, target_vol, 0)
 
+                # 2. Dynamic Bass + 30% Amp Booster
                 self.apply_dynamic_dsp()
 
+                # 3. 6-Band Precision Equalizer Mapping
                 if self.eq_engine:
                     num_bands = self.eq_engine.getNumberOfBands()
                     level_range = self.eq_engine.getBandLevelRange()
-                    min_lvl = level_range[0]
-                    max_lvl = level_range[1]
+                    min_lvl = level_range[0]  # Typically -1500 mB (-15dB)
+                    max_lvl = level_range[1]  # Typically +1500 mB (+15dB)
 
                     cutoff_milli = self.low_cut * 1000
-                    bass_ratio = self.bass / 100.0
-                    lmid_ratio = (self.low_mid - 50) / 50.0
+                    # +30% Overdrive ratio on Bass EQ curve
+                    bass_drive = min(1.35, (self.bass / 100.0) * 1.30)
+                    # Full-range Amplitude scaling (-1.0 at 0%, 0.0 at 50%, +1.0 at 100%)
+                    lmid_amp = (self.low_mid - 50) / 50.0
                     mid_ratio = (self.mid_upper - 50) / 50.0
                     treble_ratio = (self.treble - 50) / 50.0
+
+                    # Extra injection when track lacks bass
+                    synth_extra = 0.30 if self.bass_synth_active else 0.0
 
                     for b in range(num_bands):
                         freq_range = self.eq_engine.getBandFreqRange(b)
@@ -389,30 +479,51 @@ class AudioControllerApp(App):
                         high_f = freq_range[1]
                         center_f = self.eq_engine.getCenterFreq(b)
 
-                        if high_f <= cutoff_milli:
-                            self.eq_engine.setBandLevel(b, min_lvl)
-                        elif low_f < cutoff_milli < high_f:
-                            above_ratio = (high_f - cutoff_milli) / float(high_f - low_f)
-                            if above_ratio < 0.4:
-                                lvl = int(min_lvl * (1.0 - above_ratio))
+                        # A) LOW-MID BAND (150Hz to 550Hz - Covers Android's 230Hz Band 1 directly!)
+                        if 150000 <= center_f <= 550000:
+                            # If user set Low Cut-Off above 230Hz, blend cut with Low-Mid control
+                            if high_f <= cutoff_milli:
+                                self.eq_engine.setBandLevel(b, min_lvl)
                             else:
-                                lvl = int(max_lvl * 0.7 * bass_ratio * above_ratio)
-                            self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lvl)))
-                        else:
-                            if center_f <= 180000:
-                                punch_lvl = int(max_lvl * 0.85 * bass_ratio)
-                                if self.limiter_active:
-                                    punch_lvl = int(punch_lvl * 0.72)
-                                self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, punch_lvl)))
-                            elif 240000 <= center_f <= 500000:
-                                lmid_lvl = int(max_lvl * 0.6 * lmid_ratio)
+                                # Full 100% Amplitude Control + Auto Low-Mid Frequency Restorer
+                                effective_lmid = max(-1.0, min(1.0, lmid_amp + self.lmid_restorer_boost))
+                                if effective_lmid >= 0:
+                                    lmid_lvl = int(max_lvl * effective_lmid)
+                                else:
+                                    lmid_lvl = int( abs(effective_lmid) * min_lvl )
                                 self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lmid_lvl)))
-                            elif 500000 < center_f < 4000000:
-                                mid_lvl = int(max_lvl * 0.6 * mid_ratio)
-                                self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, mid_lvl)))
+
+                        # B) SUB & KICK BASS BAND (< 150Hz - E.g. 60Hz Band 0)
+                        elif center_f < 150000:
+                            if high_f <= cutoff_milli:
+                                self.eq_engine.setBandLevel(b, min_lvl)
+                            elif low_f < cutoff_milli < high_f:
+                                # Cut sub-frequencies below low_cut, but heavily boost punch right above low_cut!
+                                above_ratio = (high_f - cutoff_milli) / float(high_f - low_f)
+                                if above_ratio < 0.28 and not self.bass_synth_active:
+                                    lvl = int(min_lvl * (1.0 - above_ratio))
+                                else:
+                                    # Top-level punch & Auto-Bass injection right at the cut-off edge
+                                    boost_factor = min(1.0, (bass_drive + synth_extra) * max(0.65, above_ratio))
+                                    lvl = int(max_lvl * boost_factor)
+                                self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lvl)))
                             else:
-                                treble_lvl = int(max_lvl * treble_ratio)
-                                self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, treble_lvl)))
+                                punch_lvl = int(max_lvl * min(1.0, bass_drive + synth_extra))
+                                if self.limiter_active:
+                                    punch_lvl = int(punch_lvl * 0.78)
+                                self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, punch_lvl)))
+
+                        # C) MID & UPPER-MID RANGE (550Hz to 4000Hz - Vocal & Instruments)
+                        elif 550000 < center_f < 4000000:
+                            # Couple 30% of Low-Mid slider into lower-mid harmonics so 250-500Hz sounds rich
+                            coupled_ratio = max(-1.0, min(1.0, (mid_ratio * 0.75) + (lmid_amp * 0.35)))
+                            mid_lvl = int(max_lvl * 0.70 * coupled_ratio)
+                            self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, mid_lvl)))
+
+                        # D) TREBLE / HIGHS (>= 4000Hz - Unchanged)
+                        else:
+                            treble_lvl = int(max_lvl * treble_ratio)
+                            self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, treble_lvl)))
 
             except Exception as e:
                 print("Apply Audio Data Error:", e)
@@ -522,8 +633,13 @@ class AudioControllerApp(App):
         return card, lbl_val, slider
 
     def get_status_text(self):
-        guard_tag = "🛡️ LIMITER" if self.limiter_active else "⚡ DYNAMIC"
-        return f"CUT: <{self.low_cut}Hz | PUNCH: {self.bass}% | LM:{self.low_mid}% | MID:{self.mid_upper}% | TR:{self.treble}% | {guard_tag}"
+        if self.limiter_active:
+            mode_tag = "🛡️ LIMITER"
+        elif self.bass_synth_active:
+            mode_tag = "🔥 AUTO-BASS ADD"
+        else:
+            mode_tag = "⚡ +30% AMP PUNCH"
+        return f"CUT:<{self.low_cut}Hz | BASS:{self.bass}% | LM:{self.low_mid}% | {mode_tag}"
 
     def on_volume_change(self, instance, value):
         self.volume = int(value)
@@ -556,7 +672,7 @@ class AudioControllerApp(App):
         self.apply_all_audio_data()
 
     # ==========================================
-    # SHARED SETTINGS FILE (READ BY BACKGROUND SERVICE)
+    # SHARED SETTINGS FILE
     # ==========================================
     def get_settings_path(self):
         if platform == 'android':
