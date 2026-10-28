@@ -61,7 +61,7 @@ class AudioControllerApp(App):
     def build(self):
         self.title = "Photon Audio"
 
-        # 6-Band Professional Audio Settings Defaults (0 to 100 scale, except Cut-off in Hz)
+        # 6-Band Professional Audio Settings Defaults
         self.volume = 50       # Master Volume
         self.bass = 50         # Bass Booster (Punch)
         self.low_cut = 50      # Low Cut-Off High-Pass Filter (50Hz to 250Hz)
@@ -334,7 +334,7 @@ class AudioControllerApp(App):
                                 lvl = int(max_lvl * 0.7 * bass_ratio * above_ratio)
                             self.eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lvl)))
 
-                        # RULE 2: FREQUencies ABOVE LOW CUT-OFF
+                        # RULE 2: FREQUENCIES ABOVE LOW CUT-OFF
                         else:
                             # A) Punch & Thap Zone (Cut-off up to 180Hz)
                             if center_f <= 180000:
@@ -484,8 +484,9 @@ class AudioControllerApp(App):
         return card, lbl_val, slider
 
     def get_status_text(self):
-        guard_tag = "🛡️ LIMITER" else "⚡ DYNAMIC"
-        return f"CUT: <{self.low_cut}Hz | PUNCH: {self.bass}% | LM:{self.low_mid}% | MID:{self.mid_upper}% | TR:{self.treble}%"
+        # FIX: Correct ternary operator syntax
+        guard_tag = "🛡️ LIMITER" if self.limiter_active else "⚡ DYNAMIC"
+        return f"CUT: <{self.low_cut}Hz | PUNCH: {self.bass}% | LM:{self.low_mid}% | MID:{self.mid_upper}% | TR:{self.treble}% | {guard_tag}"
 
     def on_volume_change(self, instance, value):
         self.volume = int(value)
