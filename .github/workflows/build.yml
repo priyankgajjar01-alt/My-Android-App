@@ -70,62 +70,79 @@ jobs:
         python3 -m pip install cython==0.29.33 kivy[base] pillow python-for-android==2024.1.21
 
     # ============================================================
-    # 🔥 સૌથી મહત્વનું સ્ટેપ: જાવા ફાઇલ પેચ કરવી જેથી એપ સ્વાઇપ કરતાં બંધ ન થાય
+    # 🔥 PATCH 1: PythonService.java & Service.tmpl.java (Kill-Proof + Android 14 FGS)
     # ============================================================
-    - name: Patch p4a PythonService.java for Android 14 & Kill-Proof
+    - name: Patch p4a PythonService.java and Service.tmpl.java
       run: |
         python3 -c "
         import os, glob, re, pythonforandroid
         p4a_dir = os.path.dirname(pythonforandroid.__file__)
-        patched = False
+
         for f in glob.glob(p4a_dir + '/**/PythonService.java', recursive=True):
             with open(f, 'r') as file:
                 content = file.read()
-            
-            # 1. Android 14 ફોરગ્રાઉન્ડ સર્વિસ ટાઇપ ફિક્સ
-            if 'startForeground(1, mBuilder.build());' in content:
-                content = content.replace(
-                    'startForeground(1, mBuilder.build());',
-                    'if (Build.VERSION.SDK_INT >= 29) {\n                    startForeground(1, mBuilder.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK | ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);\n                } else {\n                    startForeground(1, mBuilder.build());\n                }'
-                )
-                if 'import android.content.pm.ServiceInfo;' not in content:
-                    content = content.replace('import android.os.Build;', 'import android.os.Build;\nimport android.content.pm.ServiceInfo;')
-            
-            # 2. એપ સ્વાઇપ (Recent) થાય ત્યારે સર્વિસ બંધ ન થાય તે માટે
-            content = re.sub(r'public void onTaskRemoved\(Intent rootIntent\) \{\s*if\s*\(stopWithTask\)\s*\{\s*stopSelf\(\);\s*\}\s*\}', 
-                             'public void onTaskRemoved(Intent rootIntent) { /* KEEP ALIVE */ }', 
-                             content)
-                             
-            # 3. ફોર્સફુલી સર્વિસને એક્ટિવ રાખો
-            content = re.sub(r'if\s*\(intent.hasExtra\("stopWithTask"\)\)\s*\{\s*stopWithTask\s*=\s*intent.getBooleanExtra\("stopWithTask",\s*true\);\s*\}', 
-                             'stopWithTask = false;', 
-                             content)
+
+            # 1. Android 14 Foreground Service Type (matches both getServiceId() and 1)
+            content = re.sub(
+                r'startForeground\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*;',
+                r'if (Build.VERSION.SDK_INT >= 29) { startForeground(\1, \2, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK); } else { startForeground(\1, \2); }',
+                content
+            )
+
+            # 2. Prevent NullPointerException when service restarts with null Intent
+            content = re.sub(
+                r'(public\s+int\s+onStartCommand\s*\(\s*Intent\s+intent\s*,\s*int\s+flags\s*,\s*int\s+startId\s*\)\s*\{)',
+                r'\1\n        if (intent == null || intent.getExtras() == null) { return START_STICKY; }',
+                content
+            )
+
+            # 3. Never return START_NOT_STICKY when service is already running
+            content = content.replace('return START_NOT_STICKY;', 'return START_REDELIVER_INTENT;')
+
+            # 4. Force stopWithTask = false everywhere and disable stopSelf() in onTaskRemoved
+            content = re.sub(r'stopWithTask\s*=\s*[^;]+;', 'stopWithTask = false;', content)
+            content = re.sub(
+                r'public\s+void\s+onTaskRemoved\s*\(\s*Intent\s+rootIntent\s*\)\s*\{[\s\S]*?\}',
+                'public void onTaskRemoved(Intent rootIntent) { super.onTaskRemoved(rootIntent); /* KEEP ALIVE */ }',
+                content
+            )
 
             with open(f, 'w') as file:
                 file.write(content)
-            patched = True
-            print(f'Patched Java: {f}')
-        print('Success!' if patched else 'Warning: PythonService.java not found!')
+            print('Patched PythonService.java:', f)
+
+        for f in glob.glob(p4a_dir + '/**/Service.tmpl.java', recursive=True):
+            with open(f, 'r') as file:
+                content = file.read()
+            content = content.replace('return START_STICKY;', 'return START_REDELIVER_INTENT;')
+            content = content.replace('return START_NOT_STICKY;', 'return START_REDELIVER_INTENT;')
+            with open(f, 'w') as file:
+                file.write(content)
+            print('Patched Service.tmpl.java:', f)
         "
 
-    - name: Patch p4a manifest safely for Android 14
+    # ============================================================
+    # 🔥 PATCH 2: AndroidManifest.tmpl.xml માં foregroundServiceType ઉમેરો
+    # ============================================================
+    - name: Patch p4a AndroidManifest templates for Android 14
       run: |
         python3 -c "
         import os, glob, re, pythonforandroid
         p4a_dir = os.path.dirname(pythonforandroid.__file__)
-        patched = False
         for f in glob.glob(p4a_dir + '/**/AndroidManifest*.tmpl.xml', recursive=True):
             with open(f, 'r') as file:
                 content = file.read()
-            
-            new_content = re.sub(r'android:stopWithTask=\"[^\"]*\"', 'android:stopWithTask=\"false\"', content)
-            new_content = re.sub(r'android:foregroundServiceType=\"[^\"]*\"', 'android:foregroundServiceType=\"mediaPlayback|dataSync\"', new_content)
-            
-            if new_content != content:
-                with open(f, 'w') as file:
-                    file.write(new_content)
-                patched = True
-        print('Successfully patched manifest templates!' if patched else 'Warning: No templates were patched.')
+
+            content = re.sub(r'\s*android:stopWithTask=\"[^\"]*\"', '', content)
+            content = re.sub(r'\s*android:foregroundServiceType=\"[^\"]*\"', '', content)
+            new_content = content.replace(
+                '<service ',
+                '<service android:stopWithTask=\"false\" android:foregroundServiceType=\"mediaPlayback\" '
+            )
+
+            with open(f, 'w') as file:
+                file.write(new_content)
+            print('Patched Manifest template:', f)
         "
 
     - name: Prepare app source, Logo, and Always-On Background Service
@@ -203,34 +220,66 @@ jobs:
         synth_on = False
         tick = 0
 
-        def init_engines():
+        def init_engines(force=False):
             global eq_engine, bass_engine, virtualizer_engine, loudness_engine, visualizer
             try:
-                if eq_engine is None: eq_engine = Equalizer(100, 0)
+                if force or eq_engine is None or not eq_engine.hasControl():
+                    if eq_engine is not None:
+                        try: eq_engine.release()
+                        except Exception: pass
+                    # Priority = 200 (High), AudioSession = 0 (Global Output Mix)
+                    eq_engine = Equalizer(200, 0)
                 eq_engine.setEnabled(True)
-            except Exception: eq_engine = None
+            except Exception:
+                eq_engine = None
+
             try:
-                if bass_engine is None: bass_engine = BassBoost(100, 0)
+                if force or bass_engine is None or not bass_engine.hasControl():
+                    if bass_engine is not None:
+                        try: bass_engine.release()
+                        except Exception: pass
+                    bass_engine = BassBoost(200, 0)
                 bass_engine.setEnabled(True)
-            except Exception: bass_engine = None
+            except Exception:
+                bass_engine = None
+
             try:
-                if virtualizer_engine is None: virtualizer_engine = Virtualizer(100, 0)
+                if force or virtualizer_engine is None or not virtualizer_engine.hasControl():
+                    if virtualizer_engine is not None:
+                        try: virtualizer_engine.release()
+                        except Exception: pass
+                    virtualizer_engine = Virtualizer(200, 0)
                 virtualizer_engine.setEnabled(True)
-            except Exception: virtualizer_engine = None
+            except Exception:
+                virtualizer_engine = None
+
             try:
-                if loudness_engine is None: loudness_engine = LoudnessEnhancer(0)
+                if force or loudness_engine is None or not loudness_engine.hasControl():
+                    if loudness_engine is not None:
+                        try: loudness_engine.release()
+                        except Exception: pass
+                    loudness_engine = LoudnessEnhancer(0)
                 loudness_engine.setEnabled(True)
-            except Exception: loudness_engine = None
+            except Exception:
+                loudness_engine = None
+
             try:
-                if visualizer is None:
+                if force or visualizer is None:
+                    if visualizer is not None:
+                        try: visualizer.release()
+                        except Exception: pass
                     visualizer = Visualizer(0)
                     visualizer.setCaptureSize(128)
                     visualizer.setEnabled(True)
-            except Exception: visualizer = None
+            except Exception:
+                visualizer = None
 
         def apply_eq():
             try:
-                if not eq_engine: return
+                if not eq_engine or not eq_engine.hasControl():
+                    init_engines(force=True)
+                if not eq_engine:
+                    return
                 num_bands = eq_engine.getNumberOfBands()
                 level_range = eq_engine.getBandLevelRange()
                 min_lvl = level_range[0]
@@ -269,7 +318,8 @@ jobs:
                             eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lvl)))
                         else:
                             punch_lvl = int(max_lvl * min(1.0, bass_drive + synth_extra))
-                            if limiter_on: punch_lvl = int(punch_lvl * 0.78)
+                            if limiter_on:
+                                punch_lvl = int(punch_lvl * 0.78)
                             eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, punch_lvl)))
                     elif 550000 < center_f < 4000000:
                         coupled_ratio = max(-1.0, min(1.0, (mid_ratio * 0.75) + (lmid_amp * 0.35)))
@@ -279,11 +329,17 @@ jobs:
                         treble_lvl = int(max_lvl * treble_ratio)
                         eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, treble_lvl)))
 
-                if virtualizer_engine:
+                if virtualizer_engine and virtualizer_engine.hasControl():
                     virtualizer_engine.setStrength(int(cfg['low_mid'] * 10))
-            except Exception: pass
+                if bass_engine and bass_engine.hasControl():
+                    bass_engine.setStrength(max(0, min(1000, int(cfg['bass'] * 9.5))))
+                if loudness_engine and loudness_engine.hasControl():
+                    loudness_engine.setTargetGain(max(0, min(900, int(cfg['bass'] * 7.5))))
+            except Exception:
+                pass
 
-        init_engines()
+        init_engines(force=True)
+        apply_eq()
 
         while True:
             try:
@@ -291,7 +347,8 @@ jobs:
                     mtime = os.path.getmtime(settings_path)
                     if mtime != last_mtime:
                         last_mtime = mtime
-                        with open(settings_path, 'r') as f: cfg.update(json.load(f))
+                        with open(settings_path, 'r') as f:
+                            cfg.update(json.load(f))
                         if not cfg.get('always_on', True):
                             service.setAutoRestartService(False)
                             service.stopSelf()
@@ -301,64 +358,70 @@ jobs:
 
                 is_playing = audio_manager.isMusicActive()
                 if is_playing and not was_playing:
-                    init_engines()
+                    init_engines(force=True)
                     apply_eq()
                 was_playing = is_playing
 
                 tick += 1
-                if is_playing and tick % 20 == 0:
+                if tick % 16 == 0:
                     init_engines()
                     apply_eq()
 
-                if is_playing and visualizer and bass_engine:
-                    fft_bytes = bytearray(128)
-                    if visualizer.getFft(fft_bytes) == 0:
-                        low_e = 0.0
-                        for i in range(2, 12, 2):
-                            r = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
-                            im = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
-                            low_e += (r * r + im * im) ** 0.5
-                        low_e /= 5.0
+                if is_playing and bass_engine:
+                    if visualizer:
+                        fft_bytes = bytearray(128)
+                        if visualizer.getFft(fft_bytes) == 0:
+                            low_e = 0.0
+                            for i in range(2, 12, 2):
+                                r = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
+                                im = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
+                                low_e += (r * r + im * im) ** 0.5
+                            low_e /= 5.0
 
-                        lmid_e = 0.0
-                        for i in range(12, 26, 2):
-                            r = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
-                            im = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
-                            lmid_e += (r * r + im * im) ** 0.5
-                        lmid_e /= 7.0
+                            lmid_e = 0.0
+                            for i in range(12, 26, 2):
+                                r = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
+                                im = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
+                                lmid_e += (r * r + im * im) ** 0.5
+                            lmid_e /= 7.0
 
-                        avg_bass = (avg_bass * 0.85) + (low_e * 0.15)
-                        avg_lmid = (avg_lmid * 0.85) + (lmid_e * 0.15)
+                            avg_bass = (avg_bass * 0.85) + (low_e * 0.15)
+                            avg_lmid = (avg_lmid * 0.85) + (lmid_e * 0.15)
 
-                        delta = low_e - avg_bass
-                        if delta > 11.0 and cfg['bass'] > 0: dyn_punch = min(300.0, delta * (cfg['bass'] / 32.0))
-                        else: dyn_punch *= 0.60
+                            delta = low_e - avg_bass
+                            if delta > 11.0 and cfg['bass'] > 0:
+                                dyn_punch = min(300.0, delta * (cfg['bass'] / 32.0))
+                            else:
+                                dyn_punch *= 0.60
 
-                        if 2.0 < avg_bass < 38.0 and cfg['bass'] > 20:
-                            synth_on = True
-                            bass_restorer = min(280.0, (38.0 - avg_bass) * 7.5 * (cfg['bass'] / 100.0))
-                        else:
-                            synth_on = False
-                            bass_restorer *= 0.75
+                            if 2.0 < avg_bass < 38.0 and cfg['bass'] > 20:
+                                synth_on = True
+                                bass_restorer = min(280.0, (38.0 - avg_bass) * 7.5 * (cfg['bass'] / 100.0))
+                            else:
+                                synth_on = False
+                                bass_restorer *= 0.75
 
-                        if 1.5 < avg_lmid < 30.0 and cfg['low_mid'] > 50:
-                            lmid_restorer = min(0.45, ((30.0 - avg_lmid) / 30.0) * ((cfg['low_mid'] - 50) / 50.0))
-                        else: lmid_restorer *= 0.80
+                            if 1.5 < avg_lmid < 30.0 and cfg['low_mid'] > 50:
+                                lmid_restorer = min(0.45, ((30.0 - avg_lmid) / 30.0) * ((cfg['low_mid'] - 50) / 50.0))
+                            else:
+                                lmid_restorer *= 0.80
 
-                        if avg_bass > 85.0 and cfg['bass'] > 65:
-                            limiter_on = True
-                            safety_red = min(300.0, (avg_bass - 85.0) * 4.5 * (cfg['bass'] / 100.0))
-                        else:
-                            limiter_on = False
-                            safety_red *= 0.70
+                            if avg_bass > 85.0 and cfg['bass'] > 65:
+                                limiter_on = True
+                                safety_red = min(300.0, (avg_bass - 85.0) * 4.5 * (cfg['bass'] / 100.0))
+                            else:
+                                limiter_on = False
+                                safety_red *= 0.70
 
-                        strength = int((cfg['bass'] * 9.5) + dyn_punch + bass_restorer - safety_red)
+                    strength = int((cfg['bass'] * 9.5) + dyn_punch + bass_restorer - safety_red)
+                    if bass_engine.hasControl():
                         bass_engine.setStrength(max(0, min(1000, strength)))
 
-                        if loudness_engine:
-                            amp_mb = int((cfg['bass'] * 7.5) + (bass_restorer * 1.5) - safety_red)
-                            loudness_engine.setTargetGain(max(0, min(900, amp_mb)))
-            except Exception: pass
+                    if loudness_engine and loudness_engine.hasControl():
+                        amp_mb = int((cfg['bass'] * 7.5) + (bass_restorer * 1.5) - safety_red)
+                        loudness_engine.setTargetGain(max(0, min(900, amp_mb)))
+            except Exception:
+                pass
 
             time.sleep(0.12)
         EOF
@@ -394,9 +457,7 @@ jobs:
           --permission=WAKE_LOCK \
           --permission=FOREGROUND_SERVICE \
           --permission=FOREGROUND_SERVICE_MEDIA_PLAYBACK \
-          --permission=FOREGROUND_SERVICE_DATA_SYNC \
           --permission=REQUEST_IGNORE_BATTERY_OPTIMIZATIONS \
-          --permission=SYSTEM_ALERT_WINDOW \
           --permission=RECEIVE_BOOT_COMPLETED \
           --permission=POST_NOTIFICATIONS \
           --permission=READ_MEDIA_AUDIO \
