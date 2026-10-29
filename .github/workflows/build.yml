@@ -69,9 +69,6 @@ jobs:
         python3 -m pip install --upgrade pip setuptools wheel
         python3 -m pip install cython==0.29.33 kivy[base] pillow python-for-android==2024.1.21
 
-    # ============================================================
-    # 🔥 SAFE PATCH: PythonService.java (App Icon + Toast + Kill-Proof)
-    # ============================================================
     - name: Patch p4a PythonService.java and AndroidManifest for Android 14
       run: |
         python3 - << 'EOF'
@@ -117,7 +114,6 @@ jobs:
                                 int flags = android.os.Build.VERSION.SDK_INT >= 23 ? (android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE) : android.app.PendingIntent.FLAG_UPDATE_CURRENT;
                                 android.app.PendingIntent pi = android.app.PendingIntent.getActivity(ctx, 0, launchIntent, flags);
 
-                                // સિસ્ટમ આઇકનને બદલે એપનું પોતાનું ઓરિજિનલ આઇકન (100% Safe on Android 12/13/14/15+)
                                 int iconRes = ctx.getApplicationInfo().icon;
                                 if (iconRes == 0) {
                                     iconRes = android.R.drawable.sym_def_app_icon;
@@ -149,26 +145,22 @@ jobs:
             with open(f, 'r') as file:
                 content = file.read()
 
-            # 1. Android 14 Foreground Service Type
             content = re.sub(
                 r'startForeground\s*\(\s*getServiceId\(\)\s*,\s*notification\s*\)\s*;',
                 'if (Build.VERSION.SDK_INT >= 29) { startForeground(getServiceId(), notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK); } else { startForeground(getServiceId(), notification); }',
                 content
             )
 
-            # 2. Prevent NullPointerException when service restarts with null Intent
             content = re.sub(
                 r'(public\s+int\s+onStartCommand\s*\(\s*Intent\s+intent\s*,\s*int\s+flags\s*,\s*int\s+startId\s*\)\s*\{)',
                 r'\1 if (intent == null || intent.getExtras() == null) { return START_STICKY; }',
                 content
             )
 
-            # 3. Keep service sticky & prevent stopping when swiped from Recents
             content = content.replace('return START_NOT_STICKY;', 'return START_STICKY;')
             content = re.sub(r'stopWithTask\s*=\s*[^;]+;', 'stopWithTask = false;', content)
             content = re.sub(r'if\s*\(\s*stopWithTask\s*\)', 'if (false)', content)
 
-            # 4. Inject showToast() and updateDspNotification() safely before last '}'
             if 'public void showToast(' not in content:
                 last_brace = content.rfind('}')
                 if last_brace != -1:
@@ -206,12 +198,11 @@ jobs:
         else
           python3 -c "
         from PIL import Image, ImageDraw
-        # બેકગ્રાઉન્ડ (0, 0, 0, 0) એટલે Transparent રાખ્યું છે જેથી ટોપ બારમાં રિંગ્સ ચોખ્ખી દેખાય
+        # ટ્રાન્સપેરન્ટ બેકગ્રાઉન્ડ
         img = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
-        d.ellipse([36, 36, 476, 476], outline=(0, 230, 118, 255), width=28)
-        d.ellipse([116, 116, 396, 396], outline=(100, 255, 218, 255), width=32)
-        d.ellipse([196, 196, 316, 316], fill=(255, 109, 0, 255))
+        # ફક્ત એક જ સાયન (Cyan) કલરનું જાડું વર્તુળ
+        d.ellipse([48, 48, 464, 464], outline=(100, 255, 218, 255), width=48)
         img.save('app_source/icon.png')
         "
         fi
@@ -327,14 +318,14 @@ jobs:
 
             try:
                 if eq_engine is None:
-                    eq_engine = Equalizer(1000, 0)
+                    eq_engine = Equalizer(1000, 0) 
                 eq_engine.setEnabled(True)
             except Exception:
                 eq_engine = None
 
             try:
                 if bass_engine is None:
-                    bass_engine = BassBoost(1000, 0)
+                    bass_engine = BassBoost(1000, 0) 
                 bass_engine.setEnabled(True)
             except Exception:
                 bass_engine = None
@@ -468,33 +459,26 @@ jobs:
 
         while True:
             try:
-                # 0. 📞 CALL DETECTION & POPUP:
-                # mode 1 = Ringing, mode 2 = Call Answered (SIM), mode 3 = VoIP/WhatsApp Call Answered
                 audio_mode = audio_manager.getMode()
+                in_call = (audio_mode != 0)
 
-                if audio_mode == 1:
-                    release_visualizer()
-
-                in_active_call = audio_mode in (2, 3)
-
-                if in_active_call:
+                if in_call:
                     if not was_in_call:
                         release_engines()
                         was_in_call = True
                         was_playing = False
                         update_topbar_icon(False, "DSP Paused during phone call")
                         show_popup("DSP Service Stop")
-                    time.sleep(0.35)
+                    time.sleep(0.4)
                     continue
 
-                if was_in_call and audio_mode == 0:
+                if was_in_call:
                     was_in_call = False
                     init_engines(force=True, with_visualizer=audio_manager.isMusicActive())
                     apply_eq()
                     update_topbar_icon(True)
                     show_popup("DSP Service Start")
 
-                # 1. ફાઇલ અપડેટ ચેક કરો
                 if os.path.exists(settings_path):
                     mtime = os.path.getmtime(settings_path)
                     if mtime != last_mtime:
@@ -506,7 +490,6 @@ jobs:
                         apply_eq()
                         update_topbar_icon(True)
 
-                # 2. ઓડિયો વાગે છે કે નહીં તે ચેક કરો
                 is_playing = audio_manager.isMusicActive()
                 if is_playing and not was_playing:
                     init_engines(force=True, with_visualizer=True)
@@ -521,7 +504,6 @@ jobs:
                 if is_playing and visualizer is None and tick % 25 == 0:
                     init_engines(force=False, with_visualizer=True)
 
-                # 3. કંટ્રોલ લોસ ચેક કરો
                 status_ok = True
                 if eq_engine is None or not eq_engine.hasControl():
                     status_ok = False
