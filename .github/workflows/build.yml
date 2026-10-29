@@ -70,13 +70,80 @@ jobs:
         python3 -m pip install cython==0.29.33 kivy[base] pillow python-for-android==2024.1.21
 
     # ============================================================
-    # 🔥 SAFE PATCH: PythonService.java & AndroidManifest.tmpl.xml
+    # 🔥 SAFE PATCH: PythonService.java (App Icon + Toast + Kill-Proof)
     # ============================================================
     - name: Patch p4a PythonService.java and AndroidManifest for Android 14
       run: |
         python3 - << 'EOF'
         import os, glob, re, pythonforandroid
         p4a_dir = os.path.dirname(pythonforandroid.__file__)
+
+        helper_java_methods = """
+            public void showToast(final String message) {
+                try {
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                android.widget.Toast.makeText(getApplicationContext(), message, android.widget.Toast.LENGTH_SHORT).show();
+                            } catch (Exception e) {}
+                        }
+                    });
+                } catch (Exception e) {}
+            }
+
+            public void updateDspNotification(final boolean isActive, final String subText) {
+                try {
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                android.content.Context ctx = getApplicationContext();
+                                android.app.NotificationManager nm = (android.app.NotificationManager) ctx.getSystemService(android.content.Context.NOTIFICATION_SERVICE);
+                                String channelId = "photon_dsp_topbar_channel";
+                                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                                    android.app.NotificationChannel chan = new android.app.NotificationChannel(
+                                        channelId,
+                                        "Photon Audio DSP Status",
+                                        android.app.NotificationManager.IMPORTANCE_DEFAULT
+                                    );
+                                    chan.setSound(null, null);
+                                    chan.enableVibration(false);
+                                    chan.setShowBadge(false);
+                                    chan.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
+                                    nm.createNotificationChannel(chan);
+                                }
+                                android.content.Intent launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
+                                int flags = android.os.Build.VERSION.SDK_INT >= 23 ? (android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE) : android.app.PendingIntent.FLAG_UPDATE_CURRENT;
+                                android.app.PendingIntent pi = android.app.PendingIntent.getActivity(ctx, 0, launchIntent, flags);
+
+                                // સિસ્ટમ આઇકનને બદલે એપનું પોતાનું ઓરિજિનલ આઇકન (100% Safe on Android 12/13/14/15+)
+                                int iconRes = ctx.getApplicationInfo().icon;
+                                if (iconRes == 0) {
+                                    iconRes = android.R.drawable.sym_def_app_icon;
+                                }
+                                String title = isActive ? "🟢 Photon Audio DSP: ACTIVE" : "⏸ Photon Audio DSP: PAUSED (Call)";
+
+                                android.app.Notification.Builder builder;
+                                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                                    builder = new android.app.Notification.Builder(ctx, channelId);
+                                } else {
+                                    builder = new android.app.Notification.Builder(ctx);
+                                }
+                                builder.setContentTitle(title)
+                                       .setContentText(subText)
+                                       .setSmallIcon(iconRes)
+                                       .setContentIntent(pi)
+                                       .setOnlyAlertOnce(true)
+                                       .setOngoing(true);
+
+                                nm.notify(getServiceId(), builder.build());
+                            } catch (Exception e) {}
+                        }
+                    });
+                } catch (Exception e) {}
+            }
+        """
 
         for f in glob.glob(p4a_dir + '/**/PythonService.java', recursive=True):
             with open(f, 'r') as file:
@@ -100,6 +167,12 @@ jobs:
             content = content.replace('return START_NOT_STICKY;', 'return START_STICKY;')
             content = re.sub(r'stopWithTask\s*=\s*[^;]+;', 'stopWithTask = false;', content)
             content = re.sub(r'if\s*\(\s*stopWithTask\s*\)', 'if (false)', content)
+
+            # 4. Inject showToast() and updateDspNotification() safely before last '}'
+            if 'public void showToast(' not in content:
+                last_brace = content.rfind('}')
+                if last_brace != -1:
+                    content = content[:last_brace] + helper_java_methods + '\n}\n'
 
             with open(f, 'w') as file:
                 file.write(content)
@@ -133,12 +206,12 @@ jobs:
         else
           python3 -c "
         from PIL import Image, ImageDraw
-        img = Image.new('RGBA', (512, 512), (10, 25, 47, 255))
+        # બેકગ્રાઉન્ડ (0, 0, 0, 0) એટલે Transparent રાખ્યું છે જેથી ટોપ બારમાં રિંગ્સ ચોખ્ખી દેખાય
+        img = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
-        d.ellipse([36, 36, 476, 476], outline=(0, 230, 118, 255), width=16)
-        d.ellipse([96, 96, 416, 416], outline=(100, 255, 218, 255), width=22)
-        d.ellipse([176, 176, 336, 336], fill=(255, 109, 0, 255), outline=(255, 171, 64, 255), width=12)
-        d.ellipse([226, 226, 286, 286], fill=(10, 25, 47, 255))
+        d.ellipse([36, 36, 476, 476], outline=(0, 230, 118, 255), width=28)
+        d.ellipse([116, 116, 396, 396], outline=(100, 255, 218, 255), width=32)
+        d.ellipse([196, 196, 316, 316], fill=(255, 109, 0, 255))
         img.save('app_source/icon.png')
         "
         fi
@@ -202,6 +275,23 @@ jobs:
         last_amp_mb = -1
         tick = 0
         control_lost_ticks = 0
+
+        def get_info_text():
+            return f"Bass:{cfg['bass']}% | Cut:<{cfg['low_cut']}Hz | L-Mid:{cfg['low_mid']}% | Treble:{cfg['treble']}%"
+
+        def update_topbar_icon(is_active, text=None):
+            try:
+                if text is None:
+                    text = get_info_text()
+                service.updateDspNotification(is_active, text)
+            except Exception:
+                pass
+
+        def show_popup(msg):
+            try:
+                service.showToast(msg)
+            except Exception:
+                pass
 
         def release_visualizer():
             global visualizer
@@ -374,27 +464,35 @@ jobs:
 
         init_engines(force=True, with_visualizer=False)
         apply_eq()
+        update_topbar_icon(True)
 
         while True:
             try:
-                # 0. 📞 CALL DETECTION: જો ફોન કોલ કે WhatsApp કોલ ચાલુ હોય (mode != 0)
-                # તો તરત જ બધા ઓડિયો એન્જિન અને Visualizer બંધ કરી દો જેથી માઈકમાં અવાજ એકદમ ક્લિયર જાય
+                # 0. 📞 CALL DETECTION & POPUP:
+                # mode 1 = Ringing, mode 2 = Call Answered (SIM), mode 3 = VoIP/WhatsApp Call Answered
                 audio_mode = audio_manager.getMode()
-                in_call = (audio_mode != 0)
 
-                if in_call:
-                    if not was_in_call or eq_engine is not None or visualizer is not None:
+                if audio_mode == 1:
+                    release_visualizer()
+
+                in_active_call = audio_mode in (2, 3)
+
+                if in_active_call:
+                    if not was_in_call:
                         release_engines()
                         was_in_call = True
                         was_playing = False
-                    time.sleep(0.4)
+                        update_topbar_icon(False, "DSP Paused during phone call")
+                        show_popup("DSP Service Stop")
+                    time.sleep(0.35)
                     continue
 
-                if was_in_call:
-                    # કોલ પૂરો થયો: ફરીથી DSP એન્જિન ચાલુ કરો
+                if was_in_call and audio_mode == 0:
                     was_in_call = False
                     init_engines(force=True, with_visualizer=audio_manager.isMusicActive())
                     apply_eq()
+                    update_topbar_icon(True)
+                    show_popup("DSP Service Start")
 
                 # 1. ફાઇલ અપડેટ ચેક કરો
                 if os.path.exists(settings_path):
@@ -406,14 +504,15 @@ jobs:
                         last_mtime = mtime
                         apply_volume()
                         apply_eq()
+                        update_topbar_icon(True)
 
                 # 2. ઓડિયો વાગે છે કે નહીં તે ચેક કરો
                 is_playing = audio_manager.isMusicActive()
                 if is_playing and not was_playing:
                     init_engines(force=True, with_visualizer=True)
                     apply_eq()
+                    update_topbar_icon(True)
                 elif not is_playing and was_playing:
-                    # ગીત બંધ થાય ત્યારે Visualizer રીલીઝ કરી દો જેથી માઈક/ઓડિયો કેપ્ચર ફ્રી રહે
                     release_visualizer()
                 was_playing = is_playing
 
@@ -434,6 +533,7 @@ jobs:
                     if control_lost_ticks >= 5:
                         init_engines(force=True, with_visualizer=is_playing)
                         apply_eq()
+                        update_topbar_icon(True)
                         control_lost_ticks = 0
                 else:
                     control_lost_ticks = 0
