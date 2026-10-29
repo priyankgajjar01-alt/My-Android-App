@@ -188,6 +188,7 @@ jobs:
         last_mtime = 0
         last_vol = -1
         was_playing = False
+        was_in_call = False
         avg_bass = 0.0
         avg_lmid = 0.0
         dyn_punch = 0.0
@@ -202,9 +203,20 @@ jobs:
         tick = 0
         control_lost_ticks = 0
 
+        def release_visualizer():
+            global visualizer
+            if visualizer is not None:
+                try:
+                    visualizer.setEnabled(False)
+                    visualizer.release()
+                except Exception:
+                    pass
+                visualizer = None
+
         def release_engines():
-            global eq_engine, bass_engine, virtualizer_engine, loudness_engine, visualizer
-            for eng in (eq_engine, bass_engine, virtualizer_engine, loudness_engine, visualizer):
+            global eq_engine, bass_engine, virtualizer_engine, loudness_engine
+            release_visualizer()
+            for eng in (eq_engine, bass_engine, virtualizer_engine, loudness_engine):
                 if eng is not None:
                     try:
                         eng.setEnabled(False)
@@ -215,9 +227,8 @@ jobs:
             bass_engine = None
             virtualizer_engine = None
             loudness_engine = None
-            visualizer = None
 
-        def init_engines(force=False):
+        def init_engines(force=False, with_visualizer=False):
             global eq_engine, bass_engine, virtualizer_engine, loudness_engine, visualizer, last_bass_strength, last_amp_mb
             if force:
                 release_engines()
@@ -252,13 +263,14 @@ jobs:
             except Exception:
                 loudness_engine = None
 
-            try:
-                if visualizer is None:
-                    visualizer = Visualizer(0)
-                    visualizer.setCaptureSize(128)
-                    visualizer.setEnabled(True)
-            except Exception:
-                visualizer = None
+            if with_visualizer:
+                try:
+                    if visualizer is None:
+                        visualizer = Visualizer(0)
+                        visualizer.setCaptureSize(128)
+                        visualizer.setEnabled(True)
+                except Exception:
+                    visualizer = None
 
         def apply_volume():
             global last_vol
@@ -360,12 +372,31 @@ jobs:
             apply_dynamic_dsp(force=True)
             return True
 
-        init_engines(force=True)
+        init_engines(force=True, with_visualizer=False)
         apply_eq()
 
         while True:
             try:
-                # 1. ફાઇલ અપડેટ ચેક કરો (ક્યારેય સર્વિસ બંધ નહીં થાય)
+                # 0. 📞 CALL DETECTION: જો ફોન કોલ કે WhatsApp કોલ ચાલુ હોય (mode != 0)
+                # તો તરત જ બધા ઓડિયો એન્જિન અને Visualizer બંધ કરી દો જેથી માઈકમાં અવાજ એકદમ ક્લિયર જાય
+                audio_mode = audio_manager.getMode()
+                in_call = (audio_mode != 0)
+
+                if in_call:
+                    if not was_in_call or eq_engine is not None or visualizer is not None:
+                        release_engines()
+                        was_in_call = True
+                        was_playing = False
+                    time.sleep(0.4)
+                    continue
+
+                if was_in_call:
+                    # કોલ પૂરો થયો: ફરીથી DSP એન્જિન ચાલુ કરો
+                    was_in_call = False
+                    init_engines(force=True, with_visualizer=audio_manager.isMusicActive())
+                    apply_eq()
+
+                # 1. ફાઇલ અપડેટ ચેક કરો
                 if os.path.exists(settings_path):
                     mtime = os.path.getmtime(settings_path)
                     if mtime != last_mtime:
@@ -379,14 +410,17 @@ jobs:
                 # 2. ઓડિયો વાગે છે કે નહીં તે ચેક કરો
                 is_playing = audio_manager.isMusicActive()
                 if is_playing and not was_playing:
-                    init_engines(force=True)
+                    init_engines(force=True, with_visualizer=True)
                     apply_eq()
+                elif not is_playing and was_playing:
+                    # ગીત બંધ થાય ત્યારે Visualizer રીલીઝ કરી દો જેથી માઈક/ઓડિયો કેપ્ચર ફ્રી રહે
+                    release_visualizer()
                 was_playing = is_playing
 
                 tick += 1
 
                 if is_playing and visualizer is None and tick % 25 == 0:
-                    init_engines(force=False)
+                    init_engines(force=False, with_visualizer=True)
 
                 # 3. કંટ્રોલ લોસ ચેક કરો
                 status_ok = True
@@ -398,7 +432,7 @@ jobs:
                 if not status_ok:
                     control_lost_ticks += 1
                     if control_lost_ticks >= 5:
-                        init_engines(force=True)
+                        init_engines(force=True, with_visualizer=is_playing)
                         apply_eq()
                         control_lost_ticks = 0
                 else:
@@ -454,11 +488,7 @@ jobs:
                                     limiter_on = False
                                     safety_red *= 0.70
                         except Exception:
-                            try:
-                                visualizer.release()
-                            except Exception:
-                                pass
-                            visualizer = None
+                            release_visualizer()
 
                     if (synth_on != prev_synth) or (limiter_on != prev_limiter) or (abs(lmid_restorer - last_lmid_restorer) > 0.05):
                         apply_eq()
