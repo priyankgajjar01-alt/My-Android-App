@@ -229,11 +229,8 @@ jobs:
         was_playing = False
         was_in_call = False
         avg_bass = 0.0
-        avg_lmid = 0.0
         dyn_punch = 0.0
         bass_restorer = 0.0
-        lmid_restorer = 0.0
-        last_lmid_restorer = 0.0
         safety_red = 0.0
         limiter_on = False
         synth_on = False
@@ -343,14 +340,24 @@ jobs:
                 if bass_engine and bass_engine.hasControl():
                     base_strength = cfg['bass'] * 9.5
                     final_strength = max(0, min(1000, int(base_strength + dyn_punch + bass_restorer - safety_red)))
-                    if force or abs(final_strength - last_bass_strength) >= 8:
-                        bass_engine.setStrength(final_strength)
+                    
+                    # 🎯 સ્મૂથ ટ્રાન્ઝિશન (Pumping fix)
+                    if last_bass_strength < 0:
                         last_bass_strength = final_strength
+                        if bass_engine: bass_engine.setStrength(final_strength)
+                    else:
+                        diff = final_strength - last_bass_strength
+                        if abs(diff) >= 5:
+                            step = max(-30, min(30, diff // 3))
+                            new_strength = max(0, min(1000, last_bass_strength + step))
+                            bass_engine.setStrength(new_strength)
+                            last_bass_strength = new_strength
             except Exception as e: print("DSP Bass Apply Error:", e)
 
             try:
                 if loudness_engine and loudness_engine.hasControl():
-                    amp_mb = max(0, min(900, int((cfg['bass'] * 7.5) + (bass_restorer * 1.5) - safety_red)))
+                    # 🎯 લિમિટર ઓછું આક્રમક
+                    amp_mb = max(0, min(900, int((cfg['bass'] * 7.5) + (bass_restorer * 1.5) - safety_red * 0.7)))
                     if force or abs(amp_mb - last_amp_mb) >= 8:
                         loudness_engine.setTargetGain(amp_mb)
                         last_amp_mb = amp_mb
@@ -435,6 +442,7 @@ jobs:
                     update_topbar_icon(True)
                     show_popup("DSP Service Start")
 
+                # 🎯 ફાઇલ અપડેટ ચેક (સ્મૂથ)
                 if os.path.exists(settings_path):
                     try:
                         mtime = os.path.getmtime(settings_path)
@@ -445,27 +453,39 @@ jobs:
                             
                             if 'hw_eq_levels' in loaded_data and not isinstance(loaded_data['hw_eq_levels'], dict):
                                 loaded_data['hw_eq_levels'] = {}
-                                
-                            if loaded_data != cfg:
-                                cfg.update(loaded_data)
+                            
+                            old_volume = cfg.get('volume', 70)
+                            old_bass = cfg.get('bass', 15)
+                            old_hw = dict(cfg.get('hw_eq_levels', {}))
+                            old_low_cut = cfg.get('low_cut', 75)
+                            old_band_from = cfg.get('band_from', 0)
+                            old_band_to = cfg.get('band_to', 0)
+                            
+                            cfg.update(loaded_data)
+                            
+                            # ફક્ત વોલ્યુમ બદલાયું હોય તો જ
+                            if cfg['volume'] != old_volume:
                                 apply_volume()
-                                eq_ok = apply_hw_eq()
-                                dsp_ok = apply_dynamic_dsp(force=True)
-                                
-                                if not eq_ok or not dsp_ok:
-                                    print("Control lost during apply, reinitializing...")
-                                    init_engines(force=True, with_visualizer=is_playing)
-                                    apply_hw_eq()
-                                    apply_dynamic_dsp(force=True)
-
-                                update_topbar_icon(True)
+                            
+                            # Hardware EQ બદલાયું હોય તો જ EQ અપડેટ કરો (એન્જિન રીલીઝ નહીં)
+                            hw_changed = (cfg.get('hw_eq_levels') != old_hw or 
+                                          cfg.get('low_cut') != old_low_cut or
+                                          cfg.get('band_from') != old_band_from or
+                                          cfg.get('band_to') != old_band_to)
+                            if hw_changed:
+                                apply_hw_eq()
+                            
+                            # Bass બદલાયું હોય તો જ BassBoost અપડેટ કરો
+                            if cfg['bass'] != old_bass:
+                                apply_dynamic_dsp(force=True)
+                            
+                            update_topbar_icon(True)
                     except Exception as e:
                         print("Settings Read Error (Corrupted?):", e)
-                        # 🎯 Corrupted File Recovery
                         if os.path.exists(settings_path):
                             try: os.remove(settings_path)
                             except: pass
-                        last_mtime = 0 # રીસેટ કરો જેથી ફરી વાંચવાનો પ્રયત્ન ન કરે
+                        last_mtime = 0
 
                 is_playing = audio_manager.isMusicActive()
                 if is_playing and not was_playing:
@@ -479,15 +499,16 @@ jobs:
 
                 tick += 1
 
-                if tick % 15 == 0:
+                # 🎯 દર 3 સેકન્ડે જ કંટ્રોલ ચેક કરો
+                if tick % 30 == 0:
                     status_ok = True
                     if eq_engine is None or not eq_engine.hasControl(): status_ok = False
                     if bass_engine is None or not bass_engine.hasControl(): status_ok = False
 
                     if not status_ok:
                         control_lost_ticks += 1
-                        if control_lost_ticks >= 2:
-                            print("Control lost check, reinitializing...")
+                        if control_lost_ticks >= 3:  # સાચે જ 3 વાર ફેલ થાય તો
+                            print("Control truly lost, reinitializing...")
                             init_engines(force=True, with_visualizer=is_playing)
                             apply_hw_eq()
                             apply_dynamic_dsp(force=True)
@@ -513,7 +534,8 @@ jobs:
                                     low_e += (r * r + im * im) ** 0.5
                                 low_e /= 5.0
 
-                                avg_bass = (avg_bass * 0.85) + (low_e * 0.15)
+                                # 🎯 FFT સ્મૂથિંગ ધીમું કર્યું
+                                avg_bass = (avg_bass * 0.95) + (low_e * 0.05)
 
                                 delta = low_e - avg_bass
                                 if delta > 11.0 and cfg['bass'] > 0: dyn_punch = min(300.0, delta * (cfg['bass'] / 32.0))
