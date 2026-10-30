@@ -131,11 +131,18 @@ jobs:
                 content = file.read()
 
             content = re.sub(
-                r'startForeground\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)\s*;',
-                r'if (android.os.Build.VERSION.SDK_INT >= 29) { startForeground(\1, \2, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK); } else { startForeground(\1, \2); }',
+                r'startForeground\s*\(\s*getServiceId\(\)\s*,\s*notification\s*\)\s*;',
+                'if (android.os.Build.VERSION.SDK_INT >= 29) { startForeground(getServiceId(), notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK); } else { startForeground(getServiceId(), notification); }',
                 content
             )
 
+            content = re.sub(
+                r'(public\s+int\s+onStartCommand\s*\(\s*Intent\s+intent\s*,\s*int\s+flags\s*,\s*int\s+startId\s*\)\s*\{)',
+                r'\1 if (intent == null || intent.getExtras() == null) { return START_STICKY; }',
+                content
+            )
+
+            content = content.replace('return START_NOT_STICKY;', 'return START_STICKY;')
             content = re.sub(r'stopWithTask\s*=\s*[^;]+;', 'stopWithTask = false;', content)
             content = re.sub(r'if\s*\(\s*stopWithTask\s*\)', 'if (false)', content)
 
@@ -208,7 +215,8 @@ jobs:
             wake_lock.setReferenceCounted(False)
             if not wake_lock.isHeld():
                 wake_lock.acquire()
-        except Exception as e: print("Service WakeLock Error:", e)
+        except Exception as e:
+            print("Service WakeLock Error:", e)
 
         audio_manager = service.getSystemService(Context.AUDIO_SERVICE)
         settings_path = os.path.join(service.getFilesDir().getAbsolutePath(), 'audio_eq_settings.json')
@@ -220,8 +228,9 @@ jobs:
         visualizer = None
 
         cfg = {
-            'volume': 70, 'bass': 15, 'low_cut': 75,
-            'band_from': 0, 'band_to': 0, 'hw_eq_levels': {}
+            'volume': 70,
+            'bass': 15,
+            'hw_eq_levels': {}
         }
 
         last_mtime = 0
@@ -240,17 +249,21 @@ jobs:
         control_lost_ticks = 0
 
         def get_info_text():
-            return f"Bass:{cfg['bass']}% | Vol:{cfg['volume']}% | Cut:<{cfg['low_cut']}Hz"
+            return f"Bass:{cfg['bass']}% | Vol:{cfg['volume']}% | HW EQ: Active"
 
         def update_topbar_icon(is_active, text=None):
             try:
-                if text is None: text = get_info_text()
+                if text is None:
+                    text = get_info_text()
                 service.updateDspNotification(is_active, text)
-            except Exception as e: print("Notification Error:", e)
+            except Exception as e:
+                print("Notification Error:", e)
 
         def show_popup(msg):
-            try: service.showToast(msg)
-            except Exception as e: print("Toast Error:", e)
+            try:
+                service.showToast(msg)
+            except Exception as e:
+                print("Toast Error:", e)
 
         def release_visualizer():
             global visualizer
@@ -258,7 +271,8 @@ jobs:
                 try:
                     visualizer.setEnabled(False)
                     visualizer.release()
-                except Exception as e: print("Visualizer Release Error:", e)
+                except Exception as e:
+                    print("Visualizer Release Error:", e)
                 visualizer = None
 
         def release_engines():
@@ -269,7 +283,8 @@ jobs:
                     try:
                         eng.setEnabled(False)
                         eng.release()
-                    except Exception as e: print("Engine Release Error:", e)
+                    except Exception as e:
+                        print("Engine Release Error:", e)
             eq_engine = None
             bass_engine = None
             virtualizer_engine = None
@@ -286,7 +301,6 @@ jobs:
                 try:
                     eq_engine = Equalizer(1000, 0)
                     eq_engine.setEnabled(True)
-                    print("EQ Engine initialized")
                 except Exception as e:
                     print("EQ Init Failed:", e)
                     eq_engine = None
@@ -295,7 +309,6 @@ jobs:
                 try:
                     bass_engine = BassBoost(1000, 0)
                     bass_engine.setEnabled(True)
-                    print("Bass Engine initialized")
                 except Exception as e:
                     print("Bass Init Failed:", e)
                     bass_engine = None
@@ -332,7 +345,8 @@ jobs:
                     target_vol = int(round((vol / 100.0) * max_vol))
                     audio_manager.setStreamVolume(AudioManager.STREAM_MUSIC, target_vol, 0)
                     last_vol = vol
-            except Exception as e: print("Volume Apply Error:", e)
+            except Exception as e:
+                print("Volume Apply Error:", e)
 
         def apply_dynamic_dsp(force=False):
             global last_bass_strength, last_amp_mb
@@ -340,11 +354,10 @@ jobs:
                 if bass_engine and bass_engine.hasControl():
                     base_strength = cfg['bass'] * 9.5
                     final_strength = max(0, min(1000, int(base_strength + dyn_punch + bass_restorer - safety_red)))
-                    
-                    # 🎯 સ્મૂથ ટ્રાન્ઝિશન (Pumping fix)
-                    if last_bass_strength < 0:
+
+                    if force or last_bass_strength < 0:
                         last_bass_strength = final_strength
-                        if bass_engine: bass_engine.setStrength(final_strength)
+                        bass_engine.setStrength(final_strength)
                     else:
                         diff = final_strength - last_bass_strength
                         if abs(diff) >= 5:
@@ -352,22 +365,23 @@ jobs:
                             new_strength = max(0, min(1000, last_bass_strength + step))
                             bass_engine.setStrength(new_strength)
                             last_bass_strength = new_strength
-            except Exception as e: print("DSP Bass Apply Error:", e)
+            except Exception as e:
+                print("DSP Bass Apply Error:", e)
 
             try:
                 if loudness_engine and loudness_engine.hasControl():
-                    # 🎯 લિમિટર ઓછું આક્રમક
                     amp_mb = max(0, min(900, int((cfg['bass'] * 7.5) + (bass_restorer * 1.5) - safety_red * 0.7)))
                     if force or abs(amp_mb - last_amp_mb) >= 8:
                         loudness_engine.setTargetGain(amp_mb)
                         last_amp_mb = amp_mb
-            except Exception as e: print("DSP Loudness Apply Error:", e)
+            except Exception as e:
+                print("DSP Loudness Apply Error:", e)
 
         def apply_hw_eq():
             try:
-                if not eq_engine or not eq_engine.hasControl(): 
+                if not eq_engine or not eq_engine.hasControl():
                     return False
-                
+
                 num_bands = eq_engine.getNumberOfBands()
                 level_range = eq_engine.getBandLevelRange()
                 min_lvl = int(level_range[0])
@@ -375,38 +389,21 @@ jobs:
 
                 neutral = max(min_lvl, min(max_lvl, 0))
                 hw_levels = cfg.get('hw_eq_levels', {})
-                if not isinstance(hw_levels, dict): hw_levels = {}
-                
-                cutoff_milli = cfg.get('low_cut', 75) * 1000
-                band_from = cfg.get('band_from', 0)
-                band_to = cfg.get('band_to', 0)
-                if band_from > band_to and band_to > 0: band_from, band_to = band_to, band_from
-                cutter_active = (band_to > 0 and band_to >= band_from)
+                if not isinstance(hw_levels, dict):
+                    hw_levels = {}
 
                 for b in range(num_bands):
-                    freq_range = eq_engine.getBandFreqRange(b)
-                    low_f = freq_range[0]
-                    high_f = freq_range[1]
-
-                    if high_f <= cutoff_milli:
-                        eq_engine.setBandLevel(b, min_lvl)
-                        continue
-
-                    low_f_hz = low_f / 1000.0
-                    high_f_hz = high_f / 1000.0
-                    if cutter_active and (low_f_hz <= band_to and high_f_hz >= band_from):
-                        eq_engine.setBandLevel(b, min_lvl)
-                        continue
-
-                    try: pct = int(hw_levels.get(str(b), 50))
-                    except (TypeError, ValueError): pct = 50
+                    try:
+                        pct = int(hw_levels.get(str(b), 50))
+                    except (TypeError, ValueError):
+                        pct = 50
                     pct = max(0, min(100, pct))
 
                     if pct <= 50:
                         hw_lvl = min_lvl + (pct / 50.0) * (neutral - min_lvl)
                     else:
                         hw_lvl = neutral + ((pct - 50) / 50.0) * (max_lvl - neutral)
-                        
+
                     eq_engine.setBandLevel(b, int(round(hw_lvl)))
                 return True
             except Exception as e:
@@ -442,7 +439,6 @@ jobs:
                     update_topbar_icon(True)
                     show_popup("DSP Service Start")
 
-                # 🎯 ફાઇલ અપડેટ ચેક (સ્મૂથ)
                 if os.path.exists(settings_path):
                     try:
                         mtime = os.path.getmtime(settings_path)
@@ -450,42 +446,28 @@ jobs:
                             with open(settings_path, 'r') as f:
                                 loaded_data = json.load(f)
                             last_mtime = mtime
-                            
+
                             if 'hw_eq_levels' in loaded_data and not isinstance(loaded_data['hw_eq_levels'], dict):
                                 loaded_data['hw_eq_levels'] = {}
-                            
+
                             old_volume = cfg.get('volume', 70)
                             old_bass = cfg.get('bass', 15)
                             old_hw = dict(cfg.get('hw_eq_levels', {}))
-                            old_low_cut = cfg.get('low_cut', 75)
-                            old_band_from = cfg.get('band_from', 0)
-                            old_band_to = cfg.get('band_to', 0)
-                            
+
                             cfg.update(loaded_data)
-                            
-                            # ફક્ત વોલ્યુમ બદલાયું હોય તો જ
-                            if cfg['volume'] != old_volume:
+
+                            if cfg.get('volume') != old_volume:
                                 apply_volume()
-                            
-                            # Hardware EQ બદલાયું હોય તો જ EQ અપડેટ કરો (એન્જિન રીલીઝ નહીં)
-                            hw_changed = (cfg.get('hw_eq_levels') != old_hw or 
-                                          cfg.get('low_cut') != old_low_cut or
-                                          cfg.get('band_from') != old_band_from or
-                                          cfg.get('band_to') != old_band_to)
-                            if hw_changed:
+
+                            if cfg.get('hw_eq_levels') != old_hw:
                                 apply_hw_eq()
-                            
-                            # Bass બદલાયું હોય તો જ BassBoost અપડેટ કરો
-                            if cfg['bass'] != old_bass:
+
+                            if cfg.get('bass') != old_bass:
                                 apply_dynamic_dsp(force=True)
-                            
+
                             update_topbar_icon(True)
                     except Exception as e:
-                        print("Settings Read Error (Corrupted?):", e)
-                        if os.path.exists(settings_path):
-                            try: os.remove(settings_path)
-                            except: pass
-                        last_mtime = 0
+                        print("Settings Read Error:", e)
 
                 is_playing = audio_manager.isMusicActive()
                 if is_playing and not was_playing:
@@ -499,19 +481,20 @@ jobs:
 
                 tick += 1
 
-                # 🎯 દર 3 સેકન્ડે જ કંટ્રોલ ચેક કરો
                 if tick % 30 == 0:
                     status_ok = True
-                    if eq_engine is None or not eq_engine.hasControl(): status_ok = False
-                    if bass_engine is None or not bass_engine.hasControl(): status_ok = False
+                    if eq_engine is None or not eq_engine.hasControl():
+                        status_ok = False
+                    if bass_engine is None or not bass_engine.hasControl():
+                        status_ok = False
 
                     if not status_ok:
                         control_lost_ticks += 1
-                        if control_lost_ticks >= 3:  # સાચે જ 3 વાર ફેલ થાય તો
-                            print("Control truly lost, reinitializing...")
+                        if control_lost_ticks >= 3:
                             init_engines(force=True, with_visualizer=is_playing)
                             apply_hw_eq()
                             apply_dynamic_dsp(force=True)
+                            update_topbar_icon(True)
                             control_lost_ticks = 0
                     else:
                         control_lost_ticks = 0
@@ -520,9 +503,6 @@ jobs:
                     init_engines(force=False, with_visualizer=True)
 
                 if is_playing:
-                    prev_synth = synth_on
-                    prev_limiter = limiter_on
-
                     if visualizer:
                         try:
                             fft_bytes = bytearray(128)
@@ -534,12 +514,13 @@ jobs:
                                     low_e += (r * r + im * im) ** 0.5
                                 low_e /= 5.0
 
-                                # 🎯 FFT સ્મૂથિંગ ધીમું કર્યું
                                 avg_bass = (avg_bass * 0.95) + (low_e * 0.05)
 
                                 delta = low_e - avg_bass
-                                if delta > 11.0 and cfg['bass'] > 0: dyn_punch = min(300.0, delta * (cfg['bass'] / 32.0))
-                                else: dyn_punch *= 0.60
+                                if delta > 11.0 and cfg['bass'] > 0:
+                                    dyn_punch = min(300.0, delta * (cfg['bass'] / 32.0))
+                                else:
+                                    dyn_punch *= 0.60
 
                                 if 2.0 < avg_bass < 38.0 and cfg['bass'] > 20:
                                     synth_on = True
@@ -590,6 +571,7 @@ jobs:
           --permission=BLUETOOTH \
           --permission=BLUETOOTH_ADMIN \
           --permission=BLUETOOTH_CONNECT \
+          --permission=BLUETOOTH_SCAN \
           --permission=WAKE_LOCK \
           --permission=FOREGROUND_SERVICE \
           --permission=FOREGROUND_SERVICE_MEDIA_PLAYBACK \
