@@ -6,8 +6,10 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.slider import Slider
+from kivy.uix.textinput import TextInput
 from kivy.uix.modalview import ModalView
 from kivy.uix.widget import Widget
+from kivy.uix.scrollview import ScrollView
 from kivy.graphics import Color, RoundedRectangle, Line
 from kivy.utils import get_color_from_hex
 from kivy.utils import platform
@@ -81,89 +83,158 @@ class AudioWaveWidget(Widget):
                 Line(points=pts, width=1.5)
 
 
-class SettingsPopup(ModalView):
+class FilterPopup(ModalView):
+    def __init__(self, app_instance, **kwargs):
+        super().__init__(**kwargs)
+        self.app = app_instance
+        self.size_hint = (0.92, 0.75)
+        self.background_color = (0, 0, 0, 0.8)
+        self.auto_dismiss = False
+        self.is_editing = False
+
+        root = ProCard(bg_hex='#0a192f', orientation='vertical', padding='16dp', spacing='12dp')
+        self.add_widget(root)
+
+        title_lbl = Label(text="⚙️ FILTERS & CUT", size_hint_y=None, height='40dp', font_size='18sp', bold=True, color=get_color_from_hex('#64ffda'))
+        root.add_widget(title_lbl)
+
+        self.btn_edit = Button(text="✏️ EDIT SETTINGS", size_hint_y=None, height='46dp', font_size='15sp', bold=True, background_normal='', background_color=get_color_from_hex('#ff9800'), color=get_color_from_hex('#0a192f'))
+        self.btn_edit.bind(on_release=self.toggle_edit)
+        root.add_widget(self.btn_edit)
+
+        inputs_layout = BoxLayout(orientation='vertical', spacing='10dp', size_hint_y=None, height=dp(210))
+
+        lc_box = BoxLayout(orientation='vertical', spacing='2dp')
+        lc_box.add_widget(Label(text="LOW CUT (HPF) - [20 to 150 Hz]", size_hint_y=None, height=dp(18), font_size='12sp', color=get_color_from_hex('#ffab40'), halign='left'))
+        self.txt_low_cut = TextInput(text=str(self.app.low_cut), multiline=False, input_filter='int', size_hint_y=None, height=dp(40), padding=[dp(10), dp(10)], font_size='16sp', halign='center', background_color=get_color_from_hex('#1e3a5f'), foreground_color=get_color_from_hex('#64ffda'), cursor_color=get_color_from_hex('#64ffda'), disabled=True)
+        lc_box.add_widget(self.txt_low_cut)
+        inputs_layout.add_widget(lc_box)
+
+        bc_from_box = BoxLayout(orientation='vertical', spacing='2dp')
+        bc_from_box.add_widget(Label(text="BAND CUTTER FROM (Hz) - [0 = OFF]", size_hint_y=None, height=dp(18), font_size='12sp', color=get_color_from_hex('#ff5252'), halign='left'))
+        self.txt_bc_from = TextInput(text=str(self.app.band_from), multiline=False, input_filter='int', size_hint_y=None, height=dp(40), padding=[dp(10), dp(10)], font_size='16sp', halign='center', background_color=get_color_from_hex('#1e3a5f'), foreground_color=get_color_from_hex('#64ffda'), cursor_color=get_color_from_hex('#64ffda'), disabled=True)
+        bc_from_box.add_widget(self.txt_bc_from)
+        inputs_layout.add_widget(bc_from_box)
+
+        bc_to_box = BoxLayout(orientation='vertical', spacing='2dp')
+        bc_to_box.add_widget(Label(text="BAND CUTTER TO (Hz) - [0 = OFF]", size_hint_y=None, height=dp(18), font_size='12sp', color=get_color_from_hex('#ff5252'), halign='left'))
+        self.txt_bc_to = TextInput(text=str(self.app.band_to), multiline=False, input_filter='int', size_hint_y=None, height=dp(40), padding=[dp(10), dp(10)], font_size='16sp', halign='center', background_color=get_color_from_hex('#1e3a5f'), foreground_color=get_color_from_hex('#64ffda'), cursor_color=get_color_from_hex('#64ffda'), disabled=True)
+        bc_to_box.add_widget(self.txt_bc_to)
+        inputs_layout.add_widget(bc_to_box)
+
+        root.add_widget(inputs_layout)
+        root.add_widget(Widget())
+
+        btn_close = Button(text="CLOSE", size_hint_y=None, height='48dp', font_size='15sp', bold=True, background_normal='', background_color=get_color_from_hex('#d32f2f'), color=get_color_from_hex('#ffffff'))
+        btn_close.bind(on_release=self.dismiss)
+        root.add_widget(btn_close)
+
+    def toggle_edit(self, *args):
+        if not self.is_editing:
+            self.is_editing = True
+            self.btn_edit.text = "💾 SAVE CHANGES"
+            self.btn_edit.background_color = get_color_from_hex('#00c853')
+            self.txt_low_cut.disabled = False
+            self.txt_bc_from.disabled = False
+            self.txt_bc_to.disabled = False
+        else:
+            try:
+                lc_val = int(float(self.txt_low_cut.text)) if self.txt_low_cut.text else 75
+                self.app.low_cut = max(20, min(150, lc_val))
+                self.txt_low_cut.text = str(self.app.low_cut)
+
+                bf_val = int(float(self.txt_bc_from.text)) if self.txt_bc_from.text else 0
+                bt_val = int(float(self.txt_bc_to.text)) if self.txt_bc_to.text else 0
+                self.app.band_from = max(0, min(20000, bf_val))
+                self.app.band_to = max(0, min(20000, bt_val))
+                self.txt_bc_from.text = str(self.app.band_from)
+                self.txt_bc_to.text = str(self.app.band_to)
+            except Exception: pass
+            
+            self.app.save_settings()
+            self.is_editing = False
+            self.btn_edit.text = "✏️ EDIT SETTINGS"
+            self.btn_edit.background_color = get_color_from_hex('#ff9800')
+            self.txt_low_cut.disabled = True
+            self.txt_bc_from.disabled = True
+            self.txt_bc_to.disabled = True
+
+
+class HardwareEqPopup(ModalView):
     def __init__(self, app_instance, **kwargs):
         super().__init__(**kwargs)
         self.app = app_instance
         self.size_hint = (0.92, 0.85)
-        self.background_color = (0, 0, 0, 0.7)
+        self.background_color = (0, 0, 0, 0.8)
         self.auto_dismiss = False
 
-        root = ProCard(bg_hex='#0a192f', orientation='vertical', padding='12dp', spacing='10dp')
+        root = ProCard(bg_hex='#0a192f', orientation='vertical', padding='12dp', spacing='8dp')
         self.add_widget(root)
 
-        title_lbl = Label(
-            text="⚙️ ADVANCED DSP SETTINGS",
-            size_hint_y=None, height='40dp',
-            font_size='16sp', bold=True,
-            color=get_color_from_hex('#64ffda')
-        )
+        title_lbl = Label(text="📱 HARDWARE EQ BANDS", size_hint_y=None, height='40dp', font_size='16sp', bold=True, color=get_color_from_hex('#b388ff'))
         root.add_widget(title_lbl)
 
-        sliders_box = BoxLayout(orientation='vertical', spacing='10dp', size_hint_y=None, height=dp(420))
+        if not self.app.hw_bands:
+            err_lbl = Label(text="❌ Hardware EQ Not Detected!", halign='center', valign='middle', color=get_color_from_hex('#ff5252'))
+            root.add_widget(err_lbl)
+        else:
+            scroll = ScrollView(size_hint=(1, 1), do_scroll_x=False)
+            scroll_layout = BoxLayout(orientation='vertical', spacing='8dp', size_hint_y=None)
+            scroll_layout.bind(minimum_height=scroll_layout.setter('height'))
 
-        self.card_cut, self.lbl_cut_val, self.slider_cut = self.app.create_slider_card(
-            title="3. LOW CUT-OFF & AUTO-BASS (HPF)",
-            min_val=50, max_val=250, cur_val=self.app.low_cut,
-            unit=" Hz", accent_hex='#ffab40',
-            callback=self.app.on_cut_change
-        )
-        sliders_box.add_widget(self.card_cut)
+            for band_idx, freq in self.app.hw_bands:
+                freq_str = f"{int(freq)} Hz"
+                current_val = self.app.hw_eq_levels.get(str(band_idx), 50)
+                current_db = (current_val - 50) * 0.3
+                
+                card = ProCard(orientation='vertical', padding=['12dp', '6dp'], spacing='4dp', size_hint_y=None, height=dp(82))
+                top_row = BoxLayout(orientation='horizontal', size_hint_y=0.4)
+                
+                lbl_title = Label(text=f"Band {band_idx+1} ({freq_str})", font_size='12sp', bold=True, color=get_color_from_hex('#ccd6f6'), halign='left', valign='middle')
+                lbl_title.bind(size=lbl_title.setter('text_size'))
+                lbl_val = Label(text=f"{current_db:+.1f} dB", font_size='15sp', bold=True, color=get_color_from_hex('#b388ff'), size_hint_x=0.35, halign='right', valign='middle')
+                lbl_val.bind(size=lbl_val.setter('text_size'))
+                
+                top_row.add_widget(lbl_title)
+                top_row.add_widget(lbl_val)
 
-        self.card_lmid, self.lbl_lmid_val, self.slider_lmid = self.app.create_slider_card(
-            title="4. LOW-MID AMPLITUDE (250-500Hz)",
-            min_val=0, max_val=100, cur_val=self.app.low_mid,
-            unit="%", accent_hex='#ab47bc',
-            callback=self.app.on_lmid_change
-        )
-        sliders_box.add_widget(self.card_lmid)
+                slider = Slider(min=0, max=100, value=current_val, step=1, cursor_size=('28dp', '28dp'),
+                                background_width='14dp', value_track=True, value_track_color=get_color_from_hex('#b388ff'),
+                                value_track_width='5dp', size_hint_y=0.6)
 
-        self.card_mid, self.lbl_mid_val, self.slider_mid = self.app.create_slider_card(
-            title="5. MID & UPPER (VOCAL)",
-            min_val=0, max_val=100, cur_val=self.app.mid_upper,
-            unit="%", accent_hex='#26a69a',
-            callback=self.app.on_mid_change
-        )
-        sliders_box.add_widget(self.card_mid)
+                def make_callback(idx, label_widget):
+                    def on_value(instance, value):
+                        db_val = (int(value) - 50) * 0.3
+                        label_widget.text = f"{db_val:+.1f} dB"
+                        self.app.on_hw_slider_change(idx, value)
+                    return on_value
 
-        self.card_treble, self.lbl_treble_val, self.slider_treble = self.app.create_slider_card(
-            title="6. TREBLE (CLARITY)",
-            min_val=0, max_val=100, cur_val=self.app.treble,
-            unit="%", accent_hex='#00b0ff',
-            callback=self.app.on_treble_change
-        )
-        sliders_box.add_widget(self.card_treble)
+                slider.bind(value=make_callback(band_idx, lbl_val))
+                card.add_widget(top_row)
+                card.add_widget(slider)
+                scroll_layout.add_widget(card)
+            
+            scroll.add_widget(scroll_layout)
+            root.add_widget(scroll)
 
-        root.add_widget(sliders_box)
-        root.add_widget(Widget())
-
-        btn_save = Button(
-            text="💾 SAVE & CLOSE",
-            size_hint_y=None, height='50dp',
-            font_size='15sp', bold=True,
-            background_normal='',
-            background_color=get_color_from_hex('#00c853'),
-            color=get_color_from_hex('#0a192f')
-        )
-        btn_save.bind(on_release=self.save_and_close)
-        root.add_widget(btn_save)
-
-    def save_and_close(self, *args):
-        self.app.save_settings()
-        self.dismiss()
+        btn_close = Button(text="CLOSE", size_hint_y=None, height='48dp', font_size='15sp', bold=True, background_normal='', background_color=get_color_from_hex('#d32f2f'), color=get_color_from_hex('#ffffff'))
+        btn_close.bind(on_release=self.dismiss)
+        root.add_widget(btn_close)
 
 
 class AudioControllerApp(App):
     def build(self):
         self.title = "Photon Audio"
-        self.volume = 50
-        self.bass = 50
-        self.low_cut = 50
-        self.low_mid = 50
-        self.mid_upper = 50
-        self.treble = 50
+        self.volume = 70
+        self.bass = 15
+        self.low_cut = 75
+        self.band_from = 0
+        self.band_to = 0
+        
+        self.hw_bands = self.detect_hardware_bands()
+        self.hw_eq_levels = {}
+
         self.device_name = "Detecting Audio Device..."
-        self.was_music_active = False
         self.in_foreground = True
         self._save_ev = None
 
@@ -176,50 +247,34 @@ class AudioControllerApp(App):
         root.bind(pos=self._update_bg, size=self._update_bg)
 
         device_bar = ProCard(bg_hex='#004d40', size_hint_y=None, height=dp(40), padding=dp(6))
-        self.lbl_device = Label(
-            text=f"🔊 Output: {self.device_name}",
-            font_size='13sp', bold=True, color=get_color_from_hex('#64ffda')
-        )
+        self.lbl_device = Label(text=f"🔊 Output: {self.device_name}", font_size='13sp', bold=True, color=get_color_from_hex('#64ffda'))
         device_bar.add_widget(self.lbl_device)
         root.add_widget(device_bar)
 
-        # કાયમી ગ્રીન બટન (ક્યારેય રેડ કે OFF નહીં થાય)
-        self.btn_always_on = Button(
-            text="🟢 ALWAYS ON (ENGINE LOCKED): ACTIVE",
-            size_hint_y=None, height=dp(42),
-            font_size='13sp', bold=True, background_normal='',
-            background_color=get_color_from_hex('#00c853'),
-            color=get_color_from_hex('#0a192f')
-        )
+        self.btn_always_on = Button(text="🟢 ALWAYS ON (ENGINE LOCKED): ACTIVE", size_hint_y=None, height=dp(42), font_size='13sp', bold=True, background_normal='', background_color=get_color_from_hex('#00c853'), color=get_color_from_hex('#0a192f'))
         self.btn_always_on.bind(on_release=self.ensure_always_on)
         root.add_widget(self.btn_always_on)
 
-        btn_settings = Button(
-            text="⚙️ ADVANCED DSP SETTINGS",
-            size_hint_y=None, height=dp(48),
-            font_size='14sp', bold=True, background_normal='',
-            background_color=get_color_from_hex('#26a69a'),
-            color=get_color_from_hex('#0a192f')
-        )
-        btn_settings.bind(on_release=self.open_settings)
-        root.add_widget(btn_settings)
+        btn_filters = Button(text="⚙️ FILTERS & CUT (Low Cut / Band)", size_hint_y=None, height=dp(48), font_size='14sp', bold=True, background_normal='', background_color=get_color_from_hex('#ff5252'), color=get_color_from_hex('#ffffff'))
+        btn_filters.bind(on_release=self.open_filters)
+        root.add_widget(btn_filters)
+
+        btn_hw_eq = Button(text="📱 OPEN HARDWARE EQ", size_hint_y=None, height=dp(48), font_size='14sp', bold=True, background_normal='', background_color=get_color_from_hex('#6200ea'), color=get_color_from_hex('#ffffff'))
+        btn_hw_eq.bind(on_release=self.open_hw_eq)
+        root.add_widget(btn_hw_eq)
 
         self.audio_wave = AudioWaveWidget(size_hint_y=1)
         root.add_widget(self.audio_wave)
 
         self.card_vol, self.lbl_vol_val, self.slider_vol = self.create_slider_card(
-            title="1. MASTER VOLUME",
-            min_val=0, max_val=100, cur_val=self.volume,
-            unit="%", accent_hex='#00e676',
-            callback=self.on_volume_change
+            title="1. MASTER VOLUME", min_val=0, max_val=100, cur_val=self.volume,
+            unit="%", accent_hex='#00e676', callback=self.on_volume_change
         )
         root.add_widget(self.card_vol)
 
         self.card_bass, self.lbl_bass_val, self.slider_bass = self.create_slider_card(
-            title="2. BASS BOOSTER (+30% AMP POWER)",
-            min_val=0, max_val=100, cur_val=self.bass,
-            unit="%", accent_hex='#ff6d00',
-            callback=self.on_bass_change
+            title="2. BASS BOOSTER (FFT DYNAMIC)", min_val=0, max_val=100, cur_val=self.bass,
+            unit="%", accent_hex='#ff6d00', callback=self.on_bass_change
         )
         root.add_widget(self.card_bass)
 
@@ -232,8 +287,28 @@ class AudioControllerApp(App):
 
         return root
 
-    def open_settings(self, *args):
-        SettingsPopup(self).open()
+    def detect_hardware_bands(self):
+        bands = []
+        if platform == 'android':
+            try:
+                from jnius import autoclass
+                Equalizer = autoclass('android.media.audiofx.Equalizer')
+                eq = Equalizer(1000, 0)
+                num_bands = eq.getNumberOfBands()
+                for i in range(num_bands):
+                    center = eq.getCenterFreq(i) / 1000.0
+                    bands.append((i, center))
+                eq.release()
+            except Exception as e:
+                print("Hardware detect error:", e)
+                return []
+        return bands
+
+    def open_filters(self, *args):
+        FilterPopup(self).open()
+
+    def open_hw_eq(self, *args):
+        HardwareEqPopup(self).open()
 
     def _update_bg(self, instance, *args):
         if hasattr(self, 'bg_rect'):
@@ -241,26 +316,22 @@ class AudioControllerApp(App):
             self.bg_rect.size = instance.size
 
     def create_slider_card(self, title, min_val, max_val, cur_val, unit, accent_hex, callback):
-        card = ProCard(orientation='vertical', padding=['12dp', '8dp'], spacing='4dp')
+        card = ProCard(orientation='vertical', padding=['12dp', '6dp'], spacing='4dp')
         card.size_hint_y = None
-        card.height = dp(95)
-
+        card.height = dp(82)
         top_row = BoxLayout(orientation='horizontal', size_hint_y=0.4)
+
         lbl_title = Label(text=title, font_size='12sp', bold=True, color=get_color_from_hex('#ccd6f6'), halign='left', valign='middle')
         lbl_title.bind(size=lbl_title.setter('text_size'))
-
         lbl_val = Label(text=f"{int(cur_val)}{unit}", font_size='15sp', bold=True, color=get_color_from_hex(accent_hex), size_hint_x=0.35, halign='right', valign='middle')
         lbl_val.bind(size=lbl_val.setter('text_size'))
 
         top_row.add_widget(lbl_title)
         top_row.add_widget(lbl_val)
 
-        slider = Slider(
-            min=min_val, max=max_val, value=cur_val, step=1,
-            cursor_size=('28dp', '28dp'), background_width='14dp',
-            value_track=True, value_track_color=get_color_from_hex(accent_hex),
-            value_track_width='5dp', size_hint_y=0.6
-        )
+        slider = Slider(min=min_val, max=max_val, value=cur_val, step=1, cursor_size=('28dp', '28dp'),
+                        background_width='14dp', value_track=True, value_track_color=get_color_from_hex(accent_hex),
+                        value_track_width='5dp', size_hint_y=0.6)
 
         def on_value(instance, value):
             lbl_val.text = f"{int(value)}{unit}"
@@ -271,13 +342,9 @@ class AudioControllerApp(App):
         card.add_widget(slider)
         return card, lbl_val, slider
 
-    # ==========================================
-    # ALWAYS ON LOCKED SERVICE CONTROLLER
-    # ==========================================
     def on_start(self):
         self.in_foreground = True
         self.save_settings()
-        self.apply_system_volume()
         Clock.schedule_once(self.request_android_permissions, 0.5)
         self.request_battery_unrestricted()
         self.detect_connected_audio_device()
@@ -290,13 +357,11 @@ class AudioControllerApp(App):
                 from android.permissions import request_permissions
                 request_permissions([
                     'android.permission.BLUETOOTH_CONNECT',
-                    'android.permission.BLUETOOTH_SCAN',
                     'android.permission.MODIFY_AUDIO_SETTINGS',
                     'android.permission.RECORD_AUDIO',
                     'android.permission.POST_NOTIFICATIONS'
                 ])
-            except Exception:
-                pass
+            except Exception: pass
 
     def on_pause(self):
         self.in_foreground = False
@@ -315,8 +380,7 @@ class AudioControllerApp(App):
         self.start_background_service(force=True)
 
     def is_service_running(self):
-        if platform != 'android':
-            return False
+        if platform != 'android': return False
         try:
             activity = PythonActivity.mActivity
             am = activity.getSystemService(Context.ACTIVITY_SERVICE)
@@ -326,26 +390,27 @@ class AudioControllerApp(App):
                 for svc in running.toArray():
                     if str(svc.service.getClassName()) == target:
                         return True
-        except Exception:
-            pass
+        except Exception: pass
         return False
 
     def start_background_service(self, force=False):
-        if platform != 'android':
-            return
+        if platform != 'android': return
         try:
-            if not force and self.is_service_running():
-                return
+            if not force and self.is_service_running(): return
             activity = PythonActivity.mActivity
             service_class = autoclass('com.photon.audio.ServicePhotondsp')
             title = "Photon Audio EQ Active"
-            info = f"Bass:{self.bass}% | Cut:<{self.low_cut}Hz | L-Mid:{self.low_mid}% | Treble:{self.treble}%"
+            info = f"Bass:{self.bass}% | Vol:{self.volume}%"
             try:
                 service_class.start(activity, 'icon', title, info, '')
-            except Exception:
-                service_class.start(activity, '')
-        except Exception as e:
-            print("Start Service Error:", e)
+                return
+            except Exception as e1: print("p4a start failed:", e1)
+            intent = Intent(activity, service_class)
+            if Build and Build.VERSION.SDK_INT >= 26:
+                activity.startForegroundService(intent)
+            else:
+                activity.startService(intent)
+        except Exception as e: print("Start Service Error:", e)
 
     def request_battery_unrestricted(self):
         if platform == 'android' and PowerManager and Settings and Uri:
@@ -357,28 +422,10 @@ class AudioControllerApp(App):
                     intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
                     intent.setData(Uri.parse(f"package:{pkg}"))
                     activity.startActivity(intent)
-            except Exception as e:
-                print("Battery Unrestrict Error:", e)
-
-    def apply_system_volume(self):
-        if platform != 'android':
-            return
-        try:
-            activity = PythonActivity.mActivity
-            audio_manager = activity.getSystemService(Context.AUDIO_SERVICE)
-            max_vol = audio_manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            target_vol = int(round((self.volume / 100.0) * max_vol))
-            audio_manager.setStreamVolume(AudioManager.STREAM_MUSIC, target_vol, 0)
-        except Exception:
-            pass
+            except Exception: pass
 
     def detect_connected_audio_device(self):
-        if platform != 'android':
-            self.device_name = "PC / Simulated Speaker"
-            if hasattr(self, 'lbl_device'):
-                self.lbl_device.text = f"🔊 Output: {self.device_name}"
-            return
-
+        if platform != 'android': return
         detected = "Phone Speaker"
         try:
             activity = PythonActivity.mActivity
@@ -391,109 +438,89 @@ class AudioControllerApp(App):
                         p_name = dev.getProductName()
                         if p_name:
                             detected = p_name.toString()
-                            if dev_type in (8, 7, 22):
-                                detected = f"BT: {detected}"
+                            if dev_type in (8, 7, 22): detected = f"BT: {detected}"
                             break
-        except Exception:
-            pass
-
+        except Exception: pass
         if detected != self.device_name:
             self.device_name = detected
-            if hasattr(self, 'lbl_device'):
-                self.lbl_device.text = f"🔊 Output: {self.device_name}"
+            if hasattr(self, 'lbl_device'): self.lbl_device.text = f"🔊 Output: {self.device_name}"
 
     def background_monitor(self, dt):
-        if not self.in_foreground:
-            return
+        if not self.in_foreground: return
         self.detect_connected_audio_device()
-        if platform != 'android':
-            return
+        if platform != 'android': return
         try:
-            if not self.is_service_running():
-                self.start_background_service(force=True)
+            if not self.is_service_running(): self.start_background_service(force=True)
             activity = PythonActivity.mActivity
             audio_manager = activity.getSystemService(Context.AUDIO_SERVICE)
             is_playing = audio_manager.isMusicActive()
-            self.was_music_active = is_playing
             state = "🎵 Active" if is_playing else "⏸ Idle"
-            if hasattr(self, 'lbl_device'):
-                self.lbl_device.text = f"🔊 {self.device_name} [{state}]"
-        except Exception:
-            pass
+            if hasattr(self, 'lbl_device'): self.lbl_device.text = f"🔊 {self.device_name} [{state}]"
+        except Exception: pass
 
-    # ==========================================
-    # SLIDER CALLBACKS (UI -> FILE)
-    # ==========================================
     def schedule_save(self):
-        if self._save_ev:
-            self._save_ev.cancel()
-        self._save_ev = Clock.schedule_once(lambda dt: self.save_settings(), 0.04)
+        if self._save_ev: self._save_ev.cancel()
+        self._save_ev = Clock.schedule_once(lambda dt: self.save_settings(), 0.15) 
 
     def on_volume_change(self, instance, value):
         self.volume = int(value)
-        self.apply_system_volume()
+        if platform == 'android':
+            try:
+                activity = PythonActivity.mActivity
+                audio_manager = activity.getSystemService(Context.AUDIO_SERVICE)
+                max_vol = audio_manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                target_vol = int(round((self.volume / 100.0) * max_vol))
+                audio_manager.setStreamVolume(AudioManager.STREAM_MUSIC, target_vol, 0)
+            except Exception: pass
         self.schedule_save()
 
     def on_bass_change(self, instance, value):
         self.bass = int(value)
         self.schedule_save()
 
-    def on_cut_change(self, instance, value):
-        self.low_cut = int(value)
+    def on_hw_slider_change(self, band_idx, value):
+        self.hw_eq_levels[str(band_idx)] = int(value)
         self.schedule_save()
 
-    def on_lmid_change(self, instance, value):
-        self.low_mid = int(value)
-        self.schedule_save()
-
-    def on_mid_change(self, instance, value):
-        self.mid_upper = int(value)
-        self.schedule_save()
-
-    def on_treble_change(self, instance, value):
-        self.treble = int(value)
-        self.schedule_save()
-
-    # ==========================================
-    # SETTINGS FILE (ATOMIC WRITE SYNC)
-    # ==========================================
     def get_settings_path(self):
         if platform == 'android':
-            try:
-                return os.path.join(PythonActivity.mActivity.getFilesDir().getAbsolutePath(), 'audio_eq_settings.json')
-            except Exception:
-                pass
+            try: return os.path.join(PythonActivity.mActivity.getFilesDir().getAbsolutePath(), 'audio_eq_settings.json')
+            except Exception: pass
         return 'audio_eq_settings.json'
 
     def save_settings(self):
         data = {
             'volume': self.volume, 'bass': self.bass,
-            'low_cut': self.low_cut, 'low_mid': self.low_mid,
-            'mid_upper': self.mid_upper, 'treble': self.treble
+            'low_cut': self.low_cut, 'band_from': self.band_from, 'band_to': self.band_to,
+            'hw_eq_levels': self.hw_eq_levels
         }
         try:
             path = self.get_settings_path()
             tmp_path = path + '.tmp'
             with open(tmp_path, 'w') as f:
                 json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno()) 
             os.replace(tmp_path, path)
-        except Exception:
-            pass
+        except Exception: pass
 
     def load_settings(self):
         path = self.get_settings_path()
         if os.path.exists(path):
             try:
-                with open(path, 'r') as f:
-                    data = json.load(f)
-                self.volume = data.get('volume', 50)
-                self.bass = data.get('bass', 50)
-                self.low_cut = data.get('low_cut', 50)
-                self.low_mid = data.get('low_mid', 50)
-                self.mid_upper = data.get('mid_upper', 50)
-                self.treble = data.get('treble', 50)
-            except Exception:
-                pass
+                with open(path, 'r') as f: data = json.load(f)
+                self.volume = max(0, min(100, int(data.get('volume', 70))))
+                self.bass = max(0, min(100, int(data.get('bass', 15))))
+                self.low_cut = max(20, min(150, int(data.get('low_cut', 75))))
+                self.band_from = max(0, min(20000, int(data.get('band_from', 0))))
+                self.band_to = max(0, min(20000, int(data.get('band_to', 0))))
+                
+                hw_data = data.get('hw_eq_levels', {})
+                if isinstance(hw_data, dict):
+                    self.hw_eq_levels = {str(k): int(v) for k, v in hw_data.items() if isinstance(v, (int, float, str))}
+                else:
+                    self.hw_eq_levels = {}
+            except Exception: pass
 
 
 if __name__ == "__main__":
