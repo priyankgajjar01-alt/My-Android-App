@@ -520,7 +520,12 @@ class AudioControllerApp(App):
                     self.hw_eq_levels = {str(k): int(v) for k, v in hw_data.items() if isinstance(v, (int, float, str))}
                 else:
                     self.hw_eq_levels = {}
-            except Exception: pass
+            except Exception:
+                # 🎯 Corrupted File Recovery
+                print("Settings file corrupted. Deleting and starting fresh.")
+                if os.path.exists(path):
+                    try: os.remove(path)
+                    except: pass
 
 
 if __name__ == "__main__":
