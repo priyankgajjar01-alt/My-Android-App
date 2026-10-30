@@ -298,7 +298,7 @@ class AudioControllerApp(App):
                 for i in range(num_bands):
                     center = eq.getCenterFreq(i) / 1000.0
                     bands.append((i, center))
-                eq.release()
+                eq.release() # 🎯 મુક્ત કરવું જરૂરી છે જેથી સર્વિસ કંટ્રોલ લઈ શકે
             except Exception as e:
                 print("Hardware detect error:", e)
                 return []
@@ -521,7 +521,6 @@ class AudioControllerApp(App):
                 else:
                     self.hw_eq_levels = {}
             except Exception:
-                # 🎯 Corrupted File Recovery
                 print("Settings file corrupted. Deleting and starting fresh.")
                 if os.path.exists(path):
                     try: os.remove(path)
