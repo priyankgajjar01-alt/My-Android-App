@@ -1,3 +1,4 @@
+
 name: Build Photon Audio APK
 
 on:
@@ -5,6 +6,10 @@ on:
   push:
     branches:
       - main
+
+concurrency:
+  group: photon-audio-build
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -14,643 +19,1175 @@ jobs:
       contents: write
 
     steps:
-    - name: Checkout source code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-    - name: Setup Java 17
-      uses: actions/setup-java@v4
-      with:
-        distribution: temurin
-        java-version: '17'
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-    - name: FORCE CLEAN
-      run: |
-        echo "Cleaning old build files..."
-        rm -rf .buildozer/ .pytest_cache/ __pycache__/
-        rm -rf "$HOME/.local/share/python-for-android/" "$HOME/.cache/pip/" "$HOME/.gradle/"
-        sudo rm -rf /usr/local/lib/android/sdk/ndk/27* /usr/local/lib/android/sdk/ndk/28* /usr/local/lib/android/sdk/ndk/29*
-        echo "Clean completed."
+      - name: FORCE CLEAN
+        run: |
+          rm -rf .buildozer/ .pytest_cache/ __pycache__/
+          rm -rf "$HOME/.local/share/python-for-android/"
+          rm -rf "$HOME/.cache/pip/" "$HOME/.gradle/"
+          rm -rf "$HOME/android/sdk/ndk/27"* "$HOME/android/sdk/ndk/28"* "$HOME/android/sdk/ndk/29"*
+          find . -type f -name "*.apk" -not -path "./APK/*" -delete
+          echo "Clean completed."
 
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y git zip unzip wget curl autoconf automake libtool pkg-config zlib1g-dev libffi-dev libssl-dev cmake build-essential
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git zip unzip wget curl \
+            autoconf automake libtool pkg-config \
+            zlib1g-dev libffi-dev libssl-dev \
+            cmake build-essential
 
-    - name: Setup Android SDK and NDK
-      run: |
-        export ANDROID_SDK_ROOT=$HOME/android/sdk
-        echo "ANDROID_SDK_ROOT=$HOME/android/sdk" >> $GITHUB_ENV
-        mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-        cd "$ANDROID_SDK_ROOT/cmdline-tools"
-        wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-        rm -rf latest
-        unzip -q commandlinetools-linux-11076708_latest.zip
-        mv cmdline-tools latest
-        if [ -d "$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin" ]; then
-          BIN_PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin"
-        else
+      - name: Setup Android SDK and NDK
+        run: |
+          export ANDROID_SDK_ROOT="$HOME/android/sdk"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          cd "$ANDROID_SDK_ROOT/cmdline-tools"
+
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          rm -rf latest
+          unzip -q commandlinetools-linux-11076708_latest.zip
+          mv cmdline-tools latest
+
           BIN_PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin"
-        fi
-        echo "$BIN_PATH" >> $GITHUB_PATH
-        echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
-        export PATH="$BIN_PATH:$ANDROID_SDK_ROOT/platform-tools:$PATH"
-        yes | sdkmanager --licenses
-        sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
-
-    - name: Install Python packages
-      run: |
-        python3 -m pip install --upgrade pip setuptools wheel
-        python3 -m pip install cython==0.29.33 kivy[base] pillow python-for-android==2024.1.21
-
-    - name: Patch p4a PythonService.java and AndroidManifest for Android 14
-      run: |
-        python3 - << 'EOF'
-        import os, glob, re, pythonforandroid
-        p4a_dir = os.path.dirname(pythonforandroid.__file__)
-
-        helper_java_methods = """
-            public void showToast(final String message) {
-                try {
-                    new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
-                        @Override
-                        public void run() {
-                            try {
-                                android.widget.Toast.makeText(getApplicationContext(), message, android.widget.Toast.LENGTH_SHORT).show();
-                            } catch (Exception e) {}
-                        }
-                    });
-                } catch (Exception e) {}
-            }
-
-            public void updateDspNotification(final boolean isActive, final String subText) {
-                try {
-                    new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
-                        @Override
-                        public void run() {
-                            try {
-                                android.content.Context ctx = getApplicationContext();
-                                android.app.NotificationManager nm = (android.app.NotificationManager) ctx.getSystemService(android.content.Context.NOTIFICATION_SERVICE);
-                                String channelId = "photon_dsp_topbar_channel";
-                                if (android.os.Build.VERSION.SDK_INT >= 26) {
-                                    android.app.NotificationChannel chan = new android.app.NotificationChannel(
-                                        channelId,
-                                        "Photon Audio DSP Status",
-                                        android.app.NotificationManager.IMPORTANCE_DEFAULT
-                                    );
-                                    chan.setSound(null, null);
-                                    chan.enableVibration(false);
-                                    chan.setShowBadge(false);
-                                    chan.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
-                                    nm.createNotificationChannel(chan);
-                                }
-                                android.content.Intent launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
-                                int flags = android.os.Build.VERSION.SDK_INT >= 23 ? (android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE) : android.app.PendingIntent.FLAG_UPDATE_CURRENT;
-                                android.app.PendingIntent pi = android.app.PendingIntent.getActivity(ctx, 0, launchIntent, flags);
-
-                                int iconRes = ctx.getApplicationInfo().icon;
-                                if (iconRes == 0) {
-                                    iconRes = android.R.drawable.sym_def_app_icon;
-                                }
-                                String title = isActive ? "🟢 Photon Audio DSP: ACTIVE" : "⏸ Photon Audio DSP: PAUSED (Call)";
-
-                                android.app.Notification.Builder builder;
-                                if (android.os.Build.VERSION.SDK_INT >= 26) {
-                                    builder = new android.app.Notification.Builder(ctx, channelId);
-                                } else {
-                                    builder = new android.app.Notification.Builder(ctx);
-                                }
-                                builder.setContentTitle(title)
-                                       .setContentText(subText)
-                                       .setSmallIcon(iconRes)
-                                       .setContentIntent(pi)
-                                       .setOnlyAlertOnce(true)
-                                       .setOngoing(true);
-
-                                nm.notify(getServiceId(), builder.build());
-                            } catch (Exception e) {}
-                        }
-                    });
-                } catch (Exception e) {}
-            }
-        """
-
-        for f in glob.glob(p4a_dir + '/**/PythonService.java', recursive=True):
-            with open(f, 'r') as file:
-                content = file.read()
-
-            content = re.sub(
-                r'startForeground\s*\(\s*getServiceId\(\)\s*,\s*notification\s*\)\s*;',
-                'if (Build.VERSION.SDK_INT >= 29) { startForeground(getServiceId(), notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK); } else { startForeground(getServiceId(), notification); }',
-                content
-            )
-
-            content = re.sub(
-                r'(public\s+int\s+onStartCommand\s*\(\s*Intent\s+intent\s*,\s*int\s+flags\s*,\s*int\s+startId\s*\)\s*\{)',
-                r'\1 if (intent == null || intent.getExtras() == null) { return START_STICKY; }',
-                content
-            )
-
-            content = content.replace('return START_NOT_STICKY;', 'return START_STICKY;')
-            content = re.sub(r'stopWithTask\s*=\s*[^;]+;', 'stopWithTask = false;', content)
-            content = re.sub(r'if\s*\(\s*stopWithTask\s*\)', 'if (false)', content)
-
-            if 'public void showToast(' not in content:
-                last_brace = content.rfind('}')
-                if last_brace != -1:
-                    content = content[:last_brace] + helper_java_methods + '\n}\n'
-
-            with open(f, 'w') as file:
-                file.write(content)
-            print('Successfully patched PythonService.java:', f)
-
-        for f in glob.glob(p4a_dir + '/**/AndroidManifest*.tmpl.xml', recursive=True):
-            with open(f, 'r') as file:
-                content = file.read()
-
-            content = re.sub(r'\s*android:stopWithTask="[^"]*"', '', content)
-            content = re.sub(r'\s*android:foregroundServiceType="[^"]*"', '', content)
-            new_content = content.replace(
-                '<service ',
-                '<service android:stopWithTask="false" android:foregroundServiceType="mediaPlayback" '
-            )
-
-            with open(f, 'w') as file:
-                file.write(new_content)
-            print('Successfully patched Manifest template:', f)
-        EOF
-
-    - name: Prepare app source, Logo, and Always-On Background Service
-      run: |
-        mkdir -p app_source
-        if [ ! -f "main.py" ]; then echo "ERROR: main.py not found!"; exit 1; fi
-        cp main.py app_source/main.py
-        sed -i '1s/^Import /import /' app_source/main.py
-
-        if [ -f "icon.png" ]; then
-          cp icon.png app_source/icon.png
-        else
-          python3 -c "
-        from PIL import Image, ImageDraw
-        # ટ્રાન્સપેરન્ટ બેકગ્રાઉન્ડ
-        img = Image.new('RGBA', (512, 512), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        # ફક્ત એક જ સાયન (Cyan) કલરનું જાડું વર્તુળ
-        d.ellipse([48, 48, 464, 464], outline=(100, 255, 218, 255), width=48)
-        img.save('app_source/icon.png')
-        "
-        fi
-
-        cat << 'EOF' > app_source/service.py
-        import time
-        import json
-        import os
-        from jnius import autoclass
-
-        PythonService = autoclass('org.kivy.android.PythonService')
-        Context = autoclass('android.content.Context')
-        AudioManager = autoclass('android.media.AudioManager')
-        Equalizer = autoclass('android.media.audiofx.Equalizer')
-        BassBoost = autoclass('android.media.audiofx.BassBoost')
-        Virtualizer = autoclass('android.media.audiofx.Virtualizer')
-        LoudnessEnhancer = autoclass('android.media.audiofx.LoudnessEnhancer')
-        Visualizer = autoclass('android.media.audiofx.Visualizer')
-        PowerManager = autoclass('android.os.PowerManager')
-
-        service = PythonService.mService
-        service.setAutoRestartService(True)
-
-        try:
-            pm = service.getSystemService(Context.POWER_SERVICE)
-            wake_lock = pm.newWakeLock(1, "PhotonAudio::ServiceWakeLock")
-            wake_lock.setReferenceCounted(False)
-            if not wake_lock.isHeld():
-                wake_lock.acquire()
-        except Exception as e:
-            print("Service WakeLock Error:", e)
-
-        audio_manager = service.getSystemService(Context.AUDIO_SERVICE)
-        settings_path = os.path.join(service.getFilesDir().getAbsolutePath(), 'audio_eq_settings.json')
-
-        eq_engine = None
-        bass_engine = None
-        virtualizer_engine = None
-        loudness_engine = None
-        visualizer = None
-
-        cfg = {
-            'volume': 50, 'bass': 50, 'low_cut': 50,
-            'low_mid': 50, 'mid_upper': 50, 'treble': 50
-        }
-
-        last_mtime = 0
-        last_vol = -1
-        was_playing = False
-        was_in_call = False
-        avg_bass = 0.0
-        avg_lmid = 0.0
-        dyn_punch = 0.0
-        bass_restorer = 0.0
-        lmid_restorer = 0.0
-        last_lmid_restorer = 0.0
-        safety_red = 0.0
-        limiter_on = False
-        synth_on = False
-        last_bass_strength = -1
-        last_amp_mb = -1
-        tick = 0
-        control_lost_ticks = 0
-
-        def get_info_text():
-            return f"Bass:{cfg['bass']}% | Cut:<{cfg['low_cut']}Hz | L-Mid:{cfg['low_mid']}% | Treble:{cfg['treble']}%"
-
-        def update_topbar_icon(is_active, text=None):
-            try:
-                if text is None:
-                    text = get_info_text()
-                service.updateDspNotification(is_active, text)
-            except Exception:
-                pass
-
-        def show_popup(msg):
-            try:
-                service.showToast(msg)
-            except Exception:
-                pass
-
-        def release_visualizer():
-            global visualizer
-            if visualizer is not None:
-                try:
-                    visualizer.setEnabled(False)
-                    visualizer.release()
-                except Exception:
-                    pass
-                visualizer = None
-
-        def release_engines():
-            global eq_engine, bass_engine, virtualizer_engine, loudness_engine
-            release_visualizer()
-            for eng in (eq_engine, bass_engine, virtualizer_engine, loudness_engine):
-                if eng is not None:
-                    try:
-                        eng.setEnabled(False)
-                        eng.release()
-                    except Exception:
-                        pass
-            eq_engine = None
-            bass_engine = None
-            virtualizer_engine = None
-            loudness_engine = None
-
-        def init_engines(force=False, with_visualizer=False):
-            global eq_engine, bass_engine, virtualizer_engine, loudness_engine, visualizer, last_bass_strength, last_amp_mb
-            if force:
-                release_engines()
-                last_bass_strength = -1
-                last_amp_mb = -1
-
-            try:
-                if eq_engine is None:
-                    eq_engine = Equalizer(1000, 0) 
-                eq_engine.setEnabled(True)
-            except Exception:
-                eq_engine = None
-
-            try:
-                if bass_engine is None:
-                    bass_engine = BassBoost(1000, 0) 
-                bass_engine.setEnabled(True)
-            except Exception:
-                bass_engine = None
-
-            try:
-                if virtualizer_engine is None:
-                    virtualizer_engine = Virtualizer(1000, 0)
-                virtualizer_engine.setEnabled(True)
-            except Exception:
-                virtualizer_engine = None
-
-            try:
-                if loudness_engine is None:
-                    loudness_engine = LoudnessEnhancer(0)
-                loudness_engine.setEnabled(True)
-            except Exception:
-                loudness_engine = None
-
-            if with_visualizer:
-                try:
-                    if visualizer is None:
-                        visualizer = Visualizer(0)
-                        visualizer.setCaptureSize(128)
-                        visualizer.setEnabled(True)
-                except Exception:
-                    visualizer = None
-
-        def apply_volume():
-            global last_vol
-            try:
-                vol = int(cfg.get('volume', 50))
-                if vol != last_vol:
-                    max_vol = audio_manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                    target_vol = int(round((vol / 100.0) * max_vol))
-                    audio_manager.setStreamVolume(AudioManager.STREAM_MUSIC, target_vol, 0)
-                    last_vol = vol
-            except Exception:
-                pass
-
-        def apply_dynamic_dsp(force=False):
-            global last_bass_strength, last_amp_mb
-            try:
-                if bass_engine and bass_engine.hasControl():
-                    base_strength = cfg['bass'] * 9.5
-                    final_strength = max(0, min(1000, int(base_strength + dyn_punch + bass_restorer - safety_red)))
-                    if force or abs(final_strength - last_bass_strength) >= 8:
-                        bass_engine.setStrength(final_strength)
-                        last_bass_strength = final_strength
-            except Exception:
-                pass
-
-            try:
-                if loudness_engine and loudness_engine.hasControl():
-                    amp_mb = max(0, min(900, int((cfg['bass'] * 7.5) + (bass_restorer * 1.5) - safety_red)))
-                    if force or abs(amp_mb - last_amp_mb) >= 8:
-                        loudness_engine.setTargetGain(amp_mb)
-                        last_amp_mb = amp_mb
-            except Exception:
-                pass
-
-        def apply_eq():
-            global last_lmid_restorer
-            try:
-                if not eq_engine or not eq_engine.hasControl():
-                    return False
-
-                num_bands = eq_engine.getNumberOfBands()
-                level_range = eq_engine.getBandLevelRange()
-                min_lvl = level_range[0]
-                max_lvl = level_range[1]
-
-                cutoff_milli = cfg['low_cut'] * 1000
-                bass_drive = min(1.35, (cfg['bass'] / 100.0) * 1.30)
-                lmid_amp = (cfg['low_mid'] - 50) / 50.0
-                mid_ratio = (cfg['mid_upper'] - 50) / 50.0
-                treble_ratio = (cfg['treble'] - 50) / 50.0
-                synth_extra = 0.30 if synth_on else 0.0
-                last_lmid_restorer = lmid_restorer
-
-                for b in range(num_bands):
-                    freq_range = eq_engine.getBandFreqRange(b)
-                    low_f = freq_range[0]
-                    high_f = freq_range[1]
-                    center_f = eq_engine.getCenterFreq(b)
-
-                    if 150000 <= center_f <= 550000:
-                        if high_f <= cutoff_milli:
-                            eq_engine.setBandLevel(b, min_lvl)
-                        else:
-                            eff_lmid = max(-1.0, min(1.0, lmid_amp + lmid_restorer))
-                            lmid_lvl = int(max_lvl * eff_lmid) if eff_lmid >= 0 else int(abs(eff_lmid) * min_lvl)
-                            eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lmid_lvl)))
-                    elif center_f < 150000:
-                        if high_f <= cutoff_milli:
-                            eq_engine.setBandLevel(b, min_lvl)
-                        elif low_f < cutoff_milli < high_f:
-                            above_ratio = (high_f - cutoff_milli) / float(high_f - low_f)
-                            if above_ratio < 0.28 and not synth_on:
-                                lvl = int(min_lvl * (1.0 - above_ratio))
-                            else:
-                                boost_factor = min(1.0, (bass_drive + synth_extra) * max(0.65, above_ratio))
-                                lvl = int(max_lvl * boost_factor)
-                            eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, lvl)))
-                        else:
-                            punch_lvl = int(max_lvl * min(1.0, bass_drive + synth_extra))
-                            if limiter_on:
-                                punch_lvl = int(punch_lvl * 0.78)
-                            eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, punch_lvl)))
-                    elif 550000 < center_f < 4000000:
-                        coupled_ratio = max(-1.0, min(1.0, (mid_ratio * 0.75) + (lmid_amp * 0.35)))
-                        mid_lvl = int(max_lvl * 0.70 * coupled_ratio)
-                        eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, mid_lvl)))
-                    else:
-                        treble_lvl = int(max_lvl * treble_ratio)
-                        eq_engine.setBandLevel(b, max(min_lvl, min(max_lvl, treble_lvl)))
-            except Exception:
-                return False
-
-            try:
-                if virtualizer_engine and virtualizer_engine.hasControl():
-                    virtualizer_engine.setStrength(int(cfg['low_mid'] * 10))
-            except Exception:
-                pass
-
-            apply_dynamic_dsp(force=True)
-            return True
-
-        init_engines(force=True, with_visualizer=False)
-        apply_eq()
-        update_topbar_icon(True)
-
-        while True:
-            try:
-                audio_mode = audio_manager.getMode()
-                in_call = (audio_mode != 0)
-
-                if in_call:
-                    if not was_in_call:
-                        release_engines()
-                        was_in_call = True
-                        was_playing = False
-                        update_topbar_icon(False, "DSP Paused during phone call")
-                        show_popup("DSP Service Stop")
-                    time.sleep(0.4)
-                    continue
-
-                if was_in_call:
-                    was_in_call = False
-                    init_engines(force=True, with_visualizer=audio_manager.isMusicActive())
-                    apply_eq()
-                    update_topbar_icon(True)
-                    show_popup("DSP Service Start")
-
-                if os.path.exists(settings_path):
-                    mtime = os.path.getmtime(settings_path)
-                    if mtime != last_mtime:
-                        with open(settings_path, 'r') as f:
-                            loaded_data = json.load(f)
-                        cfg.update(loaded_data)
-                        last_mtime = mtime
-                        apply_volume()
-                        apply_eq()
-                        update_topbar_icon(True)
-
-                is_playing = audio_manager.isMusicActive()
-                if is_playing and not was_playing:
-                    init_engines(force=True, with_visualizer=True)
-                    apply_eq()
-                    update_topbar_icon(True)
-                elif not is_playing and was_playing:
-                    release_visualizer()
-                was_playing = is_playing
-
-                tick += 1
-
-                if is_playing and visualizer is None and tick % 25 == 0:
-                    init_engines(force=False, with_visualizer=True)
-
-                status_ok = True
-                if eq_engine is None or not eq_engine.hasControl():
-                    status_ok = False
-                if bass_engine is None or not bass_engine.hasControl():
-                    status_ok = False
-
-                if not status_ok:
-                    control_lost_ticks += 1
-                    if control_lost_ticks >= 5:
-                        init_engines(force=True, with_visualizer=is_playing)
-                        apply_eq()
-                        update_topbar_icon(True)
-                        control_lost_ticks = 0
-                else:
-                    control_lost_ticks = 0
-
-                if is_playing:
-                    prev_synth = synth_on
-                    prev_limiter = limiter_on
-
-                    if visualizer:
-                        try:
-                            fft_bytes = bytearray(128)
-                            if visualizer.getFft(fft_bytes) == 0:
-                                low_e = 0.0
-                                for i in range(2, 12, 2):
-                                    r = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
-                                    im = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
-                                    low_e += (r * r + im * im) ** 0.5
-                                low_e /= 5.0
-
-                                lmid_e = 0.0
-                                for i in range(12, 26, 2):
-                                    r = fft_bytes[i] - 256 if fft_bytes[i] > 127 else fft_bytes[i]
-                                    im = fft_bytes[i + 1] - 256 if fft_bytes[i + 1] > 127 else fft_bytes[i + 1]
-                                    lmid_e += (r * r + im * im) ** 0.5
-                                lmid_e /= 7.0
-
-                                avg_bass = (avg_bass * 0.85) + (low_e * 0.15)
-                                avg_lmid = (avg_lmid * 0.85) + (lmid_e * 0.15)
-
-                                delta = low_e - avg_bass
-                                if delta > 11.0 and cfg['bass'] > 0:
-                                    dyn_punch = min(300.0, delta * (cfg['bass'] / 32.0))
-                                else:
-                                    dyn_punch *= 0.60
-
-                                if 2.0 < avg_bass < 38.0 and cfg['bass'] > 20:
-                                    synth_on = True
-                                    bass_restorer = min(280.0, (38.0 - avg_bass) * 7.5 * (cfg['bass'] / 100.0))
-                                else:
-                                    synth_on = False
-                                    bass_restorer *= 0.75
-
-                                if 1.5 < avg_lmid < 30.0 and cfg['low_mid'] > 50:
-                                    lmid_restorer = min(0.45, ((30.0 - avg_lmid) / 30.0) * ((cfg['low_mid'] - 50) / 50.0))
-                                else:
-                                    lmid_restorer *= 0.80
-
-                                if avg_bass > 85.0 and cfg['bass'] > 65:
-                                    limiter_on = True
-                                    safety_red = min(300.0, (avg_bass - 85.0) * 4.5 * (cfg['bass'] / 100.0))
-                                else:
-                                    limiter_on = False
-                                    safety_red *= 0.70
-                        except Exception:
-                            release_visualizer()
-
-                    if (synth_on != prev_synth) or (limiter_on != prev_limiter) or (abs(lmid_restorer - last_lmid_restorer) > 0.05):
-                        apply_eq()
-                    else:
-                        apply_dynamic_dsp(force=False)
-            except Exception:
-                pass
-
-            time.sleep(0.12)
-        EOF
-
-        python3 -m py_compile app_source/main.py app_source/service.py
-        ls -lh app_source/
-
-    - name: Build Photon Audio APK
-      run: |
-        export ANDROID_SDK_ROOT=$HOME/android/sdk
-        export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/25.1.8937393
-        export JAVA_HOME=$JAVA_HOME_17_X64
-        export PATH=$JAVA_HOME/bin:$PATH
-        python3 -m pythonforandroid.toolchain apk \
-          --debug \
-          --private app_source \
-          --package=com.photon.audio \
-          --name="Photon Audio" \
-          --version=1.0 \
-          --bootstrap=sdl2 \
-          --orientation=portrait \
-          --dist_name=photon_audio_dist \
-          --requirements=hostpython3,python3,android,kivy,pyjnius \
-          --service=Photondsp:service.py:foreground:sticky \
-          --permission=MODIFY_AUDIO_SETTINGS \
-          --permission=RECORD_AUDIO \
-          --permission=BLUETOOTH \
-          --permission=BLUETOOTH_ADMIN \
-          --permission=BLUETOOTH_CONNECT \
-          --permission=BLUETOOTH_SCAN \
-          --permission=ACCESS_FINE_LOCATION \
-          --permission=ACCESS_COARSE_LOCATION \
-          --permission=WAKE_LOCK \
-          --permission=FOREGROUND_SERVICE \
-          --permission=FOREGROUND_SERVICE_MEDIA_PLAYBACK \
-          --permission=REQUEST_IGNORE_BATTERY_OPTIMIZATIONS \
-          --permission=RECEIVE_BOOT_COMPLETED \
-          --permission=POST_NOTIFICATIONS \
-          --permission=READ_MEDIA_AUDIO \
-          --permission=READ_EXTERNAL_STORAGE \
-          --permission=WRITE_EXTERNAL_STORAGE \
-          --icon=app_source/icon.png \
-          --presplash=app_source/icon.png \
-          --presplash-color=#0a192f \
-          --arch=arm64-v8a \
-          --android-api=34 \
-          --sdk-dir=$ANDROID_SDK_ROOT \
-          --ndk-dir=$ANDROID_NDK_ROOT \
-          --ndk-version=25.1.8937393
-
-    - name: Copy APK
-      run: |
-        mkdir -p APK
-        NEW_APK=$(find . -type f -name "*.apk" 2>/dev/null | grep -v "/APK/" | grep -v "/gradle/" | head -n 1)
-        if [ -n "$NEW_APK" ]; then
+          echo "$BIN_PATH" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+
+          export PATH="$BIN_PATH:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+
+          yes | sdkmanager --licenses
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;25.1.8937393"
+
+      - name: Install Python packages
+        run: |
+          python3 -m pip install --upgrade pip setuptools wheel
+          python3 -m pip install \
+            cython==0.29.33 \
+            kivy[base] \
+            pillow \
+            python-for-android==2024.1.21
+
+      # Java helper methods only.
+      # Foreground service type is configured in the manifest.
+      - name: Patch p4a PythonService.java and AndroidManifest
+        run: |
+          python3 - <<'PY'
+          import os
+          import glob
+          import re
+          import pythonforandroid
+
+          p4a_dir = os.path.dirname(pythonforandroid.__file__)
+
+          java_files = glob.glob(
+              os.path.join(p4a_dir, '**', 'PythonService.java'),
+              recursive=True
+          )
+
+          if not java_files:
+              raise RuntimeError("PythonService.java not found in python-for-android")
+
+          helper_java_methods = """
+              public void showToast(final String message) {
+                  try {
+                      new android.os.Handler(
+                          android.os.Looper.getMainLooper()
+                      ).post(new Runnable() {
+                          @Override
+                          public void run() {
+                              try {
+                                  android.widget.Toast.makeText(
+                                      getApplicationContext(),
+                                      message,
+                                      android.widget.Toast.LENGTH_SHORT
+                                  ).show();
+                              } catch (Exception e) {
+                                  android.util.Log.e("PhotonAudio", "Toast error", e);
+                              }
+                          }
+                      });
+                  } catch (Exception e) {
+                      android.util.Log.e("PhotonAudio", "Toast handler error", e);
+                  }
+              }
+
+              public void updateDspNotification(
+                  final boolean isActive,
+                  final String subText
+              ) {
+                  try {
+                      new android.os.Handler(
+                          android.os.Looper.getMainLooper()
+                      ).post(new Runnable() {
+                          @Override
+                          public void run() {
+                              try {
+                                  android.content.Context ctx = getApplicationContext();
+
+                                  android.app.NotificationManager nm =
+                                      (android.app.NotificationManager)
+                                      ctx.getSystemService(
+                                          android.content.Context.NOTIFICATION_SERVICE
+                                      );
+
+                                  if (nm == null) return;
+
+                                  String channelId = "photon_dsp_topbar_channel";
+
+                                  if (android.os.Build.VERSION.SDK_INT >= 26) {
+                                      android.app.NotificationChannel chan =
+                                          new android.app.NotificationChannel(
+                                              channelId,
+                                              "Photon Audio DSP Status",
+                                              android.app.NotificationManager.IMPORTANCE_LOW
+                                          );
+
+                                      chan.setSound(null, null);
+                                      chan.enableVibration(false);
+                                      chan.setShowBadge(false);
+                                      nm.createNotificationChannel(chan);
+                                  }
+
+                                  android.content.Intent launchIntent =
+                                      ctx.getPackageManager().getLaunchIntentForPackage(
+                                          ctx.getPackageName()
+                                      );
+
+                                  android.app.PendingIntent pi = null;
+
+                                  if (launchIntent != null) {
+                                      int flags =
+                                          android.os.Build.VERSION.SDK_INT >= 23
+                                          ? android.app.PendingIntent.FLAG_UPDATE_CURRENT |
+                                            android.app.PendingIntent.FLAG_IMMUTABLE
+                                          : android.app.PendingIntent.FLAG_UPDATE_CURRENT;
+
+                                      pi = android.app.PendingIntent.getActivity(
+                                          ctx, 0, launchIntent, flags
+                                      );
+                                  }
+
+                                  int iconRes = ctx.getApplicationInfo().icon;
+
+                                  if (iconRes == 0) {
+                                      iconRes = android.R.drawable.sym_def_app_icon;
+                                  }
+
+                                  String title = isActive
+                                      ? "Photon Audio DSP: ACTIVE"
+                                      : "Photon Audio DSP: PAUSED (Call)";
+
+                                  android.app.Notification.Builder builder;
+
+                                  if (android.os.Build.VERSION.SDK_INT >= 26) {
+                                      builder = new android.app.Notification.Builder(
+                                          ctx, channelId
+                                      );
+                                  } else {
+                                      builder = new android.app.Notification.Builder(ctx);
+                                  }
+
+                                  builder
+                                      .setContentTitle(title)
+                                      .setContentText(subText)
+                                      .setSmallIcon(iconRes)
+                                      .setOnlyAlertOnce(true)
+                                      .setOngoing(true);
+
+                                  if (pi != null) {
+                                      builder.setContentIntent(pi);
+                                  }
+
+                                  nm.notify(4242, builder.build());
+
+                              } catch (Exception e) {
+                                  android.util.Log.e(
+                                      "PhotonAudio",
+                                      "Notification error",
+                                      e
+                                  );
+                              }
+                          }
+                      });
+                  } catch (Exception e) {
+                      android.util.Log.e(
+                          "PhotonAudio",
+                          "Notification handler error",
+                          e
+                      );
+                  }
+              }
+          """
+
+          for path in java_files:
+              with open(path, "r", encoding="utf-8") as f:
+                  content = f.read()
+
+              if "public void showToast(" not in content:
+                  last_brace = content.rfind("}")
+
+                  if last_brace < 0:
+                      raise RuntimeError("Invalid PythonService.java: class closing brace not found")
+
+                  content = (
+                      content[:last_brace]
+                      + helper_java_methods
+                      + "\n"
+                      + content[last_brace:]
+                  )
+
+                  with open(path, "w", encoding="utf-8") as f:
+                      f.write(content)
+
+              print("PythonService helper methods ready:", path)
+
+          # Add Android 14 mediaPlayback type only to PythonService.
+          manifest_files = glob.glob(
+              os.path.join(p4a_dir, '**', 'AndroidManifest*.tmpl.xml'),
+              recursive=True
+          )
+
+          if not manifest_files:
+              raise RuntimeError("AndroidManifest template not found")
+
+          patched_count = 0
+
+          for path in manifest_files:
+              with open(path, "r", encoding="utf-8") as f:
+                  content = f.read()
+
+              def patch_service(match):
+                  global patched_count
+                  tag = match.group(0)
+
+                  if "PythonService" not in tag:
+                      return tag
+
+                  tag = re.sub(
+                      r'\s+android:stopWithTask="[^"]*"',
+                      '',
+                      tag
+                  )
+
+                  tag = re.sub(
+                      r'\s+android:foregroundServiceType="[^"]*"',
+                      '',
+                      tag
+                  )
+
+                  tag = tag[:-1] + (
+                      ' android:stopWithTask="false"'
+                      ' android:foregroundServiceType="mediaPlayback">'
+                  )
+
+                  patched_count += 1
+                  return tag
+
+              updated = re.sub(
+                  r'<service\b[^>]*>',
+                  patch_service,
+                  content
+              )
+
+              if updated != content:
+                  with open(path, "w", encoding="utf-8") as f:
+                      f.write(updated)
+
+                  print("Manifest patched:", path)
+
+          if patched_count == 0:
+              raise RuntimeError(
+                  "PythonService manifest entry was not found. "
+                  "Check the pinned p4a manifest template before building."
+              )
+
+          print("Android foreground service manifest patch completed.")
+          PY
+
+      - name: Prepare app source, Logo, and Background Service
+        run: |
+          mkdir -p app_source
+
+          if [ ! -f "main.py" ]; then
+            echo "ERROR: main.py not found!"
+            exit 1
+          fi
+
+          cp main.py app_source/main.py
+
+          if [ -f "icon.png" ]; then
+            cp icon.png app_source/icon.png
+          else
+            python3 - <<'PY'
+          from PIL import Image, ImageDraw
+
+          img = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+          draw = ImageDraw.Draw(img)
+
+          draw.ellipse(
+              [48, 48, 464, 464],
+              outline=(100, 255, 218, 255),
+              width=48
+          )
+
+          img.save("app_source/icon.png")
+          PY
+          fi
+
+          cat <<'PYEOF' > app_source/service.py
+          import time
+          import json
+          import os
+          import math
+
+          from jnius import autoclass
+
+          PythonService = autoclass('org.kivy.android.PythonService')
+          Context = autoclass('android.content.Context')
+          AudioManager = autoclass('android.media.AudioManager')
+          Equalizer = autoclass('android.media.audiofx.Equalizer')
+          BassBoost = autoclass('android.media.audiofx.BassBoost')
+          Virtualizer = autoclass('android.media.audiofx.Virtualizer')
+          LoudnessEnhancer = autoclass('android.media.audiofx.LoudnessEnhancer')
+          Visualizer = autoclass('android.media.audiofx.Visualizer')
+
+          service = PythonService.mService
+          service.setAutoRestartService(True)
+
+          # --------------------------------------------------
+          # Wake lock
+          # --------------------------------------------------
+
+          wake_lock = None
+
+          try:
+              pm = service.getSystemService(Context.POWER_SERVICE)
+
+              wake_lock = pm.newWakeLock(
+                  1,
+                  "PhotonAudio::ServiceWakeLock"
+              )
+
+              wake_lock.setReferenceCounted(False)
+
+              if not wake_lock.isHeld():
+                  wake_lock.acquire()
+
+          except Exception as e:
+              print("Service WakeLock Error:", e)
+
+          # --------------------------------------------------
+          # Android audio
+          # --------------------------------------------------
+
+          audio_manager = service.getSystemService(Context.AUDIO_SERVICE)
+
+          settings_path = os.path.join(
+              service.getFilesDir().getAbsolutePath(),
+              'audio_eq_settings.json'
+          )
+
+          # --------------------------------------------------
+          # Configuration
+          # --------------------------------------------------
+
+          cfg = {
+              'volume': 70,
+              'bass': 15,
+              'low_cut': 75,
+              'band_from': 0,
+              'band_to': 0,
+              'hw_eq_levels': {}
+          }
+
+          def safe_int(value, default, min_v, max_v):
+              try:
+                  number = float(value)
+
+                  if not math.isfinite(number):
+                      return default
+
+                  return max(
+                      min_v,
+                      min(max_v, int(number))
+                  )
+
+              except (TypeError, ValueError, OverflowError):
+                  return default
+
+          def validate_settings(data):
+              if not isinstance(data, dict):
+                  return
+
+              cfg['volume'] = safe_int(
+                  data.get('volume', cfg['volume']),
+                  70, 0, 100
+              )
+
+              cfg['bass'] = safe_int(
+                  data.get('bass', cfg['bass']),
+                  15, 0, 100
+              )
+
+              cfg['low_cut'] = safe_int(
+                  data.get('low_cut', cfg['low_cut']),
+                  75, 20, 150
+              )
+
+              cfg['band_from'] = safe_int(
+                  data.get('band_from', cfg['band_from']),
+                  0, 0, 20000
+              )
+
+              cfg['band_to'] = safe_int(
+                  data.get('band_to', cfg['band_to']),
+                  0, 0, 20000
+              )
+
+              hw_data = data.get('hw_eq_levels', {})
+
+              if isinstance(hw_data, dict):
+                  clean_levels = {}
+
+                  for key, value in hw_data.items():
+                      clean_levels[str(key)] = safe_int(
+                          value, 50, 0, 100
+                      )
+
+                  cfg['hw_eq_levels'] = clean_levels
+
+              else:
+                  cfg['hw_eq_levels'] = {}
+
+          # --------------------------------------------------
+          # Audio effect engines
+          # --------------------------------------------------
+
+          eq_engine = None
+          bass_engine = None
+          virtualizer_engine = None
+          loudness_engine = None
+          visualizer = None
+
+          last_mtime = 0
+          last_vol = -1
+
+          was_playing = False
+          was_in_call = False
+
+          avg_bass = 0.0
+          dyn_punch = 0.0
+          bass_restorer = 0.0
+          safety_red = 0.0
+
+          limiter_on = False
+          synth_on = False
+
+          last_bass_strength = -1
+          last_amp_mb = -1
+
+          tick = 0
+          control_lost_ticks = 0
+
+          # --------------------------------------------------
+          # Notifications
+          # --------------------------------------------------
+
+          def get_info_text():
+              return (
+                  f"Bass:{cfg['bass']}% | "
+                  f"Vol:{cfg['volume']}% | "
+                  f"Cut:<{cfg['low_cut']}Hz"
+              )
+
+          def update_topbar_icon(is_active, text=None):
+              try:
+                  if text is None:
+                      text = get_info_text()
+
+                  service.updateDspNotification(
+                      is_active,
+                      text
+                  )
+
+              except Exception as e:
+                  print("Notification Error:", e)
+
+          def show_popup(message):
+              try:
+                  service.showToast(message)
+
+              except Exception as e:
+                  print("Toast Error:", e)
+
+          # --------------------------------------------------
+          # Release effects
+          # --------------------------------------------------
+
+          def release_visualizer():
+              global visualizer
+
+              if visualizer is not None:
+                  try:
+                      visualizer.setEnabled(False)
+                      visualizer.release()
+
+                  except Exception as e:
+                      print("Visualizer Release Error:", e)
+
+                  visualizer = None
+
+          def release_engines():
+              global eq_engine
+              global bass_engine
+              global virtualizer_engine
+              global loudness_engine
+
+              release_visualizer()
+
+              for engine in (
+                  eq_engine,
+                  bass_engine,
+                  virtualizer_engine,
+                  loudness_engine
+              ):
+                  if engine is not None:
+                      try:
+                          engine.setEnabled(False)
+                          engine.release()
+
+                      except Exception as e:
+                          print("Engine Release Error:", e)
+
+              eq_engine = None
+              bass_engine = None
+              virtualizer_engine = None
+              loudness_engine = None
+
+          # --------------------------------------------------
+          # Initialize effects
+          # --------------------------------------------------
+
+          def init_engines(force=False, with_visualizer=False):
+              global eq_engine
+              global bass_engine
+              global virtualizer_engine
+              global loudness_engine
+              global visualizer
+              global last_bass_strength
+              global last_amp_mb
+
+              if force:
+                  release_engines()
+
+                  last_bass_strength = -1
+                  last_amp_mb = -1
+
+              try:
+                  if eq_engine is None:
+                      eq_engine = Equalizer(1000, 0)
+
+                  eq_engine.setEnabled(True)
+
+              except Exception as e:
+                  print("Equalizer Init Error:", e)
+                  eq_engine = None
+
+              try:
+                  if bass_engine is None:
+                      bass_engine = BassBoost(1000, 0)
+
+                  bass_engine.setEnabled(True)
+
+              except Exception as e:
+                  print("BassBoost Init Error:", e)
+                  bass_engine = None
+
+              try:
+                  if virtualizer_engine is None:
+                      virtualizer_engine = Virtualizer(1000, 0)
+
+                  virtualizer_engine.setEnabled(True)
+
+              except Exception as e:
+                  print("Virtualizer Init Error:", e)
+                  virtualizer_engine = None
+
+              try:
+                  if loudness_engine is None:
+                      loudness_engine = LoudnessEnhancer(0)
+
+                  loudness_engine.setEnabled(True)
+
+              except Exception as e:
+                  print("LoudnessEnhancer Init Error:", e)
+                  loudness_engine = None
+
+              if with_visualizer:
+                  try:
+                      if visualizer is None:
+                          visualizer = Visualizer(0)
+                          visualizer.setCaptureSize(128)
+                          visualizer.setEnabled(True)
+
+                  except Exception as e:
+                      print("Visualizer Init Error:", e)
+                      visualizer = None
+
+          # --------------------------------------------------
+          # Master volume
+          # --------------------------------------------------
+
+          def apply_volume():
+              global last_vol
+
+              try:
+                  vol = safe_int(
+                      cfg.get('volume', 70),
+                      70, 0, 100
+                  )
+
+                  if vol != last_vol:
+                      max_vol = audio_manager.getStreamMaxVolume(
+                          AudioManager.STREAM_MUSIC
+                      )
+
+                      target_vol = int(
+                          round((vol / 100.0) * max_vol)
+                      )
+
+                      audio_manager.setStreamVolume(
+                          AudioManager.STREAM_MUSIC,
+                          target_vol,
+                          0
+                      )
+
+                      last_vol = vol
+
+              except Exception as e:
+                  print("Volume Apply Error:", e)
+
+          # --------------------------------------------------
+          # Dynamic bass DSP
+          # --------------------------------------------------
+
+          def apply_dynamic_dsp(force=False):
+              global last_bass_strength
+              global last_amp_mb
+
+              try:
+                  if bass_engine and bass_engine.hasControl():
+                      base_strength = cfg['bass'] * 9.5
+
+                      final_strength = max(
+                          0,
+                          min(
+                              1000,
+                              int(
+                                  base_strength
+                                  + dyn_punch
+                                  + bass_restorer
+                                  - safety_red
+                              )
+                          )
+                      )
+
+                      if (
+                          force
+                          or abs(final_strength - last_bass_strength) >= 8
+                      ):
+                          bass_engine.setStrength(final_strength)
+                          last_bass_strength = final_strength
+
+              except Exception as e:
+                  print("DSP Bass Apply Error:", e)
+
+              try:
+                  if loudness_engine and loudness_engine.hasControl():
+                      amp_mb = max(
+                          0,
+                          min(
+                              900,
+                              int(
+                                  (cfg['bass'] * 7.5)
+                                  + (bass_restorer * 1.5)
+                                  - safety_red
+                              )
+                          )
+                      )
+
+                      if (
+                          force
+                          or abs(amp_mb - last_amp_mb) >= 8
+                      ):
+                          loudness_engine.setTargetGain(amp_mb)
+                          last_amp_mb = amp_mb
+
+              except Exception as e:
+                  print("DSP Loudness Apply Error:", e)
+
+          # --------------------------------------------------
+          # Hardware EQ + Low Cut + Band Cutter
+          # --------------------------------------------------
+
+          def apply_hw_eq():
+              try:
+                  if not eq_engine:
+                      return False
+
+                  if not eq_engine.hasControl():
+                      return False
+
+                  num_bands = eq_engine.getNumberOfBands()
+
+                  level_range = eq_engine.getBandLevelRange()
+
+                  min_lvl = int(level_range[0])
+                  max_lvl = int(level_range[1])
+
+                  neutral = max(
+                      min_lvl,
+                      min(max_lvl, 0)
+                  )
+
+                  hw_levels = cfg.get('hw_eq_levels', {})
+
+                  if not isinstance(hw_levels, dict):
+                      hw_levels = {}
+
+                  low_cut = safe_int(
+                      cfg.get('low_cut', 75),
+                      75, 20, 150
+                  )
+
+                  cutoff_milli = low_cut * 1000
+
+                  band_from = safe_int(
+                      cfg.get('band_from', 0),
+                      0, 0, 20000
+                  )
+
+                  band_to = safe_int(
+                      cfg.get('band_to', 0),
+                      0, 0, 20000
+                  )
+
+                  if band_from > band_to and band_to > 0:
+                      band_from, band_to = band_to, band_from
+
+                  cutter_active = (
+                      band_to > 0
+                      and band_to >= band_from
+                  )
+
+                  for band in range(num_bands):
+                      freq_range = eq_engine.getBandFreqRange(band)
+
+                      low_f = int(freq_range[0])
+                      high_f = int(freq_range[1])
+
+                      # 1. Low Cut
+                      if high_f <= cutoff_milli:
+                          eq_engine.setBandLevel(band, min_lvl)
+                          continue
+
+                      # 2. Band Cutter
+                      low_f_hz = low_f / 1000.0
+                      high_f_hz = high_f / 1000.0
+
+                      if (
+                          cutter_active
+                          and low_f_hz <= band_to
+                          and high_f_hz >= band_from
+                      ):
+                          eq_engine.setBandLevel(band, min_lvl)
+                          continue
+
+                      # 3. Hardware EQ
+                      pct = safe_int(
+                          hw_levels.get(str(band), 50),
+                          50, 0, 100
+                      )
+
+                      if pct <= 50:
+                          hw_lvl = (
+                              min_lvl
+                              + (pct / 50.0) * (neutral - min_lvl)
+                          )
+                      else:
+                          hw_lvl = (
+                              neutral
+                              + ((pct - 50) / 50.0)
+                              * (max_lvl - neutral)
+                          )
+
+                      eq_engine.setBandLevel(
+                          band,
+                          int(round(hw_lvl))
+                      )
+
+                  return True
+
+              except Exception as e:
+                  print("Hardware EQ Apply Error:", e)
+                  return False
+
+          # --------------------------------------------------
+          # Initial setup
+          # --------------------------------------------------
+
+          init_engines(
+              force=True,
+              with_visualizer=False
+          )
+
+          apply_volume()
+          apply_hw_eq()
+          apply_dynamic_dsp(force=True)
+
+          update_topbar_icon(True)
+
+          # --------------------------------------------------
+          # Main service loop
+          # --------------------------------------------------
+
+          while True:
+              try:
+                  audio_mode = audio_manager.getMode()
+                  in_call = (audio_mode != 0)
+
+                  # Pause DSP during calls
+                  if in_call:
+                      if not was_in_call:
+                          release_engines()
+
+                          was_in_call = True
+                          was_playing = False
+
+                          update_topbar_icon(
+                              False,
+                              "DSP Paused during phone call"
+                          )
+
+                          show_popup("DSP Service Stop")
+
+                      time.sleep(0.4)
+                      continue
+
+                  # Restore DSP after calls
+                  if was_in_call:
+                      was_in_call = False
+
+                      init_engines(
+                          force=True,
+                          with_visualizer=audio_manager.isMusicActive()
+                      )
+
+                      apply_hw_eq()
+                      apply_dynamic_dsp(force=True)
+
+                      update_topbar_icon(True)
+                      show_popup("DSP Service Start")
+
+                  # Read settings safely
+                  if os.path.exists(settings_path):
+                      try:
+                          mtime = os.path.getmtime(settings_path)
+
+                          if mtime != last_mtime:
+                              with open(
+                                  settings_path,
+                                  'r',
+                                  encoding='utf-8'
+                              ) as f:
+                                  loaded_data = json.load(f)
+
+                              if not isinstance(loaded_data, dict):
+                                  raise ValueError(
+                                      "Settings JSON must be an object"
+                                  )
+
+                              validate_settings(loaded_data)
+
+                              last_mtime = mtime
+
+                              apply_volume()
+                              apply_hw_eq()
+                              apply_dynamic_dsp(force=True)
+
+                              update_topbar_icon(True)
+
+                      except Exception as e:
+                          print("Settings Read Error:", e)
+
+                  # Playback detection
+                  is_playing = audio_manager.isMusicActive()
+
+                  if is_playing and not was_playing:
+                      init_engines(
+                          force=True,
+                          with_visualizer=True
+                      )
+
+                      apply_hw_eq()
+                      apply_dynamic_dsp(force=True)
+
+                      update_topbar_icon(True)
+
+                  elif not is_playing and was_playing:
+                      release_visualizer()
+
+                  was_playing = is_playing
+
+                  tick += 1
+
+                  if (
+                      is_playing
+                      and visualizer is None
+                      and tick % 25 == 0
+                  ):
+                      init_engines(
+                          force=False,
+                          with_visualizer=True
+                      )
+
+                  # Check audio effect control
+                  status_ok = True
+
+                  if (
+                      eq_engine is None
+                      or not eq_engine.hasControl()
+                  ):
+                      status_ok = False
+
+                  if (
+                      bass_engine is None
+                      or not bass_engine.hasControl()
+                  ):
+                      status_ok = False
+
+                  if not status_ok:
+                      control_lost_ticks += 1
+
+                      if control_lost_ticks >= 5:
+                          init_engines(
+                              force=True,
+                              with_visualizer=is_playing
+                          )
+
+                          apply_hw_eq()
+                          apply_dynamic_dsp(force=True)
+
+                          update_topbar_icon(True)
+
+                          control_lost_ticks = 0
+
+                  else:
+                      control_lost_ticks = 0
+
+                  # FFT-based dynamic bass processing
+                  if is_playing:
+                      if visualizer:
+                          try:
+                              fft_bytes = bytearray(128)
+
+                              if visualizer.getFft(fft_bytes) == 0:
+                                  low_e = 0.0
+
+                                  for i in range(2, 12, 2):
+                                      r = (
+                                          fft_bytes[i] - 256
+                                          if fft_bytes[i] > 127
+                                          else fft_bytes[i]
+                                      )
+
+                                      im = (
+                                          fft_bytes[i + 1] - 256
+                                          if fft_bytes[i + 1] > 127
+                                          else fft_bytes[i + 1]
+                                      )
+
+                                      low_e += (
+                                          (r * r + im * im) ** 0.5
+                                      )
+
+                                  low_e /= 5.0
+
+                                  avg_bass = (
+                                      avg_bass * 0.85
+                                      + low_e * 0.15
+                                  )
+
+                                  delta = low_e - avg_bass
+
+                                  if delta > 11.0 and cfg['bass'] > 0:
+                                      dyn_punch = min(
+                                          300.0,
+                                          delta * (cfg['bass'] / 32.0)
+                                      )
+                                  else:
+                                      dyn_punch *= 0.60
+
+                                  # Bass restoration
+                                  if (
+                                      2.0 < avg_bass < 38.0
+                                      and cfg['bass'] > 20
+                                  ):
+                                      synth_on = True
+
+                                      bass_restorer = min(
+                                          280.0,
+                                          (38.0 - avg_bass)
+                                          * 7.5
+                                          * (cfg['bass'] / 100.0)
+                                      )
+
+                                  else:
+                                      synth_on = False
+                                      bass_restorer *= 0.75
+
+                                  # Safety limiter
+                                  if (
+                                      avg_bass > 85.0
+                                      and cfg['bass'] > 65
+                                  ):
+                                      limiter_on = True
+
+                                      safety_red = min(
+                                          300.0,
+                                          (avg_bass - 85.0)
+                                          * 4.5
+                                          * (cfg['bass'] / 100.0)
+                                      )
+
+                                  else:
+                                      limiter_on = False
+                                      safety_red *= 0.70
+
+                          except Exception as e:
+                              print("Visualizer FFT Error:", e)
+                              release_visualizer()
+
+                      apply_dynamic_dsp(force=False)
+
+              except Exception as e:
+                  print("Main Service Loop Error:", e)
+
+              time.sleep(0.1)
+          PYEOF
+
+          # Syntax validation
+          python3 -m py_compile app_source/main.py app_source/service.py
+
+          echo "App source prepared:"
+          ls -lh app_source/
+
+      - name: Build Photon Audio APK
+        run: |
+          export ANDROID_SDK_ROOT="$HOME/android/sdk"
+          export ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/25.1.8937393"
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+
+          python3 -m pythonforandroid.toolchain apk \
+            --debug \
+            --private app_source \
+            --package=com.photon.audio \
+            --name="Photon Audio" \
+            --version=1.0 \
+            --bootstrap=sdl2 \
+            --orientation=portrait \
+            --dist_name=photon_audio_dist \
+            --requirements=hostpython3,python3,android,kivy,pyjnius \
+            --service=Photondsp:service.py:foreground:sticky \
+            --permission=MODIFY_AUDIO_SETTINGS \
+            --permission=RECORD_AUDIO \
+            --permission=BLUETOOTH \
+            --permission=BLUETOOTH_ADMIN \
+            --permission=BLUETOOTH_CONNECT \
+            --permission=WAKE_LOCK \
+            --permission=FOREGROUND_SERVICE \
+            --permission=FOREGROUND_SERVICE_MEDIA_PLAYBACK \
+            --permission=REQUEST_IGNORE_BATTERY_OPTIMIZATIONS \
+            --permission=RECEIVE_BOOT_COMPLETED \
+            --permission=POST_NOTIFICATIONS \
+            --permission=READ_MEDIA_AUDIO \
+            --permission=READ_EXTERNAL_STORAGE \
+            --permission=WRITE_EXTERNAL_STORAGE \
+            --icon=app_source/icon.png \
+            --presplash=app_source/icon.png \
+            --presplash-color=#0a192f \
+            --arch=arm64-v8a \
+            --android-api=34 \
+            --sdk-dir="$ANDROID_SDK_ROOT" \
+            --ndk-dir="$ANDROID_NDK_ROOT" \
+            --ndk-version=25.1.8937393
+
+      - name: Copy APK
+        run: |
+          mkdir -p APK
+
+          mapfile -t APK_FILES < <(
+            find . -type f -name "*.apk" \
+              -not -path "./APK/*" \
+              -not -path "*/.gradle/*" \
+              -printf '%T@ %p\n' |
+            sort -nr |
+            cut -d' ' -f2-
+          )
+
+          if [ "${#APK_FILES[@]}" -eq 0 ]; then
+            echo "ERROR: APK not found!"
+            find . -type f -name "*.apk" -print
+            exit 1
+          fi
+
+          NEW_APK="${APK_FILES[0]}"
           OUTPUT_NAME="APK/Photon-Audio-$(date +%Y%m%d-%H%M).apk"
-          cp "$NEW_APK" "$OUTPUT_NAME"
-          ls -lh "$OUTPUT_NAME"
-        else
-          find . -type f -name "*.apk" -print
-          exit 1
-        fi
 
-    - name: Push APK to repository
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        git checkout main || git checkout -b main
-        git pull origin main --rebase || echo "Nothing to pull"
-        git add APK/
-        if [ -n "$(git status --porcelain APK/)" ]; then
-          git commit -m "Add New Photon Audio APK [skip ci]"
-          git push origin main
-        else
-          echo "No new APK changes to commit."
-        fi
+          cp "$NEW_APK" "$OUTPUT_NAME"
+
+          echo "Selected APK: $NEW_APK"
+          echo "Output APK: $OUTPUT_NAME"
+
+          ls -lh "$OUTPUT_NAME"
+
+      - name: Push APK to repository
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main
+          git checkout main
+          git pull --rebase origin main
+
+          git add APK/
+
+          if [ -n "$(git status --porcelain APK/)" ]; then
+            git commit -m "Add New Photon Audio APK [skip ci]"
+            git push origin main
+          else
+            echo "No new APK changes to commit."
+          fi
