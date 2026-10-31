@@ -89,15 +89,24 @@ class HardwareEqPopup(ModalView):
         self.size_hint = (0.92, 0.85)
         self.background_color = (0, 0, 0, 0.8)
         self.auto_dismiss = False
+        self.band_sliders = []
 
         root = ProCard(bg_hex='#0a192f', orientation='vertical', padding='12dp', spacing='8dp')
         self.add_widget(root)
 
         title_lbl = Label(
-            text="📱 HARDWARE EQ BANDS", size_hint_y=None, height='40dp',
+            text="📱 HARDWARE EQ BANDS", size_hint_y=None, height='36dp',
             font_size='16sp', bold=True, color=get_color_from_hex('#b388ff')
         )
         root.add_widget(title_lbl)
+
+        btn_reset = Button(
+            text="🔄 RESET ALL TO NEUTRAL (0.0 dB)", size_hint_y=None, height='40dp',
+            font_size='13sp', bold=True, background_normal='',
+            background_color=get_color_from_hex('#ff9800'), color=get_color_from_hex('#0a192f')
+        )
+        btn_reset.bind(on_release=self.reset_all_bands)
+        root.add_widget(btn_reset)
 
         if not self.app.hw_bands:
             self.app.hw_bands = self.app.detect_hardware_bands()
@@ -149,6 +158,7 @@ class HardwareEqPopup(ModalView):
                     return on_value
 
                 slider.bind(value=make_callback(band_idx, lbl_val))
+                self.band_sliders.append((band_idx, slider, lbl_val))
                 card.add_widget(top_row)
                 card.add_widget(slider)
                 scroll_layout.add_widget(card)
@@ -163,6 +173,13 @@ class HardwareEqPopup(ModalView):
         )
         btn_close.bind(on_release=self.save_and_close)
         root.add_widget(btn_close)
+
+    def reset_all_bands(self, *args):
+        for band_idx, slider, lbl_val in self.band_sliders:
+            slider.value = 50
+            lbl_val.text = "+0.0 dB"
+            self.app.hw_eq_levels[str(band_idx)] = 50
+        self.app.save_settings()
 
     def save_and_close(self, *args):
         self.app.save_settings()
@@ -181,6 +198,7 @@ class AudioControllerApp(App):
         self.device_name = "Detecting Audio Device..."
         self.in_foreground = True
         self._save_ev = None
+        self._syncing_vol = False
 
         self.load_settings()
 
@@ -199,7 +217,7 @@ class AudioControllerApp(App):
         root.add_widget(device_bar)
 
         self.btn_always_on = Button(
-            text="🟢 ALWAYS ON (ENGINE LOCKED): ACTIVE", size_hint_y=None, height=dp(42),
+            text="🟢 ALWAYS ON (AUTO SPEAKER PAUSE): ACTIVE", size_hint_y=None, height=dp(42),
             font_size='13sp', bold=True, background_normal='',
             background_color=get_color_from_hex('#00c853'), color=get_color_from_hex('#0a192f')
         )
@@ -224,7 +242,7 @@ class AudioControllerApp(App):
         root.add_widget(self.card_vol)
 
         self.card_bass, self.lbl_bass_val, self.slider_bass = self.create_slider_card(
-            title="2. BASS BOOSTER (FFT DYNAMIC)", min_val=0, max_val=100, cur_val=self.bass,
+            title="2. BASS BOOSTER (CLEAN PUNCH)", min_val=0, max_val=100, cur_val=self.bass,
             unit="%", accent_hex='#ff6d00', callback=self.on_bass_change
         )
         root.add_widget(self.card_bass)
@@ -244,7 +262,6 @@ class AudioControllerApp(App):
             try:
                 from jnius import autoclass
                 Equalizer = autoclass('android.media.audiofx.Equalizer')
-                # Priority 0 રાખી છે જેથી બેકગ્રાઉન્ડ સર્વિસ (Priority 1000) પાસેથી કંટ્રોલ છીનવાય નહીં
                 eq = Equalizer(0, 0)
                 num_bands = eq.getNumberOfBands()
                 for i in range(num_bands):
@@ -295,12 +312,14 @@ class AudioControllerApp(App):
 
     def on_start(self):
         self.in_foreground = True
+        self.sync_system_volume()
         self.save_settings()
         Clock.schedule_once(self.request_android_permissions, 0.5)
         self.request_battery_unrestricted()
         self.detect_connected_audio_device()
         self.start_background_service()
         Clock.schedule_interval(self.background_monitor, 1.5)
+        Clock.schedule_interval(self.sync_system_volume, 0.25)
 
     def request_android_permissions(self, dt):
         if platform == 'android':
@@ -310,7 +329,6 @@ class AudioControllerApp(App):
                     'android.permission.BLUETOOTH_CONNECT',
                     'android.permission.BLUETOOTH_SCAN',
                     'android.permission.MODIFY_AUDIO_SETTINGS',
-                    'android.permission.RECORD_AUDIO',
                     'android.permission.POST_NOTIFICATIONS'
                 ])
             except Exception:
@@ -324,6 +342,7 @@ class AudioControllerApp(App):
 
     def on_resume(self):
         self.in_foreground = True
+        self.sync_system_volume()
         self.detect_connected_audio_device()
         self.start_background_service()
 
@@ -331,6 +350,31 @@ class AudioControllerApp(App):
         self.save_settings()
         self.request_battery_unrestricted()
         self.start_background_service(force=True)
+
+    def sync_system_volume(self, *args):
+        if not self.in_foreground or platform != 'android':
+            return
+        try:
+            activity = PythonActivity.mActivity
+            audio_manager = activity.getSystemService(Context.AUDIO_SERVICE)
+            max_vol = audio_manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            if max_vol <= 0:
+                return
+            cur_sys_vol = audio_manager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            expected_sys_vol = int(round((self.volume / 100.0) * max_vol))
+
+            if cur_sys_vol != expected_sys_vol:
+                new_pct = max(0, min(100, int(round((cur_sys_vol / float(max_vol)) * 100))))
+                self._syncing_vol = True
+                self.volume = new_pct
+                if hasattr(self, 'slider_vol'):
+                    self.slider_vol.value = new_pct
+                if hasattr(self, 'lbl_vol_val'):
+                    self.lbl_vol_val.text = f"{new_pct}%"
+                self._syncing_vol = False
+                self.schedule_save() # 🎯 ફાઇલ સેવ કરશે જેથી નોટિફિકેશન અપડેટ થઈ જાય
+        except Exception:
+            self._syncing_vol = False
 
     def is_service_running(self):
         if platform != 'android':
@@ -381,7 +425,7 @@ class AudioControllerApp(App):
     def detect_connected_audio_device(self):
         if platform != 'android':
             return
-        detected = "Phone Speaker"
+        detected = "Phone Speaker (DSP Paused)"
         try:
             activity = PythonActivity.mActivity
             audio_manager = activity.getSystemService(Context.AUDIO_SERVICE)
@@ -389,13 +433,14 @@ class AudioControllerApp(App):
             if devices:
                 for dev in devices:
                     dev_type = dev.getType()
-                    if dev_type in (8, 7, 22, 3, 4):
+                    if dev_type in (3, 4, 7, 8, 11, 12, 22, 26, 27):
                         p_name = dev.getProductName()
-                        if p_name:
-                            detected = p_name.toString()
-                            if dev_type in (8, 7, 22):
-                                detected = f"BT: {detected}"
-                            break
+                        name_str = p_name.toString() if p_name else "External Audio"
+                        if dev_type in (7, 8, 26, 27):
+                            detected = f"BT: {name_str}"
+                        else:
+                            detected = f"Headphones: {name_str}"
+                        break
         except Exception:
             pass
         if detected != self.device_name:
@@ -427,6 +472,8 @@ class AudioControllerApp(App):
         self._save_ev = Clock.schedule_once(lambda dt: self.save_settings(), 0.08)
 
     def on_volume_change(self, instance, value):
+        if self._syncing_vol:
+            return
         self.volume = int(value)
         if platform == 'android':
             try:
@@ -482,16 +529,19 @@ class AudioControllerApp(App):
                 self.bass = max(0, min(100, int(data.get('bass', 15))))
 
                 hw_data = data.get('hw_eq_levels', {})
-                if isinstance(hw_data, dict):
+                if isinstance(hw_data, dict) and hw_data:
                     self.hw_eq_levels = {str(k): int(v) for k, v in hw_data.items() if isinstance(v, (int, float, str))}
                 else:
-                    self.hw_eq_levels = {}
+                    self.hw_eq_levels = {str(i): 50 for i in range(15)}
             except Exception:
                 if os.path.exists(path):
                     try:
                         os.remove(path)
                     except Exception:
                         pass
+                self.hw_eq_levels = {str(i): 50 for i in range(15)}
+        else:
+            self.hw_eq_levels = {str(i): 50 for i in range(15)}
 
 
 if __name__ == "__main__":
