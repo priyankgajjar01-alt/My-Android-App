@@ -4,6 +4,11 @@ on:
   push:
     branches: [ main ]
 
+# 🎯 એકસાથે બે બિલ્ડ ભેગા ન થાય અને Git Conflict ન આવે તે માટે
+concurrency:
+  group: apk-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -42,8 +47,8 @@ jobs:
           MINOR=0
         fi
         NEXT_VERSION="$MAJOR.$MINOR"
+        echo "NEXT_VERSION=$NEXT_VERSION" >> $GITHUB_ENV
         
-        echo "$NEXT_VERSION" > version.txt
         echo "Current Build Version: V$CURRENT_VERSION"
         echo "Next Build Version will be: V$NEXT_VERSION"
 
@@ -162,7 +167,6 @@ jobs:
         [ -f main.py ] && echo "✅ main.py FOUND" || (echo "❌ main.py MISSING" && exit 1)
         [ -f icon.png ] && echo "✅ icon.png FOUND" || (echo "❌ icon.png MISSING" && exit 1)
 
-        # જૂની APK ફાઈલો નવી APK ની અંદર પેક ન થાય તે માટે અલગ ક્લીન ફોલ્ડર
         mkdir -p build_src
         cp main.py icon.png build_src/
 
@@ -195,37 +199,37 @@ jobs:
           --sdk-dir=$ANDROID_SDK_ROOT \
           --ndk-dir=$ANDROID_NDK_ROOT
 
-    # 🛠️ Step 6: APK Copy
-    - name: Copy APK
+    # 🛠️ Step 6: APK Copy to Temp
+    - name: Find & Prepare APK
       run: |
-        mkdir -p APK
         NEW_APK=$(find . -type f -name "*.apk" 2>/dev/null | grep -v "APK/" | grep -v "gradle" | head -n 1)
 
         if [ ! -z "$NEW_APK" ]; then
           echo "🎯 APK found: $NEW_APK"
-          # 🎯 વર્ઝન સાથેનું નામ સેવ કરો (દા.ત. HC05_Remote_Control_V9.3.apk)
-          OUTPUT_NAME="APK/HC05_Remote_Control_V${{ env.CURRENT_VERSION }}.apk"
-          cp "$NEW_APK" "$OUTPUT_NAME"
-          echo "✅ Saved: $OUTPUT_NAME"
+          cp "$NEW_APK" "/tmp/HC05_Remote_Control_V${{ env.CURRENT_VERSION }}.apk"
+          echo "✅ Prepared in /tmp/HC05_Remote_Control_V${{ env.CURRENT_VERSION }}.apk"
         else
           echo "❌ APK not generated. Logs:"
           ls -la
           exit 1
         fi
 
-    # 🛠️ Step 7: Push to Repo (APK + version.txt)
+    # 🛠️ Step 7: Conflict-Free Push to Repo (APK + version.txt)
     - name: Push to Repo
       run: |
         git config user.name "github-actions"
         git config user.email "actions@github.com"
-        
-        # 🎯 APK ફોલ્ડર અને version.txt બંનેને સેવ કરો જેથી આગલી વખતે વર્ઝન વધે
-        git add APK/ version.txt
 
-        if ! git diff --cached --quiet; then
-          git commit -m "Add New HC05 12S15B APK V${{ env.CURRENT_VERSION }} [skip ci]"
-          git pull origin main --rebase || true
-          git push origin main
-        else
-          echo "No new APK changes to commit."
-        fi
+        # 1. પહેલા GitHub પરથી લેટેસ્ટ main બ્રાન્ચ સિંક કરો જેથી ક્યારેય Conflict ન થાય
+        git fetch origin main
+        git checkout -B main origin/main
+
+        # 2. હવે નવી APK અને નવું વર્ઝન મૂકો
+        mkdir -p APK
+        cp "/tmp/HC05_Remote_Control_V${{ env.CURRENT_VERSION }}.apk" "APK/HC05_Remote_Control_V${{ env.CURRENT_VERSION }}.apk"
+        echo "${{ env.NEXT_VERSION }}" > version.txt
+
+        # 3. GitHub પર સેવ (Push) કરો
+        git add APK/ version.txt
+        git commit -m "Add New HC05 12S15B APK V${{ env.CURRENT_VERSION }} [skip ci]"
+        git push origin main
