@@ -1,755 +1,729 @@
-import json
 import os
-import math
-
+import json
+import threading
+import time
+import socket
 from kivy.app import App
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.button import Button
-from kivy.uix.label import Label
-from kivy.uix.slider import Slider
-from kivy.uix.modalview import ModalView
-from kivy.uix.widget import Widget
-from kivy.uix.scrollview import ScrollView
-from kivy.graphics import Color, RoundedRectangle, Line
-from kivy.utils import get_color_from_hex, platform
-from kivy.clock import Clock
+from kivy.lang import Builder
+from kivy.clock import Clock, mainthread
+from kivy.properties import StringProperty, NumericProperty
+from kivy.uix.popup import Popup
+from kivy.core.window import Window
+from kivy.utils import platform
 from kivy.metrics import dp
 
-PythonActivity = Context = AudioManager = PowerManager = None
-Intent = Settings = Uri = Equalizer = autoclass = None
-
-if platform == "android":
+# JNI Check (Android mate)
+is_real_android = False
+if platform == 'android':
     try:
         from jnius import autoclass
-        PythonActivity = autoclass("org.kivy.android.PythonActivity")
-        Context = autoclass("android.content.Context")
-        AudioManager = autoclass("android.media.AudioManager")
-        PowerManager = autoclass("android.os.PowerManager")
-        Intent = autoclass("android.content.Intent")
-        Settings = autoclass("android.provider.Settings")
-        Uri = autoclass("android.net.Uri")
-        Equalizer = autoclass("android.media.audiofx.Equalizer")
-    except Exception as exc:
-        print("Android imports:", exc)
+        BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
+        UUID = autoclass('java.util.UUID')
+        InputStreamReader = autoclass('java.io.InputStreamReader')
+        BufferedReader = autoclass('java.io.BufferedReader')
+        JavaString = autoclass('java.lang.String')
+        is_real_android = True
+    except Exception as e:
+        print("JNI Loading Error:", e)
 
+# Dark Navy Background
+Window.clearcolor = (10/255, 25/255, 47/255, 1)
 
-def format_freq(hz):
-    return f"{int(round(hz))} Hz" if hz < 1000 else f"{hz / 1000.0:.1f} kHz"
+KV = '''
+<CustomTextInput@TextInput>:
+    background_normal: ''
+    background_color: [0.04, 0.1, 0.18, 1]
+    foreground_color: [0.39, 1.0, 0.85, 1]
+    cursor_color: [0.39, 1.0, 0.85, 1]
+    multiline: False
+    halign: 'center'
+    font_size: '14sp'
+    size_hint_y: None
+    height: '34dp'
+    padding_y: (self.height - self.line_height) / 2
+    use_bubble: False
+    use_handles: False
 
+<RoundedButton@Button>:
+    background_color: [0, 0, 0, 0]
+    background_normal: ''
+    bg_color: [0.39, 1.0, 0.85, 1]
+    color: [0.04, 0.1, 0.18, 1]
+    canvas.before:
+        Color:
+            rgba: self.bg_color if self.state == 'normal' else [self.bg_color[0]*0.8, self.bg_color[1]*0.8, self.bg_color[2]*0.8, 1]
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [18, 18, 18, 18]
 
-class ProCard(BoxLayout):
-    def __init__(self, bg_hex="#112240", **kwargs):
-        super().__init__(**kwargs)
-        self.bg_hex = bg_hex
-        self.bind(pos=self.update_canvas, size=self.update_canvas)
+# ===== FORCE UPDATE BUTTON (with glow) =====
+<ForceButton@Button>:
+    background_normal: ''
+    background_color: [0, 0, 0, 0]
+    bold: True
+    font_size: '15sp'
+    color: [0.04, 0.1, 0.18, 1] if self.state == 'down' else [0.39, 1.0, 0.85, 1]
+    canvas.before:
+        Color:
+            rgba: [0.39, 1.0, 0.85, 0.35] if self.state == 'down' else [0, 0, 0, 0]
+        RoundedRectangle:
+            pos: self.x - 4, self.y - 4
+            size: self.width + 8, self.height + 8
+            radius: [28, 28, 28, 28]
+        Color:
+            rgba: [0.39, 1.0, 0.85, 1] if self.state == 'down' else [0.1, 0.2, 0.3, 1]
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [25, 25, 25, 25]
+        Color:
+            rgba: [0.39, 1.0, 0.85, 1]
+        Line:
+            rounded_rectangle: [self.x, self.y, self.width, self.height, 25]
+            width: 2
 
-    def update_canvas(self, *args):
-        self.canvas.before.clear()
-        with self.canvas.before:
-            Color(rgba=get_color_from_hex(self.bg_hex))
-            RoundedRectangle(pos=self.pos, size=self.size, radius=[12])
+<StatusLabel@Label>:
+    bg_color: [0.82, 0.18, 0.18, 1]
+    selectable: False
+    canvas.before:
+        Color:
+            rgba: self.bg_color
+        Rectangle:
+            pos: self.pos
+            size: self.size
 
+# ===== SLIDER CELL (Aligned for 4 rows without changing Switch size) =====
+<SliderCell@BoxLayout>:
+    orientation: 'vertical'
+    spacing: '0dp'
+    slider_name: ''
+    slider_id: 0
+    padding: [0, 2, 0, 2]
+    
+    Label:
+        text: root.slider_name
+        color: [0.39, 1.0, 0.85, 1]
+        font_size: '20sp'
+        bold: True
+        size_hint_y: None
+        height: '26dp'
+        halign: 'center'
+        valign: 'middle'
+        text_size: self.size
+        selectable: False
+    
+    AnchorLayout:
+        anchor_x: 'center'
+        anchor_y: 'top'
+        Switch:
+            size_hint: None, None
+            size: '45dp', '30dp'
+            on_active: app.on_slider_change(root.slider_id, self.active)
+            canvas.before:
+                PushMatrix
+                Scale:
+                    origin: self.center
+                    x: 1.5
+                    y: 1.5
+            canvas.after:
+                PopMatrix
 
-class AudioWaveWidget(Widget):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.time = 0
-        self.bind(pos=self.update_canvas, size=self.update_canvas)
-        Clock.schedule_interval(self.animate, 1 / 30)
+# ===== DATA FORMAT POPUP =====
+<DataFormatPopup>:
+    title: 'Data Format & Logic'
+    title_color: [0.39, 1.0, 0.85, 1]
+    title_size: '18sp'
+    separator_color: [0.39, 1.0, 0.85, 1]
+    background_color: [0.11, 0.14, 0.18, 1]
+    size_hint: 0.9, 0.8
+    auto_dismiss: True
 
-    def animate(self, dt):
-        self.time += dt
-        self.update_canvas()
+    BoxLayout:
+        orientation: 'vertical'
+        padding: '15dp'
+        spacing: '10dp'
 
-    def update_canvas(self, *args):
-        self.canvas.clear()
-        if self.width < 10 or self.height < 10:
-            return
-        with self.canvas:
-            colors = ["#00e676", "#00b0ff", "#ff6d00"]
-            amps = [0.25, 0.15, 0.35]
-            speeds = [4.0, 6.5, 3.5]
-            phases = [0, 1.5, 3.0]
-            for i in range(3):
-                Color(rgba=get_color_from_hex(colors[i]))
-                pts = []
-                step = max(2, int(self.width / 60))
-                for x in range(0, int(self.width), step):
-                    y = self.height / 2 + math.sin(
-                        (x / self.width) * 10 + self.time * speeds[i] + phases[i]
-                    ) * (self.height * amps[i])
-                    pts.extend([self.x + x, self.y + y])
-                Line(points=pts, width=1.5)
+        Label:
+            text: 'Format:\\n    on_delay,off_delay,s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,force\\n\\nExample:\\n    1000,1000,1,0,0,1,0,0,1,0,0,0,0,0,0\\n\\nRules:\\n    - Slider ON  = 1, OFF = 0 (S1 to S12)\\n    - Force Update pressed = 1 (for 3 seconds)\\n    - Force Update normally = 0\\n    - All values sent in ONE line\\n    - Every message ends with newline (\\\\n)'
+            color: [0.8, 0.84, 0.96, 1]
+            font_size: '12sp'
+            halign: 'left'
+            valign: 'top'
+            text_size: self.width, None
+            size_hint_y: 1
+            selectable: False
 
+        Button:
+            text: 'Close'
+            background_color: [0.8, 0.2, 0.2, 1]
+            background_normal: ''
+            color: [1, 1, 1, 1]
+            bold: True
+            size_hint_y: None
+            height: '45dp'
+            on_release: root.dismiss()
 
-class HardwareEqPopup(ModalView):
-    def __init__(self, app_instance, **kwargs):
-        super().__init__(**kwargs)
-        self.app = app_instance
-        self.size_hint = (0.94, 0.88)
-        self.background_color = (0, 0, 0, 0.85)
-        self.auto_dismiss = False
-        self.band_sliders = []
+# ===== CONTROLLER SETTINGS POPUP =====
+<SettingsPopup>:
+    title: ''
+    separator_height: 0
+    background_color: [0.11, 0.14, 0.18, 1]
+    size_hint: 0.95, 0.95
+    auto_dismiss: False
 
-        root = ProCard(
-            bg_hex="#0a192f", orientation="vertical",
-            padding=dp(12), spacing=dp(8)
-        )
-        self.add_widget(root)
+    BoxLayout:
+        orientation: 'vertical'
+        padding: '12dp'
+        spacing: '6dp'
 
-        root.add_widget(Label(
-            text="📱 HARDWARE EQ BANDS",
-            size_hint_y=None, height=dp(32), font_size="16sp",
-            bold=True, color=get_color_from_hex("#b388ff")
-        ))
+        Label:
+            text: 'Controller Settings'
+            color: [0.39, 1.0, 0.85, 1]
+            bold: True
+            font_size: '18sp'
+            halign: 'left'
+            valign: 'middle'
+            text_size: self.size
+            size_hint_y: None
+            height: '26dp'
+            selectable: False
 
-        # Detect hardware EQ bands (from service cache or direct hardware probe)
-        self.app.query_and_init_hardware_eq()
+        Widget:
+            size_hint_y: None
+            height: '2dp'
+            canvas:
+                Color:
+                    rgba: [0.39, 1.0, 0.85, 1]
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
 
-        root.add_widget(Label(
-            text=f"Detected: {len(self.app.hw_bands)} Bands | "
-                 f"Gain Range: {self.app.hw_min_mb / 100:+.1f} dB "
-                 f"to {self.app.hw_max_mb / 100:+.1f} dB",
-            size_hint_y=None, height=dp(24), font_size="12sp",
-            color=get_color_from_hex("#64ffda")
-        ))
+        GridLayout:
+            cols: 2
+            spacing: '6dp'
+            row_default_height: '34dp'
+            row_force_default: True
+            size_hint_y: None
+            height: '114dp'
 
-        reset_btn = Button(
-            text="🔄 RESET ALL TO NEUTRAL (0.0 dB)",
-            size_hint_y=None, height=dp(40), font_size="13sp",
-            bold=True, background_normal="",
-            background_color=get_color_from_hex("#ff9800"),
-            color=get_color_from_hex("#0a192f")
-        )
-        reset_btn.bind(on_release=self.reset_all_bands)
-        root.add_widget(reset_btn)
+            Label:
+                text: 'MAC Address (Editable)'
+                color: [0.7, 0.8, 0.9, 1]
+                halign: 'left'
+                valign: 'middle'
+                text_size: self.size
+                selectable: False
+            CustomTextInput:
+                text: app.hc05_mac
+                on_text: app.hc05_mac = self.text
 
-        if not self.app.hw_bands:
-            root.add_widget(Label(
-                text="❌ Hardware EQ Not Detected / Not Available",
-                halign="center", color=get_color_from_hex("#ff5252")
-            ))
-        else:
-            scroll = ScrollView(size_hint=(1, 1), do_scroll_x=False)
-            layout = BoxLayout(
-                orientation="vertical", spacing=dp(8), size_hint_y=None
-            )
-            layout.bind(minimum_height=layout.setter("height"))
+            Label:
+                text: 'ON Delay (ms)'
+                color: [0.7, 0.8, 0.9, 1]
+                halign: 'left'
+                valign: 'middle'
+                text_size: self.size
+                selectable: False
+            CustomTextInput:
+                text: app.on_delay
+                on_text: app.on_delay = self.text
 
-            for info in self.app.hw_bands:
-                idx = int(info["index"])
-                center = format_freq(float(info["center_hz"]))
-                band_range = (
-                    f"{format_freq(float(info['min_hz']))} - "
-                    f"{format_freq(float(info['max_hz']))}"
-                )
-                current = self.app.hw_eq_levels.get(str(idx), 50)
-                db = self.app.slider_to_db(current)
+            Label:
+                text: 'OFF Delay (ms)'
+                color: [0.7, 0.8, 0.9, 1]
+                halign: 'left'
+                valign: 'middle'
+                text_size: self.size
+                selectable: False
+            CustomTextInput:
+                text: app.off_delay
+                on_text: app.off_delay = self.text
 
-                card = ProCard(
-                    orientation="vertical", padding=[dp(12), dp(6)],
-                    spacing=dp(4), size_hint_y=None, height=dp(88)
-                )
-                top = BoxLayout(
-                    orientation="horizontal", size_hint_y=0.45
-                )
-                title = Label(
-                    text=f"Band {idx + 1}: {center} [{band_range}]",
-                    font_size="12sp", bold=True,
-                    color=get_color_from_hex("#ccd6f6"),
-                    halign="left", valign="middle"
-                )
-                title.bind(size=title.setter("text_size"))
-                value_label = Label(
-                    text=f"{db:+.1f} dB", font_size="14sp", bold=True,
-                    color=get_color_from_hex("#b388ff"),
-                    size_hint_x=0.32, halign="right", valign="middle"
-                )
-                value_label.bind(size=value_label.setter("text_size"))
-                top.add_widget(title)
-                top.add_widget(value_label)
+        Label:
+            text: 'Slider Names (S1 - S12)'
+            color: [0.39, 1.0, 0.85, 1]
+            bold: True
+            font_size: '14sp'
+            halign: 'left'
+            valign: 'middle'
+            text_size: self.size
+            size_hint_y: None
+            height: '20dp'
+            selectable: False
 
-                slider = Slider(
-                    min=0, max=100, value=current, step=1,
-                    cursor_size=("28dp", "28dp"),
-                    background_width="14dp", value_track=True,
-                    value_track_color=get_color_from_hex("#b388ff"),
-                    value_track_width="5dp", size_hint_y=0.55
-                )
+        GridLayout:
+            cols: 3
+            spacing: '6dp'
+            row_default_height: '34dp'
+            row_force_default: True
+            size_hint_y: None
+            height: '154dp'
 
-                def make_callback(band_index, label):
-                    def changed(instance, value):
-                        label.text = f"{self.app.slider_to_db(value):+.1f} dB"
-                        self.app.on_hw_slider_change(band_index, value)
-                    return changed
+            CustomTextInput:
+                hint_text: 'S1'
+                text: app.s1_name
+                on_text: app.s1_name = self.text
+            CustomTextInput:
+                hint_text: 'S2'
+                text: app.s2_name
+                on_text: app.s2_name = self.text
+            CustomTextInput:
+                hint_text: 'S3'
+                text: app.s3_name
+                on_text: app.s3_name = self.text
+            CustomTextInput:
+                hint_text: 'S4'
+                text: app.s4_name
+                on_text: app.s4_name = self.text
+            CustomTextInput:
+                hint_text: 'S5'
+                text: app.s5_name
+                on_text: app.s5_name = self.text
+            CustomTextInput:
+                hint_text: 'S6'
+                text: app.s6_name
+                on_text: app.s6_name = self.text
+            CustomTextInput:
+                hint_text: 'S7'
+                text: app.s7_name
+                on_text: app.s7_name = self.text
+            CustomTextInput:
+                hint_text: 'S8'
+                text: app.s8_name
+                on_text: app.s8_name = self.text
+            CustomTextInput:
+                hint_text: 'S9'
+                text: app.s9_name
+                on_text: app.s9_name = self.text
+            CustomTextInput:
+                hint_text: 'S10'
+                text: app.s10_name
+                on_text: app.s10_name = self.text
+            CustomTextInput:
+                hint_text: 'S11'
+                text: app.s11_name
+                on_text: app.s11_name = self.text
+            CustomTextInput:
+                hint_text: 'S12'
+                text: app.s12_name
+                on_text: app.s12_name = self.text
 
-                slider.bind(value=make_callback(idx, value_label))
-                self.band_sliders.append((idx, slider, value_label))
-                card.add_widget(top)
-                card.add_widget(slider)
-                layout.add_widget(card)
+        Button:
+            text: 'View Data Format & Logic'
+            background_color: [0.1, 0.2, 0.3, 1]
+            background_normal: ''
+            color: [0.39, 1.0, 0.85, 1]
+            bold: True
+            font_size: '14sp'
+            size_hint_y: None
+            height: '40dp'
+            on_release: app.show_data_format_popup()
 
-            scroll.add_widget(layout)
-            root.add_widget(scroll)
+        Widget:
+            size_hint_y: 1
 
-        close_btn = Button(
-            text="💾 SAVE & CLOSE", size_hint_y=None, height=dp(48),
-            font_size="15sp", bold=True, background_normal="",
-            background_color=get_color_from_hex("#00c853"),
-            color=get_color_from_hex("#0a192f")
-        )
-        close_btn.bind(on_release=self.save_and_close)
-        root.add_widget(close_btn)
+        ForceButton:
+            text: 'Force Update Settings'
+            size_hint_y: None
+            height: '46dp'
+            on_press: app.force_update_and_close()
 
-    def reset_all_bands(self, *args):
-        for idx, slider, label in self.band_sliders:
-            slider.value = 50
-            label.text = "+0.0 dB"
-            self.app.hw_eq_levels[str(idx)] = 50
-        self.app.save_settings()
+        Button:
+            text: 'Save & Close'
+            background_color: [0.0, 0.78, 0.32, 1]
+            background_normal: ''
+            color: [0.04, 0.1, 0.18, 1]
+            bold: True
+            font_size: '16sp'
+            size_hint_y: None
+            height: '46dp'
+            on_release: app.save_and_close_settings()
 
-    def save_and_close(self, *args):
-        self.app.save_settings()
-        self.dismiss()
+# ===== MAIN LAYOUT =====
+BoxLayout:
+    orientation: 'vertical'
 
+    StatusLabel:
+        id: status_lbl
+        text: 'System Starting...'
+        size_hint_y: None
+        height: '55dp'
+        bold: True
+        font_size: '20sp'
+        color: [1, 1, 1, 1]
+        bg_color: [0.85, 0.53, 0.1, 1]
+        on_touch_up: 
+            if self.collide_point(*args[1].pos): app.reconnect_bluetooth()
 
-class AudioControllerApp(App):
+    BoxLayout:
+        size_hint_y: 0.3
+        padding: '10dp'
+        TextInput:
+            id: monitor
+            readonly: True
+            background_normal: ''
+            background_color: [0, 0, 0, 1]
+            foreground_color: [0.39, 1.0, 0.85, 1]
+            font_size: '12sp'
+            text: 'System Ready...\\n'
+            use_bubble: False
+            use_handles: False
+
+    GridLayout:
+        cols: 3
+        rows: 4
+        spacing: '4dp'
+        padding: ['10dp', '4dp', '10dp', '4dp']
+        size_hint_y: 0.7
+
+        SliderCell:
+            slider_name: app.s1_name
+            slider_id: 1
+        SliderCell:
+            slider_name: app.s2_name
+            slider_id: 2
+        SliderCell:
+            slider_name: app.s3_name
+            slider_id: 3
+        SliderCell:
+            slider_name: app.s4_name
+            slider_id: 4
+        SliderCell:
+            slider_name: app.s5_name
+            slider_id: 5
+        SliderCell:
+            slider_name: app.s6_name
+            slider_id: 6
+        SliderCell:
+            slider_name: app.s7_name
+            slider_id: 7
+        SliderCell:
+            slider_name: app.s8_name
+            slider_id: 8
+        SliderCell:
+            slider_name: app.s9_name
+            slider_id: 9
+        SliderCell:
+            slider_name: app.s10_name
+            slider_id: 10
+        SliderCell:
+            slider_name: app.s11_name
+            slider_id: 11
+        SliderCell:
+            slider_name: app.s12_name
+            slider_id: 12
+
+    AnchorLayout:
+        size_hint_y: None
+        height: '50dp'
+        anchor_x: 'center'
+        anchor_y: 'center'
+        RoundedButton:
+            text: 'Settings'
+            size_hint: None, None
+            size: '140dp', '40dp'
+            bg_color: [0.39, 1.0, 0.85, 1]
+            bold: True
+            font_size: '16sp'
+            on_release: app.open_settings()
+'''
+
+class SettingsPopup(Popup):
+    pass
+
+class DataFormatPopup(Popup):
+    pass
+
+class BluetoothApp(App):
+    hc05_mac = StringProperty("98:D3:31:F4:XX:XX")
+    on_delay = StringProperty("1000")
+    off_delay = StringProperty("1000")
+    
+    s1_name = StringProperty("S1")
+    s2_name = StringProperty("S2")
+    s3_name = StringProperty("S3")
+    s4_name = StringProperty("S4")
+    s5_name = StringProperty("S5")
+    s6_name = StringProperty("S6")
+    s7_name = StringProperty("S7")
+    s8_name = StringProperty("S8")
+    s9_name = StringProperty("S9")
+    s10_name = StringProperty("S10")
+    s11_name = StringProperty("S11")
+    s12_name = StringProperty("S12")
+    
+    s1_state = NumericProperty(0)
+    s2_state = NumericProperty(0)
+    s3_state = NumericProperty(0)
+    s4_state = NumericProperty(0)
+    s5_state = NumericProperty(0)
+    s6_state = NumericProperty(0)
+    s7_state = NumericProperty(0)
+    s8_state = NumericProperty(0)
+    s9_state = NumericProperty(0)
+    s10_state = NumericProperty(0)
+    s11_state = NumericProperty(0)
+    s12_state = NumericProperty(0)
+    
+    force_state = NumericProperty(0)
+
     def build(self):
-        self.title = "Photon Audio"
-        self.volume = 70
-        self.bass = 15
-        self.cmd_seq = 0
-
-        # Pure Remote Control state: actual DSP mixing runs in hardware via Service
-        self.hw_bands = []
-        self.hw_eq_levels = {}
-        self.hw_min_mb = -1500
-        self.hw_max_mb = 1500
-
-        self.device_name = "Detecting Audio Device..."
-        self.in_foreground = True
-        self._save_ev = None
-        self._syncing_vol = False
+        self.bt_socket = None
+        self.bt_out = None
+        self.bt_in = None
+        self.is_connected = False
+        self.waiting_ack = False
+        self.pending_data = ""
+        self.is_connecting = False
+        self._force_reset_event = None
 
         self.load_settings()
-        self.query_and_init_hardware_eq()
-
-        root = BoxLayout(
-            orientation="vertical",
-            padding=[dp(12), dp(10), dp(12), dp(10)],
-            spacing=dp(8)
-        )
-        with root.canvas.before:
-            Color(rgba=get_color_from_hex("#0a192f"))
-            self.bg_rect = RoundedRectangle(pos=root.pos, size=root.size)
-        root.bind(pos=self._update_bg, size=self._update_bg)
-
-        device_bar = ProCard(
-            bg_hex="#004d40", size_hint_y=None,
-            height=dp(40), padding=dp(6)
-        )
-        self.lbl_device = Label(
-            text=f"🔊 Output: {self.device_name}",
-            font_size="13sp", bold=True,
-            color=get_color_from_hex("#64ffda")
-        )
-        device_bar.add_widget(self.lbl_device)
-        root.add_widget(device_bar)
-
-        self.btn_always_on = Button(
-            text="🟢 ALWAYS ON (AUTO SPEAKER PAUSE): ACTIVE",
-            size_hint_y=None, height=dp(42), font_size="13sp",
-            bold=True, background_normal="",
-            background_color=get_color_from_hex("#00c853"),
-            color=get_color_from_hex("#0a192f")
-        )
-        self.btn_always_on.bind(on_release=self.ensure_always_on)
-        root.add_widget(self.btn_always_on)
-
-        hw_btn = Button(
-            text="📱 OPEN HARDWARE EQ", size_hint_y=None,
-            height=dp(48), font_size="14sp", bold=True,
-            background_normal="",
-            background_color=get_color_from_hex("#6200ea"),
-            color=get_color_from_hex("#ffffff")
-        )
-        hw_btn.bind(on_release=self.open_hw_eq)
-        root.add_widget(hw_btn)
-
-        root.add_widget(AudioWaveWidget(size_hint_y=1))
-
-        self.card_vol, self.lbl_vol_val, self.slider_vol = self.create_slider_card(
-            "1. MASTER VOLUME", 0, 100, self.volume, "%",
-            "#00e676", self.on_volume_change
-        )
-        root.add_widget(self.card_vol)
-
-        self.card_bass, self.lbl_bass_val, self.slider_bass = self.create_slider_card(
-            "2. BASS BOOSTER (CLEAN PUNCH)", 0, 100, self.bass, "%",
-            "#ff6d00", self.on_bass_change
-        )
-        root.add_widget(self.card_bass)
-
-        branding = BoxLayout(orientation="vertical", size_hint_y=1, spacing=dp(2))
-        branding.add_widget(Widget())
-        branding.add_widget(Label(
-            text="PHOTON AUDIO", font_size="22sp", bold=True,
-            color=get_color_from_hex("#64ffda"), halign="center"
-        ))
-        branding.add_widget(Label(
-            text="ULTIMATE DSP ENGINE", font_size="11sp",
-            color=get_color_from_hex("#8892b0"), halign="center"
-        ))
-        branding.add_widget(Widget())
-        root.add_widget(branding)
-        return root
-
-    def get_caps_path(self):
-        if platform == "android":
-            try:
-                return os.path.join(
-                    PythonActivity.mActivity.getFilesDir().getAbsolutePath(),
-                    "hw_eq_caps.json"
-                )
-            except Exception:
-                pass
-        return "hw_eq_caps.json"
-
-    def _load_cached_hw_caps(self):
-        path = self.get_caps_path()
-        if not os.path.exists(path):
-            return False
-        try:
-            with open(path, "r") as file:
-                caps = json.load(file)
-            bands = caps.get("hw_bands", [])
-            min_mb = int(caps.get("hw_min_mb", -1500))
-            max_mb = int(caps.get("hw_max_mb", 1500))
-            if isinstance(bands, list) and len(bands) > 0 and min_mb < max_mb:
-                self.hw_bands = bands
-                self.hw_min_mb = min_mb
-                self.hw_max_mb = max_mb
-                self._normalize_hw_levels(len(bands))
-                return True
-        except Exception as exc:
-            print("Load cached EQ caps:", exc)
-        return False
-
-    def _save_cached_hw_caps(self):
-        if not self.hw_bands:
-            return
-        try:
-            path = self.get_caps_path()
-            temp = path + ".tmp"
-            with open(temp, "w") as file:
-                json.dump({
-                    "hw_min_mb": self.hw_min_mb,
-                    "hw_max_mb": self.hw_max_mb,
-                    "hw_bands": self.hw_bands
-                }, file)
-                file.flush()
-                os.fsync(file.fileno())
-            os.replace(temp, path)
-        except Exception as exc:
-            print("Save cached EQ caps:", exc)
-
-    def _normalize_hw_levels(self, count):
-        valid = {str(i) for i in range(count)}
-        self.hw_eq_levels = {
-            k: max(0, min(100, int(v)))
-            for k, v in self.hw_eq_levels.items()
-            if k in valid
-        }
-        for i in range(count):
-            self.hw_eq_levels.setdefault(str(i), 50)
-
-    def query_and_init_hardware_eq(self):
-        """
-        Detect exact hardware EQ bands without disrupting the running service.
-        First checks service-reported hardware capabilities; if unavailable,
-        probes the hardware Equalizer once and caches the result.
-        """
-        if self._load_cached_hw_caps():
-            return
-
-        if platform != "android" or Equalizer is None:
-            return
-
-        probe = None
-        detected = []
-        try:
-            probe = Equalizer(0, 0)
-
-            level_range = probe.getBandLevelRange()
-            min_mb = -1500
-            max_mb = 1500
-            if level_range is not None and len(level_range) >= 2:
-                r_min = int(level_range[0])
-                r_max = int(level_range[1])
-                if r_min < r_max:
-                    min_mb = r_min if r_min < 0 else -abs(r_max)
-                    max_mb = r_max if r_max > 0 else abs(r_min)
-
-            count = int(probe.getNumberOfBands())
-            if count <= 0 or count > 64:
-                raise RuntimeError(f"Invalid EQ band count: {count}")
-
-            for i in range(count):
-                center_mhz = int(probe.getCenterFreq(i))
-                center = max(10.0, float(center_mhz) / 1000.0)
-
-                low = center * 0.70
-                high = center * 1.40
-                try:
-                    freq_range = probe.getBandFreqRange(i)
-                    if freq_range is not None and len(freq_range) >= 2:
-                        r_low = float(freq_range[0]) / 1000.0
-                        r_high = float(freq_range[1]) / 1000.0
-                        if r_low > 0:
-                            low = r_low
-                        if r_high >= low:
-                            high = r_high
-                        elif r_high <= 0:
-                            high = max(center * 1.40, 20000.0)
-                except Exception:
-                    pass
-
-                detected.append({
-                    "index": i,
-                    "center_hz": center,
-                    "min_hz": low,
-                    "max_hz": high
-                })
-
-            self.hw_min_mb = min_mb
-            self.hw_max_mb = max_mb
-            self.hw_bands = detected
-            self._normalize_hw_levels(count)
-            self._save_cached_hw_caps()
-            self.save_settings()
-        except Exception as exc:
-            print("Hardware EQ Detection Error:", exc)
-        finally:
-            if probe is not None:
-                try:
-                    probe.release()
-                except Exception:
-                    pass
-
-    def slider_to_mb(self, slider_value):
-        value = max(0, min(100, int(round(slider_value))))
-        if value == 50:
-            return 0
-        if value < 50:
-            return int(round(((50 - value) / 50.0) * self.hw_min_mb))
-        return int(round(((value - 50) / 50.0) * self.hw_max_mb))
-
-    def slider_to_db(self, slider_value):
-        return self.slider_to_mb(slider_value) / 100.0
-
-    def on_hw_slider_change(self, band_idx, value):
-        self.hw_eq_levels[str(band_idx)] = max(0, min(100, int(round(value))))
-        self.schedule_save()
-
-    def open_hw_eq(self, *args):
-        HardwareEqPopup(self).open()
-
-    def _update_bg(self, instance, *args):
-        if hasattr(self, "bg_rect"):
-            self.bg_rect.pos = instance.pos
-            self.bg_rect.size = instance.size
-
-    def create_slider_card(self, title, min_val, max_val, cur_val,
-                           unit, accent_hex, callback):
-        card = ProCard(
-            orientation="vertical", padding=[dp(12), dp(6)],
-            spacing=dp(4)
-        )
-        card.size_hint_y = None
-        card.height = dp(82)
-
-        top = BoxLayout(orientation="horizontal", size_hint_y=0.4)
-        title_lbl = Label(
-            text=title, font_size="12sp", bold=True,
-            color=get_color_from_hex("#ccd6f6"),
-            halign="left", valign="middle"
-        )
-        title_lbl.bind(size=title_lbl.setter("text_size"))
-        value_lbl = Label(
-            text=f"{int(cur_val)}{unit}", font_size="15sp", bold=True,
-            color=get_color_from_hex(accent_hex),
-            size_hint_x=0.35, halign="right", valign="middle"
-        )
-        value_lbl.bind(size=value_lbl.setter("text_size"))
-        top.add_widget(title_lbl)
-        top.add_widget(value_lbl)
-
-        slider = Slider(
-            min=min_val, max=max_val, value=cur_val, step=1,
-            cursor_size=("28dp", "28dp"),
-            background_width="14dp", value_track=True,
-            value_track_color=get_color_from_hex(accent_hex),
-            value_track_width="5dp", size_hint_y=0.6
-        )
-
-        def changed(instance, value):
-            value_lbl.text = f"{int(value)}{unit}"
-            callback(instance, value)
-
-        slider.bind(value=changed)
-        card.add_widget(top)
-        card.add_widget(slider)
-        return card, value_lbl, slider
+        self.root = Builder.load_string(KV)
+        self.settings_popup = SettingsPopup()
+        self.data_format_popup = DataFormatPopup()
+        return self.root
 
     def on_start(self):
-        self.in_foreground = True
-        self.sync_system_volume()
-        self.save_settings()
-        Clock.schedule_once(self.request_android_permissions, 0.5)
-        self.request_battery_unrestricted()
-        self.detect_connected_audio_device()
-        self.start_background_service()
-        Clock.schedule_interval(self.background_monitor, 1.0)
-        Clock.schedule_interval(self.sync_system_volume, 0.5)
+        self.log(f"Loaded MAC: {self.hc05_mac}")
 
-    def request_android_permissions(self, dt):
-        if platform == "android":
+        if is_real_android:
             try:
                 from android.permissions import request_permissions
                 request_permissions([
-                    "android.permission.BLUETOOTH_CONNECT",
-                    "android.permission.BLUETOOTH_SCAN",
-                    "android.permission.MODIFY_AUDIO_SETTINGS",
-                    "android.permission.POST_NOTIFICATIONS"
+                    'android.permission.BLUETOOTH_CONNECT',
+                    'android.permission.BLUETOOTH_SCAN',
+                    'android.permission.ACCESS_FINE_LOCATION',
+                    'android.permission.BLUETOOTH',
+                    'android.permission.BLUETOOTH_ADMIN'
                 ])
-            except Exception as exc:
-                print("Permission request:", exc)
+                self.update_status("Waiting for Permissions...", [0.85, 0.53, 0.1, 1])
+                Clock.schedule_once(lambda dt: threading.Thread(target=self.connect_bluetooth, daemon=True).start(), 4)
+            except:
+                Clock.schedule_once(lambda dt: threading.Thread(target=self.connect_bluetooth, daemon=True).start(), 1)
+        else:
+            Clock.schedule_once(lambda dt: threading.Thread(target=self.connect_bluetooth, daemon=True).start(), 1)
 
-    def on_pause(self):
-        self.in_foreground = False
-        self.save_settings()
-        self.start_background_service()
-        return True
-
-    def on_resume(self):
-        self.in_foreground = True
-        self._load_cached_hw_caps()
-        self.sync_system_volume()
-        self.detect_connected_audio_device()
-        self.start_background_service()
-
-    def ensure_always_on(self, *args):
-        self.save_settings()
-        self.request_battery_unrestricted()
-        self.start_background_service(force=True)
-
-    def sync_system_volume(self, *args):
-        if not self.in_foreground or platform != "android":
+    def reconnect_bluetooth(self):
+        if self.is_connected:
+            self.log("Already connected. Ignoring reconnect request.")
             return
-        try:
-            activity = PythonActivity.mActivity
-            manager = activity.getSystemService(Context.AUDIO_SERVICE)
-            maximum = manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            if maximum <= 0:
-                return
-            current = manager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            expected = int(round((self.volume / 100.0) * maximum))
-            if current != expected:
-                pct = max(0, min(100, int(round(current / float(maximum) * 100))))
-                self._syncing_vol = True
-                self.volume = pct
-                if hasattr(self, "slider_vol"):
-                    self.slider_vol.value = pct
-                if hasattr(self, "lbl_vol_val"):
-                    self.lbl_vol_val.text = f"{pct}%"
-                self._syncing_vol = False
-                self.schedule_save()
-        except Exception as exc:
-            self._syncing_vol = False
-            print("Volume sync:", exc)
-
-    def is_service_running(self):
-        if platform != "android":
-            return False
-        try:
-            activity = PythonActivity.mActivity
-            manager = activity.getSystemService(Context.ACTIVITY_SERVICE)
-            running = manager.getRunningServices(100)
-            if running:
-                for item in running.toArray():
-                    if str(item.service.getClassName()) == "com.photon.audio.ServicePhotondsp":
-                        return True
-        except Exception:
-            pass
-        return False
-
-    def start_background_service(self, force=False):
-        if platform != "android":
+        if self.is_connecting:
+            self.log("Reconnect already in progress...")
             return
-        try:
-            if not force and self.is_service_running():
-                return
-            service_class = autoclass("com.photon.audio.ServicePhotondsp")
-            activity = PythonActivity.mActivity
-            title = "Photon Audio EQ Active"
-            info = f"Bass:{self.bass}% | Vol:{self.volume}% | HW EQ: Service"
+        
+        self.is_connecting = True
+        self.log("Manual reconnect requested...")
+        self.update_status("Reconnecting...", [0.85, 0.53, 0.1, 1])
+        
+        if self.bt_socket:
             try:
-                service_class.start(activity, "icon", title, info, "")
-            except Exception:
-                service_class.start(activity, "")
-        except Exception as exc:
-            print("Start Service Error:", exc)
-
-    def request_battery_unrestricted(self):
-        if platform == "android" and PowerManager and Settings and Uri:
-            try:
-                activity = PythonActivity.mActivity
-                manager = activity.getSystemService(Context.POWER_SERVICE)
-                package = activity.getPackageName()
-                if not manager.isIgnoringBatteryOptimizations(package):
-                    intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                    intent.setData(Uri.parse(f"package:{package}"))
-                    activity.startActivity(intent)
-            except Exception as exc:
-                print("Battery optimization request:", exc)
-
-    def detect_connected_audio_device(self):
-        if platform != "android":
-            return
-        detected = "Phone Speaker (DSP Paused)"
-        try:
-            manager = PythonActivity.mActivity.getSystemService(Context.AUDIO_SERVICE)
-            devices = manager.getDevices(2)
-            if devices:
-                for dev in devices:
-                    dtype = dev.getType()
-                    if dtype in (3, 4, 7, 8, 11, 12, 22, 26, 27):
-                        product = dev.getProductName()
-                        name = product.toString() if product else "External Audio"
-                        detected = (
-                            f"BT: {name}" if dtype in (7, 8, 26, 27)
-                            else f"Headphones: {name}"
-                        )
-                        break
-        except Exception as exc:
-            print("Device detection:", exc)
-
-        if detected != self.device_name:
-            self.device_name = detected
-            if hasattr(self, "lbl_device"):
-                self.lbl_device.text = f"🔊 Output: {detected}"
-
-    def background_monitor(self, dt):
-        if not self.in_foreground:
-            return
-        if not self.hw_bands:
-            self._load_cached_hw_caps()
-        self.detect_connected_audio_device()
-        if platform != "android":
-            return
-        try:
-            manager = PythonActivity.mActivity.getSystemService(Context.AUDIO_SERVICE)
-            active = manager.isMusicActive()
-            state = "🎵 Active" if active else "⏸ Idle"
-            if hasattr(self, "lbl_device"):
-                self.lbl_device.text = f"🔊 {self.device_name} [{state}]"
-            if not self.is_service_running():
-                self.start_background_service(force=True)
-        except Exception as exc:
-            print("Background monitor:", exc)
-
-    def schedule_save(self):
-        if self._save_ev:
-            self._save_ev.cancel()
-        # Fast 40ms remote-control dispatch to hardware service
-        self._save_ev = Clock.schedule_once(lambda dt: self.save_settings(), 0.04)
-
-    def on_volume_change(self, instance, value):
-        if self._syncing_vol:
-            return
-        self.volume = int(value)
-        if platform == "android":
-            try:
-                manager = PythonActivity.mActivity.getSystemService(Context.AUDIO_SERVICE)
-                maximum = manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                target = int(round((self.volume / 100.0) * maximum))
-                manager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
-            except Exception as exc:
-                print("Volume apply:", exc)
-        self.schedule_save()
-
-    def on_bass_change(self, instance, value):
-        self.bass = int(value)
-        self.schedule_save()
-
-    def get_settings_path(self):
-        if platform == "android":
-            try:
-                return os.path.join(
-                    PythonActivity.mActivity.getFilesDir().getAbsolutePath(),
-                    "audio_eq_settings.json"
-                )
-            except Exception:
+                self.bt_socket.close()
+            except:
                 pass
-        return "audio_eq_settings.json"
-
-    def save_settings(self):
-        """
-        Dispatch exact remote-control commands (volume, bass, slider %,
-        and exact per-band hardware millibel/dB targets) to Service.
-        """
-        self.cmd_seq += 1
-        hw_eq_mb = {}
-        hw_eq_db = {}
-        for k, v in self.hw_eq_levels.items():
-            mb_val = self.slider_to_mb(v)
-            hw_eq_mb[str(k)] = mb_val
-            hw_eq_db[str(k)] = round(mb_val / 100.0, 2)
-
-        data = {
-            "cmd_seq": self.cmd_seq,
-            "volume": self.volume,
-            "bass": self.bass,
-            "hw_min_mb": self.hw_min_mb,
-            "hw_max_mb": self.hw_max_mb,
-            "hw_eq_levels": self.hw_eq_levels,
-            "hw_eq_mb": hw_eq_mb,
-            "hw_eq_db": hw_eq_db
-        }
-        try:
-            path = self.get_settings_path()
-            temp = path + ".tmp"
-            with open(temp, "w") as file:
-                json.dump(data, file)
-                file.flush()
-                os.fsync(file.fileno())
-            os.replace(temp, path)
-        except Exception as exc:
-            print("Save settings:", exc)
+            self.bt_socket = None
+            self.bt_out = None
+            self.bt_in = None
+        
+        self.is_connected = False
+        self.waiting_ack = False
+        
+        threading.Thread(target=self.connect_bluetooth, daemon=True).start()
 
     def load_settings(self):
-        path = self.get_settings_path()
-        if not os.path.exists(path):
-            self.hw_eq_levels = {}
-            return
-        try:
-            with open(path, "r") as file:
-                data = json.load(file)
-            self.cmd_seq = int(data.get("cmd_seq", 0))
-            self.volume = max(0, min(100, int(data.get("volume", 70))))
-            self.bass = max(0, min(100, int(data.get("bass", 15))))
-            levels = data.get("hw_eq_levels", {})
-            self.hw_eq_levels = {}
-            if isinstance(levels, dict):
-                for key, value in levels.items():
-                    try:
-                        self.hw_eq_levels[str(key)] = max(0, min(100, int(value)))
-                    except (TypeError, ValueError):
-                        continue
-        except Exception as exc:
-            print("Load settings:", exc)
-            self.hw_eq_levels = {}
+        if os.path.exists("bt_settings.json"):
+            try:
+                with open("bt_settings.json", "r") as f:
+                    data = json.load(f)
+                    if "mac" in data: self.hc05_mac = data["mac"]
+                    if "on_delay" in data: self.on_delay = data["on_delay"]
+                    if "off_delay" in data: self.off_delay = data["off_delay"]
+                    for i in range(1, 13):
+                        key = f"s{i}_name"
+                        if key in data:
+                            setattr(self, key, data[key])
+            except:
+                pass
 
+    def save_settings_to_file(self):
+        data = {
+            "mac": self.hc05_mac.strip(),
+            "on_delay": self.on_delay,
+            "off_delay": self.off_delay,
+        }
+        for i in range(1, 13):
+            data[f"s{i}_name"] = getattr(self, f"s{i}_name")
+        
+        try:
+            with open("bt_settings.json", "w") as f:
+                json.dump(data, f)
+        except:
+            pass
+
+    def open_settings(self):
+        self.settings_popup.open()
+
+    def show_data_format_popup(self):
+        self.data_format_popup.open()
+
+    def save_and_close_settings(self):
+        if self._force_reset_event:
+            self._force_reset_event.cancel()
+            self._force_reset_event = None
+        self.force_state = 0
+        self.save_settings_to_file()
+        self.send_full_state()
+        self.settings_popup.dismiss()
+
+    def force_update_and_close(self):
+        if self._force_reset_event:
+            self._force_reset_event.cancel()
+            
+        self.force_state = 1
+        self.log("Force Update (1) -> waiting 3s before reset...")
+        
+        self.save_settings_to_file()
+        self.send_full_state()
+        
+        # Close popup smoothly after button press
+        Clock.schedule_once(lambda dt: self._close_popup_after_force(), 0.35)
+        # Send force_state = 0 exactly 3 seconds after Force Update is sent
+        self._force_reset_event = Clock.schedule_once(self._reset_force_after_close, 3.0)
+
+    def _close_popup_after_force(self):
+        try:
+            self.settings_popup.dismiss()
+        except:
+            pass
+
+    def _reset_force_after_close(self, dt=0):
+        self._force_reset_event = None
+        if self.force_state == 1:
+            self.force_state = 0
+            self.log("Force reset to 0 (after 3s delay)")
+            self.send_full_state()
+
+    @mainthread
+    def log(self, msg):
+        monitor = self.root.ids.monitor
+        monitor.text += msg + "\n"
+        monitor.cursor = (0, len(monitor.text))
+
+    @mainthread
+    def update_status(self, text, bg_color):
+        self.root.ids.status_lbl.text = text
+        self.root.ids.status_lbl.bg_color = bg_color
+
+    def connect_bluetooth(self):
+        mac = self.hc05_mac.strip()
+        self.log(f"Connecting to {mac}...")
+        self.update_status("Connecting...", [0.85, 0.53, 0.1, 1])
+        
+        try:
+            if is_real_android:
+                adapter = BluetoothAdapter.getDefaultAdapter()
+                device = adapter.getRemoteDevice(mac)
+                spp_uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+                self.bt_socket = device.createRfcommSocketToServiceRecord(spp_uuid)
+                adapter.cancelDiscovery()
+                self.bt_socket.connect()
+                self.bt_out = self.bt_socket.getOutputStream()
+                self.bt_in = BufferedReader(InputStreamReader(self.bt_socket.getInputStream()))
+                self.is_connected = True
+            else:
+                if hasattr(socket, 'AF_BLUETOOTH'):
+                    self.bt_socket = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+                    self.bt_socket.connect((mac, 1))
+                    self.is_connected = True
+                else:
+                    self.log("AF_BLUETOOTH missing. Simulated Mode.")
+
+            if self.is_connected:
+                threading.Thread(target=self.listen_for_ack, daemon=True).start()
+                self.update_status("Connected via Bluetooth!", [0.0, 0.78, 0.32, 1])
+                self.log("HC-05 Connected Successfully!")
+
+        except Exception as e:
+            self.is_connected = False
+            self.update_status("Disconnected", [0.82, 0.18, 0.18, 1])
+            self.log(f"Failed: {str(e)}")
+        
+        finally:
+            self.is_connecting = False
+
+    def listen_for_ack(self):
+        while self.is_connected and self.bt_socket:
+            try:
+                if is_real_android:
+                    if self.bt_in.ready():
+                        recv_data = self.bt_in.readLine()
+                        if recv_data:
+                            self.log(f"RCV: {recv_data.strip()}")
+                            if "OK" in recv_data.upper():
+                                self.waiting_ack = False
+                else:
+                    recv_data = self.bt_socket.recv(1024).decode("utf-8").strip()
+                    if recv_data:
+                        self.log(f"RCV: {recv_data}")
+                        if "OK" in recv_data.upper():
+                            self.waiting_ack = False
+            except:
+                break
+
+    def build_state_message(self):
+        parts = [self.on_delay, self.off_delay]
+        for i in range(1, 13):
+            parts.append(str(int(getattr(self, f"s{i}_state"))))
+        parts.append(str(int(self.force_state)))
+        return ",".join(parts)
+
+    def send_full_state(self):
+        data = self.build_state_message()
+        self.send_data(data)
+
+    def send_data(self, data, is_retry=False):
+        if self.is_connected and self.bt_socket:
+            try:
+                msg = data + "\n"
+                if is_real_android:
+                    java_msg = JavaString(msg).getBytes()
+                    self.bt_out.write(java_msg)
+                    self.bt_out.flush()
+                else:
+                    self.bt_socket.send(msg.encode("utf-8"))
+
+                self.log(f"RE-SENT: {data}" if is_retry else f"SENT: {data}")
+                self.waiting_ack = True
+                self.pending_data = data
+                Clock.schedule_once(lambda dt: self.check_ack(data, is_retry), 3)
+            except:
+                self.update_status("Disconnected", [0.82, 0.18, 0.18, 1])
+                self.is_connected = False
+        else:
+            self.log(f"Simulated SENT: {data}")
+
+    def check_ack(self, data, is_retry):
+        if self.is_connected and self.waiting_ack and self.pending_data == data:
+            if not is_retry:
+                self.log("No message! Retrying...")
+                self.send_data(data, is_retry=True)
+            else:
+                self.log("Controller Not Responding")
+                self.waiting_ack = False
+
+    def on_slider_change(self, slider_id, is_active):
+        val = 1 if is_active else 0
+        if 1 <= slider_id <= 12:
+            setattr(self, f"s{slider_id}_state", val)
+        # If Force Update 3s timer is active, wait for the 3s timer to finish before sending
+        if self._force_reset_event is not None:
+            return
+        self.send_full_state()
 
 if __name__ == "__main__":
-    AudioControllerApp().run()
+    try:
+        BluetoothApp().run()
+    except Exception as e:
+        import traceback
+        with open("crash_log.txt", "w") as f:
+            f.write(traceback.format_exc())
