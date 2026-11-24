@@ -41,9 +41,9 @@ jobs:
         # Increment version for next build (1.0 -> 1.1 ... 1.9 -> 2.0)
         MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
         MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
-        MINOR=$((MINOR + 1))
+        MINOR=$((10#$MINOR + 1))
         if [ "$MINOR" -ge 10 ]; then
-          MAJOR=$((MAJOR + 1))
+          MAJOR=$((10#$MAJOR + 1))
           MINOR=0
         fi
         NEXT_VERSION="$MAJOR.$MINOR"
@@ -97,7 +97,7 @@ jobs:
 
         export PATH="$BIN_PATH:$ANDROID_SDK_ROOT/platform-tools:$PATH"
 
-        yes | sdkmanager --licenses
+        (yes || true) | sdkmanager --licenses
         sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
     # Step 4: Python packages
@@ -223,7 +223,7 @@ jobs:
 
         # Sync latest main branch first to avoid merge conflicts
         git fetch origin main
-        git checkout -B main origin/main
+        git checkout -f -B main origin/main
 
         # Save new APK and updated version
         mkdir -p APK
