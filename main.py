@@ -166,7 +166,8 @@ APP_GUIDE_TEXT = (
     "- You can create new blank profiles or save a copy of your current layout anytime.\n\n"
 
     "[b][color=66ddff]4. PACKET SEND FORMAT (FORMAT SCREEN)[/color][/b]\n"
-    "- [b]10-Box (Single Widget):[/b] Sends only the widget you tap/move using up to 10 customizable boxes (PIN, X, Y, VAL, CMD, TEXT/MSG, CUSTOM1-4, or OFF).\n"
+    "- [b]10-Box (Single Widget):[/b] Sends only the widget you tap/move using 10 dedicated boxes:\n"
+    "  Box 1 (PIN/OFF), Box 2 (X/OFF), Box 3 (Y/OFF), Box 4 (VAL/OFF) [locked values], and Boxes 5-10 (CUSTOM1-4, CMD, TEXT/MSG, or OFF).\n"
     "- [b]All Widgets (Combined):[/b] Sends the live values of EVERY widget on the Dashboard together in ONE single packet.\n"
     "- Joystick always sends X and Y together in a single packet.\n"
     "- Configure 3 packet options: Start-End pair (< >, [ ], { }, $ #, None), Separator (:, ,, ;, |, -), and Newline (\\n or None).\n\n"
@@ -192,32 +193,23 @@ APP_GUIDE_TEXT = (
     "- Use the bottom input bar to send manual commands, or type a 2-box sensor packet and tap 'Sim RX' to test in preview mode."
 )
 
-# Data source options for the 10-Box Packet Builder
-BOX_OPTIONS = (
-    "PIN",
-    "X",
-    "Y",
-    "VAL",
-    "CMD",
-    "TEXT/MSG",
-    "CUSTOM1",
-    "CUSTOM2",
-    "CUSTOM3",
-    "CUSTOM4",
-    "OFF",
-)
+# Dedicated 2-option slot rules for the 10-Box Packet Builder (Boxes 1-4 value locked)
+BOX_SLOT_CONFIG = [
+    {"options": ("PIN", "OFF"),      "source": "PIN",     "default": "0", "locked": True},   # Box 1
+    {"options": ("X", "OFF"),        "source": "X",       "default": "0", "locked": True},   # Box 2
+    {"options": ("Y", "OFF"),        "source": "Y",       "default": "0", "locked": True},   # Box 3
+    {"options": ("VAL", "OFF"),      "source": "VAL",     "default": "0", "locked": True},   # Box 4
+    {"options": ("CUSTOM1", "OFF"),  "source": "CUSTOM1", "default": "0", "locked": False},  # Box 5
+    {"options": ("CUSTOM2", "OFF"),  "source": "CUSTOM2", "default": "0", "locked": False},  # Box 6
+    {"options": ("CUSTOM3", "OFF"),  "source": "OFF",     "default": "0", "locked": False},  # Box 7
+    {"options": ("CUSTOM4", "OFF"),  "source": "OFF",     "default": "0", "locked": False},  # Box 8
+    {"options": ("CMD", "OFF"),      "source": "OFF",     "default": "0", "locked": False},  # Box 9
+    {"options": ("TEXT/MSG", "OFF"), "source": "OFF",     "default": "0", "locked": False},  # Box 10
+]
 
 DEFAULT_BOXES = [
-    {"source": "PIN", "default": "0"},       # Box 1: Pin Number
-    {"source": "X", "default": "0"},         # Box 2: Joystick X Value
-    {"source": "Y", "default": "0"},         # Box 3: Joystick Y Value
-    {"source": "VAL", "default": "0"},       # Box 4: Main Control Value
-    {"source": "CUSTOM1", "default": "0"},   # Box 5: Custom Field 1
-    {"source": "CUSTOM2", "default": "0"},   # Box 6: Custom Field 2
-    {"source": "OFF", "default": "0"},       # Box 7: Selectable / Message
-    {"source": "OFF", "default": "0"},       # Box 8: Selectable / Message
-    {"source": "OFF", "default": "0"},       # Box 9: Selectable / Message
-    {"source": "OFF", "default": "0"},       # Box 10: Selectable / Message
+    {"source": cfg["source"], "default": cfg["default"]}
+    for cfg in BOX_SLOT_CONFIG
 ]
 
 # Full-width widget types (all others render at half-width, 2 per row)
@@ -283,6 +275,24 @@ def markers_to_wrapper_label(start_m, end_m):
     return "None" if (not start_m and not end_m) else "< >"
 
 
+def sanitize_boxes(raw_boxes):
+    """Ensure all 10 boxes enforce their 2-option slot rules and locked defaults (Boxes 1-4)."""
+    clean = []
+    src_list = raw_boxes if isinstance(raw_boxes, list) else []
+    for i, cfg in enumerate(BOX_SLOT_CONFIG):
+        item = src_list[i] if i < len(src_list) and isinstance(src_list[i], dict) else {}
+        src = item.get("source", cfg["source"])
+        if src not in cfg["options"]:
+            src = cfg["source"]
+        if cfg["locked"]:
+            val = cfg["default"]
+        else:
+            raw_v = str(item.get("default", cfg["default"])).strip()
+            val = raw_v if raw_v != "" else cfg["default"]
+        clean.append({"source": src, "default": val})
+    return clean
+
+
 # ==========================================
 # Custom Glass / Translucent UI Components
 # ==========================================
@@ -346,6 +356,39 @@ class GlassButton(ButtonBehavior, GlassBox):
 
     def set_text(self, text):
         self.lbl.text = text
+
+
+class LockedBoxField(GlassBox):
+    """Non-editable locked display box for fixed packet slots (Boxes 1-4)."""
+    def __init__(self, text='0', **kwargs):
+        super().__init__(
+            bg_color=INPUT_LOCKED_BG,
+            border_color=CARD_BORDER,
+            radius=10,
+            padding=[dp(10), 0],
+            size_hint_y=None,
+            height=dp(42),
+            **kwargs
+        )
+        self._lbl = Label(
+            text=str(text),
+            font_size=dp(13),
+            bold=True,
+            color=TEXT_MUTED,
+            halign='left',
+            valign='middle',
+            shorten=True
+        )
+        self._lbl.bind(size=self._lbl.setter('text_size'))
+        self.add_widget(self._lbl)
+
+    @property
+    def text(self):
+        return self._lbl.text
+
+    @text.setter
+    def text(self, val):
+        self._lbl.text = str(val)
 
 
 class StyledInput(TextInput):
@@ -2079,7 +2122,7 @@ class ProtocolScreen(Screen):
         prev_card.add_widget(self.preview_lbl)
         body.add_widget(prev_card)
 
-        # --- Card 5: 10 Configurable Boxes (Used in 10-Box Mode) ---
+        # --- Card 5: 10 Configurable Boxes (Boxes 1-4 Locked, 2 Options Per Box) ---
         boxes_card = GlassBox(orientation='vertical', padding=dp(10), spacing=dp(7), size_hint_y=None)
         boxes_card.bind(minimum_height=boxes_card.setter('height'))
 
@@ -2100,6 +2143,7 @@ class ProtocolScreen(Screen):
         boxes_card.add_widget(b_hdr)
 
         for i in range(10):
+            slot_cfg = BOX_SLOT_CONFIG[i]
             row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(6))
             lbl = Label(
                 text=f"Box {i + 1}",
@@ -2114,8 +2158,8 @@ class ProtocolScreen(Screen):
             lbl.bind(size=lbl.setter('text_size'))
 
             sp = Spinner(
-                text=DEFAULT_BOXES[i]["source"],
-                values=BOX_OPTIONS,
+                text=slot_cfg["source"],
+                values=slot_cfg["options"],
                 size_hint_x=0.42,
                 background_normal='',
                 background_color=(0.14, 0.32, 0.58, 0.70),
@@ -2125,10 +2169,14 @@ class ProtocolScreen(Screen):
             )
             sp.bind(text=self.on_any_change)
 
-            inp = StyledInput(hint="Val / Msg", size_hint_x=0.36)
-            inp.height = dp(42)
-            inp.text = "0"
-            inp.bind(text=self.on_any_change)
+            if slot_cfg["locked"]:
+                # Boxes 1 to 4 value fields are non-editable
+                inp = LockedBoxField(text=slot_cfg["default"], size_hint_x=0.36)
+            else:
+                inp = StyledInput(hint="Val / Msg", size_hint_x=0.36)
+                inp.height = dp(42)
+                inp.text = slot_cfg["default"]
+                inp.bind(text=self.on_any_change)
 
             row.add_widget(lbl)
             row.add_widget(sp)
@@ -2137,7 +2185,7 @@ class ProtocolScreen(Screen):
             self.box_widgets.append((sp, inp))
 
         tip = Label(
-            text="Tip: Select 'TEXT/MSG' in any box to send a fixed message/value. Select 'OFF' to skip a box.",
+            text="Tip: Boxes 1-4 (PIN, X, Y, VAL) are locked. Toggle any box to 'OFF' to skip it.",
             font_size=dp(11),
             color=TEXT_MUTED,
             size_hint_y=None,
@@ -2278,13 +2326,14 @@ class ProtocolScreen(Screen):
         le = ps.get("line_ending", "\\n")
         self.sp_ending.text = "None" if le == "None" else "\\n"
 
-        boxes = ps.get("boxes") or copy.deepcopy(DEFAULT_BOXES)
+        boxes = sanitize_boxes(ps.get("boxes"))
         for i in range(10):
-            b = boxes[i] if i < len(boxes) else DEFAULT_BOXES[i]
+            slot_cfg = BOX_SLOT_CONFIG[i]
+            b = boxes[i]
             sp, inp = self.box_widgets[i]
-            src = b.get("source", DEFAULT_BOXES[i]["source"])
-            sp.text = src if src in BOX_OPTIONS else "OFF"
-            inp.text = str(b.get("default", "0"))
+            src = b.get("source", slot_cfg["source"])
+            sp.text = src if src in slot_cfg["options"] else slot_cfg["source"]
+            inp.text = slot_cfg["default"] if slot_cfg["locked"] else str(b.get("default", slot_cfg["default"]))
 
         self._loading = False
         self.msg_lbl.text = ""
@@ -2292,10 +2341,16 @@ class ProtocolScreen(Screen):
 
     def _collect_settings(self):
         boxes = []
-        for sp, inp in self.box_widgets:
+        for i, (sp, inp) in enumerate(self.box_widgets):
+            slot_cfg = BOX_SLOT_CONFIG[i]
+            src = sp.text if sp.text in slot_cfg["options"] else slot_cfg["source"]
+            if slot_cfg["locked"]:
+                val = slot_cfg["default"]
+            else:
+                val = inp.text.strip() if inp.text.strip() != "" else slot_cfg["default"]
             boxes.append({
-                "source": sp.text,
-                "default": inp.text.strip() if inp.text.strip() != "" else "0"
+                "source": src,
+                "default": val
             })
         start_m, end_m = WRAPPER_PAIRS.get(self.sp_wrapper.text, ("<", ">"))
         return {
@@ -2372,9 +2427,10 @@ class ProtocolScreen(Screen):
         self.sp_sep.text = ":"
         self.sp_ending.text = "\\n"
         for i in range(10):
+            slot_cfg = BOX_SLOT_CONFIG[i]
             sp, inp = self.box_widgets[i]
-            sp.text = DEFAULT_BOXES[i]["source"]
-            inp.text = DEFAULT_BOXES[i]["default"]
+            sp.text = slot_cfg["source"]
+            inp.text = slot_cfg["default"]
         self._loading = False
         self.save_format(silent=False)
         self.update_preview()
@@ -2915,15 +2971,9 @@ class ProControllerApp(App):
             "auto_connect": True
         }
 
-        # Upgrade any existing settings cleanly to unified Start-End + Newline (\n / None)
+        # Upgrade any existing settings cleanly to unified Start-End + 2-option 10-Box rules
         ps = saved.get("protocol_settings") or {}
-        old_boxes = ps.get("boxes")
-        if isinstance(old_boxes, list) and len(old_boxes) > 0:
-            boxes = old_boxes[:10]
-            while len(boxes) < 10:
-                boxes.append({"source": "OFF", "default": "0"})
-        else:
-            boxes = copy.deepcopy(DEFAULT_BOXES)
+        boxes = sanitize_boxes(ps.get("boxes"))
 
         raw_start = ps.get("start_marker", "<")
         raw_end = ps.get("end_marker", ">")
