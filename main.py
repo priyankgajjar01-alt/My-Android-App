@@ -19,6 +19,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
+from kivy.uix.modalview import ModalView
 from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.spinner import Spinner
@@ -44,35 +45,54 @@ CARD_BG = (0.12, 0.24, 0.44, 0.30)
 CARD_BG_ACTIVE = (0.10, 0.36, 0.30, 0.48)
 CARD_BORDER = (0.35, 0.60, 0.95, 0.38)
 CARD_BORDER_ACTIVE = (0.30, 0.90, 0.60, 0.72)
-INPUT_BG = (0.08, 0.16, 0.30, 0.55)
+INPUT_BG = (0.08, 0.16, 0.30, 0.65)
+INPUT_LOCKED_BG = (0.05, 0.10, 0.20, 0.50)
+MODAL_BG = (0.06, 0.13, 0.26, 0.97)
+MINI_TERM_BG = (0.03, 0.07, 0.14, 0.80)
 BTN_PRIMARY = (0.16, 0.42, 0.78, 0.85)
 BTN_SUCCESS = (0.12, 0.55, 0.38, 0.88)
 BTN_WARN = (0.72, 0.45, 0.12, 0.85)
-BTN_DANGER = (0.68, 0.20, 0.24, 0.85)
+BTN_DANGER = (0.68, 0.20, 0.24, 0.90)
 TEXT_MAIN = (0.94, 0.97, 1.0, 1)
 TEXT_MUTED = (0.62, 0.74, 0.90, 1)
 TEXT_CYAN = (0.40, 0.86, 1.0, 1)
 
-# Data source options for the 6-Box Packet Builder
+# Packet Send Modes
+MODE_SINGLE_10BOX = "10-Box (Single Widget)"
+MODE_ALL_COMBINED = "All Widgets (Combined)"
+SEND_MODE_OPTIONS = (MODE_SINGLE_10BOX, MODE_ALL_COMBINED)
+COMBINED_STYLE_OPTIONS = ("Values Only", "Pin=Value")
+
+# Data source options for the 10-Box Packet Builder
 BOX_OPTIONS = (
     "PIN",
     "X",
     "Y",
     "VAL",
+    "CMD",
+    "TEXT/MSG",
     "CUSTOM1",
     "CUSTOM2",
-    "CMD",
+    "CUSTOM3",
+    "CUSTOM4",
     "OFF",
 )
 
 DEFAULT_BOXES = [
-    {"source": "PIN", "default": "0"},      # Box 1: Pin Number
-    {"source": "X", "default": "0"},        # Box 2: Joystick X Value
-    {"source": "Y", "default": "0"},        # Box 3: Joystick Y Value
-    {"source": "VAL", "default": "0"},      # Box 4: Main Control Value
-    {"source": "CUSTOM1", "default": "0"},  # Box 5: Custom Field 1
-    {"source": "CUSTOM2", "default": "0"},  # Box 6: Custom Field 2
+    {"source": "PIN", "default": "0"},       # Box 1: Pin Number
+    {"source": "X", "default": "0"},         # Box 2: Joystick X Value
+    {"source": "Y", "default": "0"},         # Box 3: Joystick Y Value
+    {"source": "VAL", "default": "0"},       # Box 4: Main Control Value
+    {"source": "CUSTOM1", "default": "0"},   # Box 5: Custom Field 1
+    {"source": "CUSTOM2", "default": "0"},   # Box 6: Custom Field 2
+    {"source": "OFF", "default": "0"},       # Box 7: Selectable / Message
+    {"source": "OFF", "default": "0"},       # Box 8: Selectable / Message
+    {"source": "OFF", "default": "0"},       # Box 9: Selectable / Message
+    {"source": "OFF", "default": "0"},       # Box 10: Selectable / Message
 ]
+
+# Full-width widget types (all others render at half-width, 2 per row)
+FULL_WIDTH_TYPES = ("Slider", "Joystick")
 
 # Default ready-to-use project profiles
 DEFAULT_PROFILES = {
@@ -81,25 +101,25 @@ DEFAULT_PROFILES = {
             "id": "w1", "type": "Switch", "name": "Main Light",
             "pin": "13", "mode": "1", "cmd": "D",
             "val_on": "1", "val_off": "0", "min_val": "0", "max_val": "255",
-            "custom1": "", "custom2": "", "unit": ""
-        },
-        {
-            "id": "w2", "type": "Slider", "name": "Fan Speed (PWM)",
-            "pin": "9", "mode": "2", "cmd": "A",
-            "val_on": "255", "val_off": "0", "min_val": "0", "max_val": "255",
-            "custom1": "", "custom2": "", "unit": ""
+            "custom1": "", "custom2": "", "custom3": "", "custom4": "", "unit": ""
         },
         {
             "id": "w3", "type": "Push Button", "name": "Door Bell",
             "pin": "7", "mode": "1", "cmd": "D",
             "val_on": "1", "val_off": "0", "min_val": "0", "max_val": "1",
-            "custom1": "", "custom2": "", "unit": ""
+            "custom1": "", "custom2": "", "custom3": "", "custom4": "", "unit": ""
+        },
+        {
+            "id": "w2", "type": "Slider", "name": "Fan Speed (PWM)",
+            "pin": "9", "mode": "2", "cmd": "A",
+            "val_on": "255", "val_off": "0", "min_val": "0", "max_val": "255",
+            "custom1": "", "custom2": "", "custom3": "", "custom4": "", "unit": ""
         },
         {
             "id": "w4", "type": "Sensor Display", "name": "Room Temp",
             "pin": "0", "mode": "0", "cmd": "R",
             "val_on": "1", "val_off": "0", "min_val": "0", "max_val": "100",
-            "custom1": "", "custom2": "", "unit": "C"
+            "custom1": "", "custom2": "", "custom3": "", "custom4": "", "unit": "C"
         },
     ],
     "RC Car": [
@@ -107,25 +127,25 @@ DEFAULT_PROFILES = {
             "id": "rc1", "type": "Joystick", "name": "Drive Joystick",
             "pin": "5", "mode": "2", "cmd": "A",
             "val_on": "1", "val_off": "0", "min_val": "0", "max_val": "255",
-            "custom1": "", "custom2": "", "unit": ""
+            "custom1": "", "custom2": "", "custom3": "", "custom4": "", "unit": ""
         },
         {
             "id": "rc2", "type": "Switch", "name": "Headlights",
             "pin": "12", "mode": "1", "cmd": "D",
             "val_on": "1", "val_off": "0", "min_val": "0", "max_val": "1",
-            "custom1": "", "custom2": "", "unit": ""
+            "custom1": "", "custom2": "", "custom3": "", "custom4": "", "unit": ""
         },
         {
             "id": "rc3", "type": "Push Button", "name": "Horn",
             "pin": "8", "mode": "1", "cmd": "D",
             "val_on": "1", "val_off": "0", "min_val": "0", "max_val": "1",
-            "custom1": "", "custom2": "", "unit": ""
+            "custom1": "", "custom2": "", "custom3": "", "custom4": "", "unit": ""
         },
         {
             "id": "rc4", "type": "Sensor Display", "name": "Obstacle Dist",
             "pin": "1", "mode": "0", "cmd": "R",
             "val_on": "1", "val_off": "0", "min_val": "0", "max_val": "400",
-            "custom1": "", "custom2": "", "unit": "cm"
+            "custom1": "", "custom2": "", "custom3": "", "custom4": "", "unit": "cm"
         },
     ]
 }
@@ -135,6 +155,19 @@ def safe_int(val, default=0):
     """Safely convert a value to an integer with a fallback default."""
     try:
         return int(str(val).strip())
+    except Exception:
+        return default
+
+
+def safe_float(val, default=3.0, min_v=0.5, max_v=120.0):
+    """Safely convert a value to a bounded float for timeout settings."""
+    try:
+        f = float(str(val).strip())
+        if f < min_v:
+            return min_v
+        if f > max_v:
+            return max_v
+        return f
     except Exception:
         return default
 
@@ -198,7 +231,7 @@ class GlassButton(ButtonBehavior, GlassBox):
 
 
 class StyledInput(TextInput):
-    """Styled TextInput with text selection, selection handles, and copy/paste completely disabled."""
+    """Styled TextInput with text selection, handles, and copy/paste completely disabled."""
     def __init__(self, hint='', multiline=False, input_filter=None, **kwargs):
         super().__init__(
             hint_text=hint,
@@ -351,7 +384,7 @@ class JoystickPad(Widget):
 
 
 # ==========================================
-# HC-05 Bluetooth Manager (Android APK + Preview Mode)
+# HC-05 Bluetooth Manager (Strict Wait-for-Reply + Timeout Error)
 # ==========================================
 class HC05Manager:
     SPP_UUID = "00001101-0000-1000-8000-00805F9B34FB"
@@ -368,6 +401,16 @@ class HC05Manager:
         self.mac_address = ""
         self.auto_connect = True
         self.line_ending = "\n"
+
+        # Strict Wait-for-Reply (ACK handshake) + Timeout state
+        self.wait_for_reply = False
+        self.expected_reply = "OK"
+        self.reply_timeout = 3.0
+        self._waiting_ack = False
+        self._timeout_ev = None
+        self._tx_queue = []
+        self._tx_lock = threading.Lock()
+
         self._stop_flag = False
         self._lock = threading.Lock()
         self._br = None
@@ -412,6 +455,61 @@ class HC05Manager:
             self.line_ending = ""
         else:
             self.line_ending = "\n"
+
+    def _cancel_timer_locked(self):
+        if self._timeout_ev is not None:
+            Clock.unschedule(self._timeout_ev)
+            self._timeout_ev = None
+
+    def _start_timer_locked(self):
+        self._cancel_timer_locked()
+        self._timeout_ev = Clock.schedule_once(self._on_reply_timeout, self.reply_timeout)
+
+    def _on_reply_timeout(self, dt):
+        """Fired when controller does not reply within the configured timeout seconds."""
+        timed_out = False
+        dropped = 0
+        t_sec = self.reply_timeout
+        with self._tx_lock:
+            if self._waiting_ack:
+                timed_out = True
+                dropped = len(self._tx_queue)
+                self._tx_queue.clear()
+                self._waiting_ack = False
+                self._timeout_ev = None
+
+        if timed_out:
+            extra = f" ({dropped} queued dropped)" if dropped > 0 else ""
+            self._emit_log("ERR", f"Controller not responding (no reply in {t_sec:g}s){extra}")
+
+    def set_reply_config(self, wait_enabled, expected_reply, reply_timeout=3.0):
+        pending_flush = []
+        with self._tx_lock:
+            self.wait_for_reply = bool(wait_enabled)
+            self.expected_reply = str(expected_reply).strip()
+            self.reply_timeout = safe_float(reply_timeout, default=3.0)
+            if not self.wait_for_reply:
+                self._cancel_timer_locked()
+                self._waiting_ack = False
+                pending_flush = list(self._tx_queue)
+                self._tx_queue.clear()
+        for cmd in pending_flush:
+            if self.connected:
+                self._transmit_now(cmd)
+
+    def unlock_queue(self):
+        """Force-unlock waiting state and clear any pending queued messages."""
+        with self._tx_lock:
+            self._cancel_timer_locked()
+            cleared = len(self._tx_queue)
+            self._tx_queue.clear()
+            self._waiting_ack = False
+        self._emit_log("SYS", f"Reply wait unlocked (cleared {cleared} queued packets).")
+
+    def simulate_rx(self, text=""):
+        """Manual RX trigger for testing Wait-for-Reply flow in Pydroid 3 / Preview mode."""
+        reply = text.strip() if text and text.strip() else (self.expected_reply or "OK")
+        self._handle_incoming_line(reply)
 
     def get_paired_devices(self):
         if not IS_ANDROID_APK:
@@ -498,6 +596,10 @@ class HC05Manager:
             time.sleep(0.3)
             self.connected = True
             self.connecting = False
+            with self._tx_lock:
+                self._cancel_timer_locked()
+                self._waiting_ack = False
+                self._tx_queue.clear()
             self._emit_status(True, f"Demo ({self.mac_address[-5:]})")
             self._emit_log("SYS", "Demo mode connected.")
             return
@@ -524,6 +626,11 @@ class HC05Manager:
             self.connected = True
             self.connecting = False
 
+            with self._tx_lock:
+                self._cancel_timer_locked()
+                self._waiting_ack = False
+                self._tx_queue.clear()
+
             self._emit_status(True, f"Connected ({self.mac_address[-5:]})")
             self._emit_log("SYS", f"HC-05 Connected: {self.mac_address}")
 
@@ -535,6 +642,43 @@ class HC05Manager:
             self._close_socket()
             self._emit_status(False, "Disconnected")
             self._emit_log("SYS", f"Connection failed: {e}")
+
+    def _handle_incoming_line(self, line):
+        """Process a received line: log, update sensors, and release strict ACK wait."""
+        clean_line = line.strip()
+        self._emit_log("RX", clean_line)
+        if self.on_rx_data:
+            Clock.schedule_once(lambda dt, ln=clean_line: self.on_rx_data(ln))
+
+        next_cmd = None
+        unlocked = False
+        with self._tx_lock:
+            if self.wait_for_reply and self._waiting_ack:
+                exp = self.expected_reply.strip()
+                # Strict exact match (or any reply when expected_reply is blank / '*')
+                if exp == "" or exp == "*":
+                    matched = True
+                else:
+                    matched = (clean_line.lower() == exp.lower())
+
+                if matched:
+                    self._cancel_timer_locked()
+                    if self._tx_queue:
+                        next_cmd = self._tx_queue.pop(0)
+                        self._start_timer_locked()
+                    else:
+                        self._waiting_ack = False
+                        unlocked = True
+
+        if next_cmd is not None and self.connected:
+            self._emit_log("SYS", "Reply matched -> Sending next queued packet.")
+            ok = self._transmit_now(next_cmd)
+            if not ok:
+                with self._tx_lock:
+                    self._cancel_timer_locked()
+                    self._waiting_ack = False
+        elif unlocked:
+            self._emit_log("SYS", "Reply matched -> Ready for next packet.")
 
     def _read_loop(self):
         buffer = bytearray()
@@ -550,9 +694,7 @@ class HC05Manager:
                             line = buffer.decode('utf-8', errors='replace').strip()
                             buffer.clear()
                             if line:
-                                self._emit_log("RX", line)
-                                if self.on_rx_data:
-                                    Clock.schedule_once(lambda dt, ln=line: self.on_rx_data(ln))
+                                self._handle_incoming_line(line)
                         elif b != 13:  # Ignore carriage return '\r'
                             buffer.append(b)
                 else:
@@ -562,16 +704,15 @@ class HC05Manager:
                 self.disconnect(silent=True)
                 break
 
-    def send(self, command_str):
-        cmd = str(command_str).strip()
-        if not cmd:
-            return False
+    def _transmit_now(self, cmd):
         if not self.connected:
-            self._emit_log("SYS", f"Not Connected! Packet: {cmd}")
             return False
 
         if not IS_ANDROID_APK:
             self._emit_log("TX", cmd)
+            if self.wait_for_reply:
+                exp_txt = self.expected_reply if self.expected_reply else "ANY"
+                self._emit_log("SYS", f"Waiting '{exp_txt}' ({self.reply_timeout:g}s)...")
             return True
 
         try:
@@ -579,15 +720,60 @@ class HC05Manager:
             self.out_stream.write(payload)
             self.out_stream.flush()
             self._emit_log("TX", cmd)
+            if self.wait_for_reply:
+                exp_txt = self.expected_reply if self.expected_reply else "ANY"
+                self._emit_log("SYS", f"Waiting '{exp_txt}' ({self.reply_timeout:g}s)...")
             return True
         except Exception as e:
             self._emit_log("SYS", f"TX Error: {e}")
             self.disconnect(silent=True)
             return False
 
+    def send(self, command_str):
+        cmd = str(command_str).strip()
+        if not cmd:
+            return False
+        if not self.connected:
+            self._emit_log("SYS", f"Not Connected (Tap BT first)! Packet: {cmd}")
+            return False
+
+        send_immediately = False
+        with self._tx_lock:
+            if self.wait_for_reply:
+                if self._waiting_ack:
+                    if len(self._tx_queue) < 50:
+                        self._tx_queue.append(cmd)
+                        exp_txt = self.expected_reply if self.expected_reply else "ANY"
+                        self._emit_log(
+                            "SYS",
+                            f"HELD (Wait '{exp_txt}' | Q:{len(self._tx_queue)}): {cmd}"
+                        )
+                    else:
+                        self._emit_log("SYS", "Queue full (50). Waiting for controller reply...")
+                    return True
+                else:
+                    self._waiting_ack = True
+                    self._start_timer_locked()
+                    send_immediately = True
+            else:
+                send_immediately = True
+
+        if send_immediately:
+            ok = self._transmit_now(cmd)
+            if not ok:
+                with self._tx_lock:
+                    self._cancel_timer_locked()
+                    self._waiting_ack = False
+            return ok
+        return True
+
     def disconnect(self, silent=False):
         self.connected = False
         self.connecting = False
+        with self._tx_lock:
+            self._cancel_timer_locked()
+            self._waiting_ack = False
+            self._tx_queue.clear()
         self._close_socket()
         self._emit_status(False, "Disconnected")
         if not silent:
@@ -621,14 +807,13 @@ class HC05Manager:
 
 
 # ==========================================
-# Screen 1: Dynamic Custom Dashboard
+# Screen 1: Dynamic Custom Dashboard (2-Col Half-Width + Full-Width)
 # ==========================================
 class DashboardScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.edit_mode = False
         self.sensor_labels = {}
-        self.switch_states = {}
 
         root = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(8))
 
@@ -645,7 +830,7 @@ class DashboardScreen(Screen):
         bt_badge.bind(on_release=lambda x: self.go_to('connection'))
 
         self.title_lbl = Label(
-            text="Pro HC-05 Controller",
+            text="HC05 CONTROLLER",
             font_size=dp(14),
             bold=True,
             color=TEXT_MAIN,
@@ -732,7 +917,7 @@ class DashboardScreen(Screen):
         scroll = ScrollView(bar_width=dp(4), do_scroll_x=False)
         self.widget_container = BoxLayout(
             orientation='vertical',
-            spacing=dp(10),
+            spacing=dp(8),
             size_hint_y=None,
             padding=[0, dp(4), 0, dp(16)]
         )
@@ -740,16 +925,20 @@ class DashboardScreen(Screen):
         scroll.add_widget(self.widget_container)
         root.add_widget(scroll)
 
-        # --- Mini Live Terminal Strip ---
+        # --- Optional Combined Mode Bar ---
+        self.combined_bar_holder = BoxLayout(size_hint_y=None, height=0)
+        root.add_widget(self.combined_bar_holder)
+
+        # --- Mini Live Terminal Strip (Flashes red on Controller not responding) ---
         mini_term = GlassButton(
             text="Terminal: Ready...",
             font_size=11,
             bold=False,
-            bg_color=(0.03, 0.07, 0.14, 0.80),
+            bg_color=MINI_TERM_BG,
             border_color=CARD_BORDER,
             radius=10,
             size_hint_y=None,
-            height=dp(36)
+            height=dp(38)
         )
         mini_term.lbl.halign = 'left'
         mini_term.padding = [dp(10), 0]
@@ -815,7 +1004,8 @@ class DashboardScreen(Screen):
         app = App.get_running_app()
         wlist = app.get_active_widgets()
         if 0 <= idx < len(wlist):
-            wlist.pop(idx)
+            removed = wlist.pop(idx)
+            app.widget_states.pop(removed.get("id", ""), None)
             app.save_state()
             self.rebuild_dashboard()
 
@@ -828,21 +1018,59 @@ class DashboardScreen(Screen):
         for w in wlist:
             p = str(w.get("pin", "")).strip()
             mode = str(w.get("mode", "1"))
-            c1 = w.get("custom1", "")
-            c2 = w.get("custom2", "")
             if p and p not in sent_pins:
                 sent_pins.add(p)
                 Clock.schedule_once(
-                    lambda dt, pin=p, m=mode, k1=c1, k2=c2: app.send_protocol(
-                        cmd="M", pin=pin, val=m, custom1=k1, custom2=k2
+                    lambda dt, pin=p, m=mode, wd=w: app.send_protocol(
+                        cmd="M", pin=pin, val=m,
+                        custom1=wd.get("custom1", ""),
+                        custom2=wd.get("custom2", ""),
+                        custom3=wd.get("custom3", ""),
+                        custom4=wd.get("custom4", "")
                     ),
                     delay
                 )
                 delay += 0.08
 
+    def _refresh_combined_bar(self):
+        self.combined_bar_holder.clear_widgets()
+        app = App.get_running_app()
+        if app.protocol_settings.get("send_mode") == MODE_ALL_COMBINED:
+            self.combined_bar_holder.height = dp(42)
+            btn_all = GlassButton(
+                text="Send All Screen Widgets (Combined)",
+                font_size=13,
+                bg_color=BTN_SUCCESS,
+                border_color=CARD_BORDER_ACTIVE
+            )
+            btn_all.bind(on_release=lambda x: app.send_all_widgets())
+            self.combined_bar_holder.add_widget(btn_all)
+        else:
+            self.combined_bar_holder.height = 0
+
+    def _flush_half_row(self, pending_half):
+        """Place 1 or 2 half-width widgets into a 2-column horizontal row."""
+        if not pending_half:
+            return
+        row_h = dp(146) if self.edit_mode else dp(112)
+        row = BoxLayout(
+            orientation='horizontal',
+            spacing=dp(8),
+            size_hint_y=None,
+            height=row_h
+        )
+        for card in pending_half:
+            card.size_hint = (0.5, 1)
+            row.add_widget(card)
+        if len(pending_half) == 1:
+            row.add_widget(Widget(size_hint=(0.5, 1)))
+        self.widget_container.add_widget(row)
+        pending_half.clear()
+
     def rebuild_dashboard(self):
         self.widget_container.clear_widgets()
         self.sensor_labels = {}
+        self._refresh_combined_bar()
         app = App.get_running_app()
         wlist = app.get_active_widgets()
 
@@ -857,23 +1085,33 @@ class DashboardScreen(Screen):
             self.widget_container.add_widget(empty)
             return
 
+        pending_half = []
         for idx, w in enumerate(wlist):
             wtype = w.get("type", "Switch")
-            if wtype == "Switch":
-                card = self._build_switch_card(idx, w)
-            elif wtype == "Push Button":
-                card = self._build_push_card(idx, w)
-            elif wtype == "Slider":
-                card = self._build_slider_card(idx, w)
-            elif wtype == "Joystick":
-                card = self._build_joystick_card(idx, w)
-            elif wtype == "Sensor Display":
-                card = self._build_sensor_card(idx, w)
+            if wtype in FULL_WIDTH_TYPES:
+                self._flush_half_row(pending_half)
+                if wtype == "Slider":
+                    card = self._build_slider_card(idx, w)
+                else:
+                    card = self._build_joystick_card(idx, w)
+                self.widget_container.add_widget(card)
             else:
-                card = self._build_switch_card(idx, w)
-            self.widget_container.add_widget(card)
+                if wtype == "Switch":
+                    card = self._build_switch_card(idx, w)
+                elif wtype == "Push Button":
+                    card = self._build_push_card(idx, w)
+                elif wtype == "Sensor Display":
+                    card = self._build_sensor_card(idx, w)
+                else:
+                    card = self._build_switch_card(idx, w)
+                pending_half.append(card)
+                if len(pending_half) == 2:
+                    self._flush_half_row(pending_half)
 
-    def _build_card_header(self, idx, w, subtitle):
+        self._flush_half_row(pending_half)
+
+    def _build_full_header(self, idx, w, subtitle):
+        """Header bar for full-width widgets (Slider / Joystick)."""
         hdr = BoxLayout(size_hint_y=None, height=dp(28), spacing=dp(6))
         safe_name = escape_markup(str(w.get('name', 'Control')))
         safe_sub = escape_markup(str(subtitle))
@@ -905,144 +1143,267 @@ class DashboardScreen(Screen):
             hdr.add_widget(b_dl)
         return hdr
 
-    def _build_switch_card(self, idx, w):
-        wid = w.get("id", str(idx))
-        is_on = self.switch_states.get(wid, False)
-        card = GlassBox(
-            orientation='vertical',
-            padding=dp(12),
-            spacing=dp(8),
-            bg_color=CARD_BG_ACTIVE if is_on else CARD_BG,
-            border_color=CARD_BORDER_ACTIVE if is_on else CARD_BORDER,
-            size_hint_y=None,
-            height=dp(96)
-        )
-        sub = f"Pin {w.get('pin')} | {w.get('cmd', 'D')}"
-        card.add_widget(self._build_card_header(idx, w, sub))
+    def _build_compact_header(self, idx, w, subtitle):
+        """Compact 2-line header + optional edit toolbar for half-width cards."""
+        box = BoxLayout(orientation='vertical', spacing=dp(3), size_hint_y=None)
+        box.height = dp(60) if self.edit_mode else dp(32)
 
-        row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(10))
-        state_lbl = Label(
-            text="STATE: ON" if is_on else "STATE: OFF",
+        safe_name = escape_markup(str(w.get('name', 'Control')))
+        name_lbl = Label(
+            text=safe_name,
             font_size=dp(13),
             bold=True,
+            color=TEXT_MAIN,
+            size_hint_y=None,
+            height=dp(18),
+            halign='left',
+            valign='middle',
+            shorten=True
+        )
+        name_lbl.bind(size=name_lbl.setter('text_size'))
+
+        sub_lbl = Label(
+            text=subtitle,
+            font_size=dp(10),
+            color=TEXT_MUTED,
+            size_hint_y=None,
+            height=dp(13),
+            halign='left',
+            valign='middle',
+            shorten=True
+        )
+        sub_lbl.bind(size=sub_lbl.setter('text_size'))
+
+        box.add_widget(name_lbl)
+        box.add_widget(sub_lbl)
+
+        if self.edit_mode:
+            ed_row = BoxLayout(size_hint_y=None, height=dp(24), spacing=dp(4))
+            b_up = GlassButton(text="<", font_size=11, bg_color=CARD_BG, radius=8)
+            b_up.bind(on_release=lambda x, i=idx: self.move_widget(i, -1))
+            b_dn = GlassButton(text=">", font_size=11, bg_color=CARD_BG, radius=8)
+            b_dn.bind(on_release=lambda x, i=idx: self.move_widget(i, 1))
+            b_ed = GlassButton(text="Ed", font_size=11, bg_color=BTN_PRIMARY, radius=8)
+            b_ed.bind(on_release=lambda x, i=idx: self.edit_widget(i))
+            b_dl = GlassButton(text="X", font_size=11, bg_color=BTN_DANGER, radius=8)
+            b_dl.bind(on_release=lambda x, i=idx: self.delete_widget(i))
+            ed_row.add_widget(b_up)
+            ed_row.add_widget(b_dn)
+            ed_row.add_widget(b_ed)
+            ed_row.add_widget(b_dl)
+            box.add_widget(ed_row)
+
+        return box
+
+    def _build_switch_card(self, idx, w):
+        app = App.get_running_app()
+        wid = w.get("id", str(idx))
+        st = app.widget_states.get(wid, {})
+        is_on = bool(st.get("on", False))
+        cur_val = str(st.get("val", w.get("val_on", "1") if is_on else w.get("val_off", "0")))
+
+        card = GlassBox(
+            orientation='vertical',
+            padding=dp(9),
+            spacing=dp(5),
+            bg_color=CARD_BG_ACTIVE if is_on else CARD_BG,
+            border_color=CARD_BORDER_ACTIVE if is_on else CARD_BORDER
+        )
+        sub = f"Pin {w.get('pin')} | {w.get('cmd', 'D')}"
+        card.add_widget(self._build_compact_header(idx, w, sub))
+
+        state_lbl = Label(
+            text=f"ON ({cur_val})" if is_on else f"OFF ({cur_val})",
+            font_size=dp(11),
+            bold=True,
             color=(0.35, 0.96, 0.60, 1) if is_on else TEXT_MUTED,
+            size_hint_y=None,
+            height=dp(16),
             halign='left',
             valign='middle'
         )
         state_lbl.bind(size=state_lbl.setter('text_size'))
+        card.add_widget(state_lbl)
 
         toggle_btn = GlassButton(
             text="TURN OFF" if is_on else "TURN ON",
-            font_size=13,
+            font_size=12,
             bg_color=BTN_SUCCESS if is_on else BTN_PRIMARY,
-            size_hint_x=None,
-            width=dp(116)
+            size_hint_y=None,
+            height=dp(36)
         )
 
         def on_toggle(inst):
-            new_state = not self.switch_states.get(wid, False)
-            self.switch_states[wid] = new_state
+            cur = bool(app.widget_states.get(wid, {}).get("on", False))
+            new_state = not cur
             val = w.get("val_on", "1") if new_state else w.get("val_off", "0")
-            App.get_running_app().send_protocol(
+            app.widget_states[wid] = {"on": new_state, "val": str(val)}
+            app.send_widget_action(
                 cmd=w.get("cmd", "D"),
                 pin=w.get("pin", "13"),
                 val=val,
                 custom1=w.get("custom1", ""),
-                custom2=w.get("custom2", "")
+                custom2=w.get("custom2", ""),
+                custom3=w.get("custom3", ""),
+                custom4=w.get("custom4", "")
             )
             if new_state:
                 card.set_colors(CARD_BG_ACTIVE, CARD_BORDER_ACTIVE)
-                state_lbl.text = f"STATE: ON ({val})"
+                state_lbl.text = f"ON ({val})"
                 state_lbl.color = (0.35, 0.96, 0.60, 1)
                 toggle_btn.set_text("TURN OFF")
                 toggle_btn.set_colors(BTN_SUCCESS, CARD_BORDER_ACTIVE)
             else:
                 card.set_colors(CARD_BG, CARD_BORDER)
-                state_lbl.text = f"STATE: OFF ({val})"
+                state_lbl.text = f"OFF ({val})"
                 state_lbl.color = TEXT_MUTED
                 toggle_btn.set_text("TURN ON")
                 toggle_btn.set_colors(BTN_PRIMARY, (0.45, 0.72, 1.0, 0.45))
 
         toggle_btn.bind(on_release=on_toggle)
-        row.add_widget(state_lbl)
-        row.add_widget(toggle_btn)
-        card.add_widget(row)
+        card.add_widget(toggle_btn)
         return card
 
     def _build_push_card(self, idx, w):
-        card = GlassBox(orientation='vertical', padding=dp(12), spacing=dp(8),
-                        size_hint_y=None, height=dp(98))
+        app = App.get_running_app()
+        wid = w.get("id", str(idx))
+        card = GlassBox(orientation='vertical', padding=dp(9), spacing=dp(6))
         sub = f"Pin {w.get('pin')} | Hold {w.get('cmd', 'D')}"
-        card.add_widget(self._build_card_header(idx, w, sub))
+        card.add_widget(self._build_compact_header(idx, w, sub))
 
         btn = GlassButton(
-            text=f"HOLD / PRESS  ({w.get('name', 'Push')})",
-            font_size=13,
+            text="HOLD / PRESS",
+            font_size=12,
             bg_color=BTN_PRIMARY,
-            size_hint_y=None,
-            height=dp(42)
+            size_hint_y=1
         )
 
         def on_down(inst):
+            val = w.get("val_on", "1")
+            app.widget_states[wid] = {"val": str(val)}
             inst.set_colors(BTN_SUCCESS, CARD_BORDER_ACTIVE)
-            App.get_running_app().send_protocol(
+            app.send_widget_action(
                 cmd=w.get("cmd", "D"),
                 pin=w.get("pin", "7"),
-                val=w.get("val_on", "1"),
+                val=val,
                 custom1=w.get("custom1", ""),
-                custom2=w.get("custom2", "")
+                custom2=w.get("custom2", ""),
+                custom3=w.get("custom3", ""),
+                custom4=w.get("custom4", "")
             )
 
         def on_up(inst):
+            val = w.get("val_off", "0")
+            app.widget_states[wid] = {"val": str(val)}
             inst.set_colors(BTN_PRIMARY, (0.45, 0.72, 1.0, 0.45))
-            App.get_running_app().send_protocol(
+            app.send_widget_action(
                 cmd=w.get("cmd", "D"),
                 pin=w.get("pin", "7"),
-                val=w.get("val_off", "0"),
+                val=val,
                 custom1=w.get("custom1", ""),
-                custom2=w.get("custom2", "")
+                custom2=w.get("custom2", ""),
+                custom3=w.get("custom3", ""),
+                custom4=w.get("custom4", "")
             )
 
         btn.bind(on_press=on_down, on_release=on_up)
         card.add_widget(btn)
         return card
 
+    def _build_sensor_card(self, idx, w):
+        app = App.get_running_app()
+        wid = w.get("id", str(idx))
+        pin = str(w.get("pin", "0"))
+        unit = w.get("unit", "")
+        card = GlassBox(orientation='vertical', padding=dp(9), spacing=dp(4))
+        sub = f"Pin {pin} | {w.get('cmd', 'R')}"
+        card.add_widget(self._build_compact_header(idx, w, sub))
+
+        read_lbl = Label(
+            text=f"-- {unit}".strip(),
+            font_size=dp(18),
+            bold=True,
+            color=(0.35, 0.95, 0.65, 1),
+            size_hint_y=None,
+            height=dp(24),
+            halign='left',
+            valign='middle',
+            shorten=True
+        )
+        read_lbl.bind(size=read_lbl.setter('text_size'))
+        self.sensor_labels.setdefault(pin, []).append((read_lbl, unit))
+        card.add_widget(read_lbl)
+
+        btn_read = GlassButton(
+            text="Read",
+            font_size=12,
+            bg_color=BTN_PRIMARY,
+            size_hint_y=None,
+            height=dp(32)
+        )
+
+        def on_read(inst):
+            val_on = str(w.get("val_on", "1"))
+            val_off = str(w.get("val_off", "0"))
+            app.widget_states[wid] = {"val": val_on}
+            app.send_widget_action(
+                cmd=w.get("cmd", "R"),
+                pin=pin,
+                val=val_on,
+                custom1=w.get("custom1", ""),
+                custom2=w.get("custom2", ""),
+                custom3=w.get("custom3", ""),
+                custom4=w.get("custom4", "")
+            )
+            app.widget_states[wid] = {"val": val_off}
+
+        btn_read.bind(on_release=on_read)
+        card.add_widget(btn_read)
+        return card
+
     def _build_slider_card(self, idx, w):
+        app = App.get_running_app()
+        wid = w.get("id", str(idx))
         mn = safe_int(w.get("min_val"), 0)
         mx = safe_int(w.get("max_val"), 255)
         if mx <= mn:
             mx = mn + 255
+        saved_v = safe_int(app.widget_states.get(wid, {}).get("val"), mn)
+        saved_v = max(mn, min(mx, saved_v))
 
         card = GlassBox(orientation='vertical', padding=dp(12), spacing=dp(6),
                         size_hint_y=None, height=dp(106))
         sub = f"Pin {w.get('pin')} | {w.get('cmd', 'A')} ({mn}-{mx})"
-        card.add_widget(self._build_card_header(idx, w, sub))
+        card.add_widget(self._build_full_header(idx, w, sub))
 
         row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
         val_lbl = Label(
-            text=str(mn),
+            text=str(saved_v),
             font_size=dp(16),
             bold=True,
             color=TEXT_CYAN,
             size_hint_x=None,
             width=dp(52)
         )
-        sld = Slider(min=mn, max=mx, value=mn, step=1)
-        last_sent = {"t": 0.0, "v": None}
+        sld = Slider(min=mn, max=mx, value=saved_v, step=1)
+        last_sent = {"t": 0.0, "v": saved_v}
 
         def send_slider(val, force=False):
             iv = int(round(val))
             val_lbl.text = str(iv)
+            app.widget_states[wid] = {"val": str(iv)}
             now = time.time()
             if force or (iv != last_sent["v"] and (now - last_sent["t"]) >= 0.08):
                 last_sent["t"] = now
                 last_sent["v"] = iv
-                App.get_running_app().send_protocol(
+                app.send_widget_action(
                     cmd=w.get("cmd", "A"),
                     pin=w.get("pin", "9"),
                     val=str(iv),
                     custom1=w.get("custom1", ""),
-                    custom2=w.get("custom2", "")
+                    custom2=w.get("custom2", ""),
+                    custom3=w.get("custom3", ""),
+                    custom4=w.get("custom4", "")
                 )
 
         sld.bind(value=lambda inst, v: send_slider(v, force=False))
@@ -1058,6 +1419,8 @@ class DashboardScreen(Screen):
         return card
 
     def _build_joystick_card(self, idx, w):
+        app = App.get_running_app()
+        wid = w.get("id", str(idx))
         mn = safe_int(w.get("min_val"), 0)
         mx = safe_int(w.get("max_val"), 255)
         if mx <= mn:
@@ -1068,7 +1431,7 @@ class DashboardScreen(Screen):
         card = GlassBox(orientation='vertical', padding=dp(12), spacing=dp(6),
                         size_hint_y=None, height=dp(248))
         sub = f"Pin {pin} | X & Y Together"
-        card.add_widget(self._build_card_header(idx, w, sub))
+        card.add_widget(self._build_full_header(idx, w, sub))
 
         xy_lbl = Label(
             text=f"X: {mid}    |    Y: {mid}",
@@ -1083,61 +1446,22 @@ class DashboardScreen(Screen):
         def on_joy_move(xv, yv, is_moving):
             xy_lbl.text = f"X: {xv}    |    Y: {yv}"
             val_state = w.get("val_on", "1") if is_moving else w.get("val_off", "0")
-            # Send both X and Y together in a single formatted packet
-            App.get_running_app().send_protocol(
+            app.widget_states[wid] = {"x": str(xv), "y": str(yv), "val": str(val_state)}
+            app.send_widget_action(
                 cmd=w.get("cmd", "A"),
                 pin=pin,
                 x=str(xv),
                 y=str(yv),
                 val=val_state,
                 custom1=w.get("custom1", ""),
-                custom2=w.get("custom2", "")
+                custom2=w.get("custom2", ""),
+                custom3=w.get("custom3", ""),
+                custom4=w.get("custom4", "")
             )
 
         pad = JoystickPad(min_val=mn, max_val=mx, on_move=on_joy_move,
                           size_hint=(1, None), height=dp(168))
         card.add_widget(pad)
-        return card
-
-    def _build_sensor_card(self, idx, w):
-        pin = str(w.get("pin", "0"))
-        unit = w.get("unit", "")
-        card = GlassBox(orientation='vertical', padding=dp(12), spacing=dp(8),
-                        size_hint_y=None, height=dp(100))
-        sub = f"Pin {pin} | {w.get('cmd', 'R')}"
-        card.add_widget(self._build_card_header(idx, w, sub))
-
-        row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(10))
-        read_lbl = Label(
-            text=f"-- {unit}".strip(),
-            font_size=dp(22),
-            bold=True,
-            color=(0.35, 0.95, 0.65, 1),
-            halign='left',
-            valign='middle'
-        )
-        read_lbl.bind(size=read_lbl.setter('text_size'))
-        self.sensor_labels.setdefault(pin, []).append((read_lbl, unit))
-
-        btn_read = GlassButton(
-            text="Read",
-            font_size=13,
-            bg_color=BTN_PRIMARY,
-            size_hint_x=None,
-            width=dp(92)
-        )
-        btn_read.bind(
-            on_release=lambda x: App.get_running_app().send_protocol(
-                cmd=w.get("cmd", "R"),
-                pin=pin,
-                val=w.get("val_on", "1"),
-                custom1=w.get("custom1", ""),
-                custom2=w.get("custom2", "")
-            )
-        )
-        row.add_widget(read_lbl)
-        row.add_widget(btn_read)
-        card.add_widget(row)
         return card
 
     def update_sensor_from_rx(self, line):
@@ -1162,13 +1486,22 @@ class DashboardScreen(Screen):
             updated = True
 
         if not updated and len(self.sensor_labels) == 1:
-            # If only one sensor widget exists, display the raw incoming value directly
-            only_pin = next(iter(self.sensor_labels))
-            for lbl, unit in self.sensor_labels[only_pin]:
-                lbl.text = f"{cleaned} {unit}".strip()
+            app = App.get_running_app()
+            exp = app.protocol_settings.get("expected_reply", "").strip().lower()
+            if not (app.protocol_settings.get("wait_for_reply") and exp and cleaned.lower() == exp):
+                only_pin = next(iter(self.sensor_labels))
+                for lbl, unit in self.sensor_labels[only_pin]:
+                    lbl.text = f"{cleaned} {unit}".strip()
 
     def update_mini_log(self, ts, tag, msg):
-        self.mini_log_btn.set_text(f"[{tag}] {msg}")
+        if tag == "ERR":
+            self.mini_log_btn.set_colors(BTN_DANGER, (1.0, 0.42, 0.42, 0.95))
+            self.mini_log_btn.lbl.bold = True
+            self.mini_log_btn.set_text(f"ERROR: {msg}")
+        else:
+            self.mini_log_btn.set_colors(MINI_TERM_BG, CARD_BORDER)
+            self.mini_log_btn.lbl.bold = False
+            self.mini_log_btn.set_text(f"[{tag}] {msg}")
 
     def update_bt_status(self, connected, msg):
         if connected:
@@ -1226,7 +1559,7 @@ class WidgetEditorScreen(Screen):
         card.add_widget(self.in_name)
 
         pin_row = GridLayout(cols=2, spacing=dp(10), size_hint_y=None, height=dp(70))
-        pin_row.add_widget(self._linput("Pin Number (Box 1)", "13", None, "in_pin"))
+        pin_row.add_widget(self._linput("Pin Number (PIN)", "13", None, "in_pin"))
         c_box = BoxLayout(orientation='vertical', spacing=dp(4))
         c_box.add_widget(self._flbl("Command (CMD)"))
         self.sp_cmd = Spinner(
@@ -1251,8 +1584,8 @@ class WidgetEditorScreen(Screen):
         card.add_widget(self.sp_mode)
 
         val_row1 = GridLayout(cols=2, spacing=dp(10), size_hint_y=None, height=dp(70))
-        val_row1.add_widget(self._linput("ON / Active Value (Box 4)", "1", None, "in_on"))
-        val_row1.add_widget(self._linput("OFF / Stop Value (Box 4)", "0", None, "in_off"))
+        val_row1.add_widget(self._linput("ON / Active Value (VAL)", "1", None, "in_on"))
+        val_row1.add_widget(self._linput("OFF / Stop Value (VAL)", "0", None, "in_off"))
         card.add_widget(val_row1)
 
         val_row2 = GridLayout(cols=2, spacing=dp(10), size_hint_y=None, height=dp(70))
@@ -1260,10 +1593,15 @@ class WidgetEditorScreen(Screen):
         val_row2.add_widget(self._linput("Max Value (Slider/Joy)", "255", "int", "in_max"))
         card.add_widget(val_row2)
 
-        cust_row = GridLayout(cols=2, spacing=dp(10), size_hint_y=None, height=dp(70))
-        cust_row.add_widget(self._linput("Box 5 Custom (Optional)", "Format default", None, "in_c1"))
-        cust_row.add_widget(self._linput("Box 6 Custom (Optional)", "Format default", None, "in_c2"))
-        card.add_widget(cust_row)
+        cust_row1 = GridLayout(cols=2, spacing=dp(10), size_hint_y=None, height=dp(70))
+        cust_row1.add_widget(self._linput("CUSTOM1 (Optional)", "Format default", None, "in_c1"))
+        cust_row1.add_widget(self._linput("CUSTOM2 (Optional)", "Format default", None, "in_c2"))
+        card.add_widget(cust_row1)
+
+        cust_row2 = GridLayout(cols=2, spacing=dp(10), size_hint_y=None, height=dp(70))
+        cust_row2.add_widget(self._linput("CUSTOM3 (Optional)", "Format default", None, "in_c3"))
+        cust_row2.add_widget(self._linput("CUSTOM4 (Optional)", "Format default", None, "in_c4"))
+        card.add_widget(cust_row2)
 
         card.add_widget(self._flbl("Sensor Unit (e.g. C, cm, V)"))
         self.in_unit = StyledInput(hint="Optional unit")
@@ -1325,6 +1663,8 @@ class WidgetEditorScreen(Screen):
             self.in_max.text = "255"
             self.in_c1.text = ""
             self.in_c2.text = ""
+            self.in_c3.text = ""
+            self.in_c4.text = ""
             self.in_unit.text = ""
         else:
             w = app.get_active_widgets()[widget_index]
@@ -1341,6 +1681,8 @@ class WidgetEditorScreen(Screen):
             self.in_max.text = str(w.get("max_val", "255"))
             self.in_c1.text = str(w.get("custom1", ""))
             self.in_c2.text = str(w.get("custom2", ""))
+            self.in_c3.text = str(w.get("custom3", ""))
+            self.in_c4.text = str(w.get("custom4", ""))
             self.in_unit.text = str(w.get("unit", ""))
 
     def save_widget(self, *args):
@@ -1361,6 +1703,8 @@ class WidgetEditorScreen(Screen):
             "max_val": self.in_max.text.strip() or "255",
             "custom1": self.in_c1.text.strip(),
             "custom2": self.in_c2.text.strip(),
+            "custom3": self.in_c3.text.strip(),
+            "custom4": self.in_c4.text.strip(),
             "unit": self.in_unit.text.strip(),
         }
         if self.editing_index is None:
@@ -1378,23 +1722,25 @@ class WidgetEditorScreen(Screen):
 
 
 # ==========================================
-# Screen 3: 6-Box Packet Format Builder
+# Screen 3: Format Mode + Reply Handshake (Popup Edit) + 10-Box Builder
 # ==========================================
 class ProtocolScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._loading = False
+        self._expected_reply = "OK"
+        self._reply_timeout = 3.0
         self.box_widgets = []
 
         root = BoxLayout(orientation='vertical', padding=dp(12), spacing=dp(10))
 
-        top_bar = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(10))
-        btn_back = GlassButton(text="< Back", font_size=13, bg_color=CARD_BG, size_hint_x=None, width=dp(82))
+        top_bar = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
+        btn_back = GlassButton(text="< Back", font_size=13, bg_color=CARD_BG, size_hint_x=None, width=dp(80))
         btn_back.bind(on_release=self.go_back)
-        hdr = Label(text="6-Box Packet Format", font_size=dp(17), bold=True,
-                    color=TEXT_MAIN, halign='left', valign='middle')
+        hdr = Label(text="Format & Reply Settings", font_size=dp(16), bold=True,
+                    color=TEXT_MAIN, halign='left', valign='middle', shorten=True)
         hdr.bind(size=hdr.setter('text_size'))
-        btn_reset = GlassButton(text="Reset", font_size=12, bg_color=BTN_WARN, size_hint_x=None, width=dp(64))
+        btn_reset = GlassButton(text="Reset", font_size=12, bg_color=BTN_WARN, size_hint_x=None, width=dp(62))
         btn_reset.bind(on_release=self.reset_default_boxes)
         top_bar.add_widget(btn_back)
         top_bar.add_widget(hdr)
@@ -1405,11 +1751,145 @@ class ProtocolScreen(Screen):
         body = BoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, padding=[0, dp(4), 0, dp(24)])
         body.bind(minimum_height=body.setter('height'))
 
-        # --- Markers & Separator Card ---
+        # --- Card 1: Packet Send Mode Selector ---
+        mode_card = GlassBox(orientation='vertical', padding=dp(10), spacing=dp(8), size_hint_y=None)
+        mode_card.bind(minimum_height=mode_card.setter('height'))
+
+        m_hdr = Label(
+            text="Packet Send Format Mode",
+            font_size=dp(13), bold=True, color=TEXT_CYAN,
+            size_hint_y=None, height=dp(20), halign='left'
+        )
+        m_hdr.bind(size=m_hdr.setter('text_size'))
+        mode_card.add_widget(m_hdr)
+
+        self.sp_send_mode = Spinner(
+            text=MODE_SINGLE_10BOX,
+            values=SEND_MODE_OPTIONS,
+            size_hint_y=None,
+            height=dp(44),
+            background_normal='',
+            background_color=(0.14, 0.36, 0.64, 0.80),
+            color=TEXT_MAIN,
+            font_size=dp(13),
+            bold=True
+        )
+        self.sp_send_mode.bind(text=self.on_any_change)
+        mode_card.add_widget(self.sp_send_mode)
+
+        cstyle_row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
+        cs_lbl = Label(
+            text="Combined Style:",
+            font_size=dp(12), color=TEXT_MUTED,
+            size_hint_x=0.42, halign='left', valign='middle'
+        )
+        cs_lbl.bind(size=cs_lbl.setter('text_size'))
+        self.sp_combined_style = Spinner(
+            text="Values Only",
+            values=COMBINED_STYLE_OPTIONS,
+            size_hint_x=0.58,
+            background_normal='',
+            background_color=INPUT_BG,
+            color=TEXT_MAIN,
+            font_size=dp(12),
+            bold=True
+        )
+        self.sp_combined_style.bind(text=self.on_any_change)
+        cstyle_row.add_widget(cs_lbl)
+        cstyle_row.add_widget(self.sp_combined_style)
+        mode_card.add_widget(cstyle_row)
+
+        self.mode_tip_lbl = Label(
+            text="",
+            font_size=dp(10), color=TEXT_MUTED,
+            size_hint_y=None, height=dp(28), halign='left', valign='middle'
+        )
+        self.mode_tip_lbl.bind(size=self.mode_tip_lbl.setter('text_size'))
+        mode_card.add_widget(self.mode_tip_lbl)
+        body.add_widget(mode_card)
+
+        # --- Card 2: Wait-for-Reply (Locked Display + Popup Edit) ---
+        ack_card = GlassBox(orientation='vertical', padding=dp(10), spacing=dp(8), size_hint_y=None)
+        ack_card.bind(minimum_height=ack_card.setter('height'))
+
+        ack_top = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(8))
+        ack_hdr = Label(
+            text="Reply Handshake & Timeout",
+            font_size=dp(13), bold=True, color=TEXT_CYAN,
+            halign='left', valign='middle'
+        )
+        ack_hdr.bind(size=ack_hdr.setter('text_size'))
+        self.btn_edit_reply = GlassButton(
+            text="Edit",
+            font_size=12,
+            bg_color=BTN_PRIMARY,
+            size_hint_x=None,
+            width=dp(78)
+        )
+        self.btn_edit_reply.bind(on_release=self.open_reply_editor)
+        ack_top.add_widget(ack_hdr)
+        ack_top.add_widget(self.btn_edit_reply)
+        ack_card.add_widget(ack_top)
+
+        sw_row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(8))
+        sw_lbl = Label(
+            text="Wait for Controller Reply (ON/OFF)",
+            font_size=dp(13), color=TEXT_MAIN, halign='left', valign='middle'
+        )
+        sw_lbl.bind(size=sw_lbl.setter('text_size'))
+        self.sw_wait_reply = Switch(active=False, size_hint_x=None, width=dp(70))
+        self.sw_wait_reply.bind(active=self.on_any_change)
+        sw_row.add_widget(sw_lbl)
+        sw_row.add_widget(self.sw_wait_reply)
+        ack_card.add_widget(sw_row)
+
+        # Read-only display boxes (can ONLY be changed via Edit button popup)
+        rep_grid = GridLayout(cols=2, spacing=dp(8), size_hint_y=None, height=dp(66))
+
+        box_rep = BoxLayout(orientation='vertical', spacing=dp(4))
+        l_rep = Label(text="Expected Reply", font_size=dp(11), color=TEXT_MUTED,
+                      size_hint_y=None, height=dp(18), halign='left')
+        l_rep.bind(size=l_rep.setter('text_size'))
+        rep_val_card = GlassBox(bg_color=INPUT_LOCKED_BG, border_color=CARD_BORDER,
+                                radius=10, padding=[dp(10), 0], size_hint_y=None, height=dp(42))
+        self.lbl_reply_val = Label(text="OK", font_size=dp(14), bold=True, color=TEXT_MAIN,
+                                   halign='left', valign='middle', shorten=True)
+        self.lbl_reply_val.bind(size=self.lbl_reply_val.setter('text_size'))
+        rep_val_card.add_widget(self.lbl_reply_val)
+        box_rep.add_widget(l_rep)
+        box_rep.add_widget(rep_val_card)
+
+        box_tmo = BoxLayout(orientation='vertical', spacing=dp(4))
+        l_tmo = Label(text="Wait Timeout", font_size=dp(11), color=TEXT_MUTED,
+                      size_hint_y=None, height=dp(18), halign='left')
+        l_tmo.bind(size=l_tmo.setter('text_size'))
+        tmo_val_card = GlassBox(bg_color=INPUT_LOCKED_BG, border_color=CARD_BORDER,
+                                radius=10, padding=[dp(10), 0], size_hint_y=None, height=dp(42))
+        self.lbl_timeout_val = Label(text="3 s", font_size=dp(14), bold=True, color=TEXT_CYAN,
+                                     halign='left', valign='middle', shorten=True)
+        self.lbl_timeout_val.bind(size=self.lbl_timeout_val.setter('text_size'))
+        tmo_val_card.add_widget(self.lbl_timeout_val)
+        box_tmo.add_widget(l_tmo)
+        box_tmo.add_widget(tmo_val_card)
+
+        rep_grid.add_widget(box_rep)
+        rep_grid.add_widget(box_tmo)
+        ack_card.add_widget(rep_grid)
+
+        ack_tip = Label(
+            text="Tap 'Edit' to change Reply or Timeout. If no reply arrives within Timeout, error 'Controller not responding' appears.",
+            font_size=dp(10), color=TEXT_MUTED,
+            size_hint_y=None, height=dp(30), halign='left', valign='middle'
+        )
+        ack_tip.bind(size=ack_tip.setter('text_size'))
+        ack_card.add_widget(ack_tip)
+        body.add_widget(ack_card)
+
+        # --- Card 3: Markers & Separator (Applies to Both Modes) ---
         wrap_card = GlassBox(orientation='vertical', padding=dp(10), spacing=dp(8), size_hint_y=None)
         wrap_card.bind(minimum_height=wrap_card.setter('height'))
 
-        w_hdr = Label(text="Packet Wrapper & Separator", font_size=dp(13), bold=True,
+        w_hdr = Label(text="Packet Wrapper & Separator (Both Modes)", font_size=dp(13), bold=True,
                       color=TEXT_CYAN, size_hint_y=None, height=dp(20), halign='left')
         w_hdr.bind(size=w_hdr.setter('text_size'))
         wrap_card.add_widget(w_hdr)
@@ -1422,35 +1902,52 @@ class ProtocolScreen(Screen):
         wrap_card.add_widget(m_grid)
         body.add_widget(wrap_card)
 
-        # --- 6 Configurable Boxes Card ---
-        boxes_card = GlassBox(orientation='vertical', padding=dp(10), spacing=dp(8), size_hint_y=None)
+        # --- Card 4: Live Packet Preview (Auto-Sized) ---
+        prev_card = GlassBox(orientation='vertical', padding=dp(12), spacing=dp(6),
+                             bg_color=(0.04, 0.10, 0.20, 0.78), size_hint_y=None)
+        prev_card.bind(minimum_height=prev_card.setter('height'))
+
+        self.prev_hdr = Label(text="Live Packet Preview", font_size=dp(13), bold=True,
+                              color=TEXT_CYAN, size_hint_y=None, height=dp(20), halign='left')
+        self.prev_hdr.bind(size=self.prev_hdr.setter('text_size'))
+
+        self.preview_lbl = Label(text="", font_size=dp(12), color=TEXT_MAIN,
+                                 halign='left', valign='top', size_hint_y=None)
+        self.preview_lbl.bind(width=lambda inst, w: setattr(inst, 'text_size', (w, None)))
+        self.preview_lbl.bind(texture_size=lambda inst, s: setattr(inst, 'height', max(s[1] + dp(8), dp(64))))
+
+        prev_card.add_widget(self.prev_hdr)
+        prev_card.add_widget(self.preview_lbl)
+        body.add_widget(prev_card)
+
+        # --- Card 5: 10 Configurable Boxes (Used in 10-Box Mode) ---
+        boxes_card = GlassBox(orientation='vertical', padding=dp(10), spacing=dp(7), size_hint_y=None)
         boxes_card.bind(minimum_height=boxes_card.setter('height'))
 
+        boxes_title = Label(
+            text="10-Box Builder (for Single Widget Mode)",
+            font_size=dp(13), bold=True, color=TEXT_CYAN,
+            size_hint_y=None, height=dp(20), halign='left'
+        )
+        boxes_title.bind(size=boxes_title.setter('text_size'))
+        boxes_card.add_widget(boxes_title)
+
         b_hdr = BoxLayout(size_hint_y=None, height=dp(22), spacing=dp(6))
-        for txt, sx in [("Slot", 0.28), ("Data Type", 0.40), ("Custom / Default", 0.32)]:
-            l = Label(text=txt, font_size=dp(11), bold=True, color=TEXT_CYAN,
+        for txt, sx in [("Slot", 0.22), ("Select Data", 0.42), ("Value / Message", 0.36)]:
+            l = Label(text=txt, font_size=dp(11), bold=True, color=TEXT_MUTED,
                       size_hint_x=sx, halign='left', valign='middle')
             l.bind(size=l.setter('text_size'))
             b_hdr.add_widget(l)
         boxes_card.add_widget(b_hdr)
 
-        box_hints = [
-            "Box 1 (Pin)",
-            "Box 2 (X)",
-            "Box 3 (Y)",
-            "Box 4 (Val)",
-            "Box 5 (Cust1)",
-            "Box 6 (Cust2)",
-        ]
-
-        for i in range(6):
-            row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        for i in range(10):
+            row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(6))
             lbl = Label(
-                text=box_hints[i],
+                text=f"Box {i + 1}",
                 font_size=dp(12),
                 bold=True,
                 color=TEXT_MAIN,
-                size_hint_x=0.28,
+                size_hint_x=0.22,
                 halign='left',
                 valign='middle',
                 shorten=True
@@ -1460,16 +1957,17 @@ class ProtocolScreen(Screen):
             sp = Spinner(
                 text=DEFAULT_BOXES[i]["source"],
                 values=BOX_OPTIONS,
-                size_hint_x=0.40,
+                size_hint_x=0.42,
                 background_normal='',
                 background_color=(0.14, 0.32, 0.58, 0.70),
                 color=TEXT_MAIN,
-                font_size=dp(13),
+                font_size=dp(12),
                 bold=True
             )
             sp.bind(text=self.on_any_change)
 
-            inp = StyledInput(hint="0", size_hint_x=0.32)
+            inp = StyledInput(hint="Val / Msg", size_hint_x=0.36)
+            inp.height = dp(42)
             inp.text = "0"
             inp.bind(text=self.on_any_change)
 
@@ -1480,11 +1978,11 @@ class ProtocolScreen(Screen):
             self.box_widgets.append((sp, inp))
 
         tip = Label(
-            text="Tip: Use CUSTOM1/CUSTOM2 in Box 5 & 6 and enter a default value beside it. Select OFF to disable any box.",
+            text="Tip: Select 'TEXT/MSG' in any box to send a fixed message/value. Select 'OFF' to skip a box.",
             font_size=dp(11),
             color=TEXT_MUTED,
             size_hint_y=None,
-            height=dp(36),
+            height=dp(32),
             halign='left',
             valign='middle'
         )
@@ -1492,24 +1990,11 @@ class ProtocolScreen(Screen):
         boxes_card.add_widget(tip)
         body.add_widget(boxes_card)
 
-        # --- Live Packet Preview Card ---
-        prev_card = GlassBox(orientation='vertical', padding=dp(12), spacing=dp(6),
-                             bg_color=(0.04, 0.10, 0.20, 0.78), size_hint_y=None, height=dp(130))
-        prev_hdr = Label(text="Live Packet Preview (6 Boxes)", font_size=dp(13), bold=True,
-                         color=TEXT_CYAN, size_hint_y=None, height=dp(20), halign='left')
-        prev_hdr.bind(size=prev_hdr.setter('text_size'))
-        self.preview_lbl = Label(text="", font_size=dp(13), color=TEXT_MAIN,
-                                 halign='left', valign='top')
-        self.preview_lbl.bind(size=self.preview_lbl.setter('text_size'))
-        prev_card.add_widget(prev_hdr)
-        prev_card.add_widget(self.preview_lbl)
-        body.add_widget(prev_card)
-
         self.msg_lbl = Label(text="", font_size=dp(12), color=(0.35, 0.95, 0.55, 1),
                              size_hint_y=None, height=dp(20))
         body.add_widget(self.msg_lbl)
 
-        btn_save = GlassButton(text="Save 6-Box Format", font_size=15, bg_color=BTN_SUCCESS,
+        btn_save = GlassButton(text="Save Format Settings", font_size=15, bg_color=BTN_SUCCESS,
                                size_hint_y=None, height=dp(48))
         btn_save.bind(on_release=self.save_format_click)
         body.add_widget(btn_save)
@@ -1540,10 +2025,100 @@ class ProtocolScreen(Screen):
         parent_grid.add_widget(col)
         return sp
 
+    def _refresh_reply_labels(self):
+        self.lbl_reply_val.text = self._expected_reply if self._expected_reply else "ANY (Blank)"
+        self.lbl_timeout_val.text = f"{self._reply_timeout:g} s"
+
+    def open_reply_editor(self, *args):
+        """Open a top-anchored modal dialog with fresh editable inputs for Reply & Timeout."""
+        modal = ModalView(
+            size_hint=(0.92, None),
+            height=dp(280),
+            pos_hint={'center_x': 0.5, 'top': 0.90},
+            background='',
+            background_color=(0, 0, 0, 0),
+            auto_dismiss=False
+        )
+
+        box = GlassBox(
+            orientation='vertical',
+            padding=dp(14),
+            spacing=dp(10),
+            bg_color=MODAL_BG,
+            border_color=(0.45, 0.78, 1.0, 0.80),
+            radius=16
+        )
+
+        title = Label(
+            text="Edit Reply & Timeout",
+            font_size=dp(16), bold=True, color=TEXT_CYAN,
+            size_hint_y=None, height=dp(26), halign='left', valign='middle'
+        )
+        title.bind(size=title.setter('text_size'))
+        box.add_widget(title)
+
+        l1 = Label(
+            text="Expected Reply Message / Value (blank = any reply)",
+            font_size=dp(11), color=TEXT_MUTED,
+            size_hint_y=None, height=dp(18), halign='left'
+        )
+        l1.bind(size=l1.setter('text_size'))
+        box.add_widget(l1)
+
+        inp_rep = StyledInput(hint="e.g. OK, DONE, 1")
+        inp_rep.text = self._expected_reply
+        box.add_widget(inp_rep)
+
+        l2 = Label(
+            text="Wait Timeout in Seconds (0.5 to 120)",
+            font_size=dp(11), color=TEXT_MUTED,
+            size_hint_y=None, height=dp(18), halign='left'
+        )
+        l2.bind(size=l2.setter('text_size'))
+        box.add_widget(l2)
+
+        inp_tmo = StyledInput(hint="e.g. 3", input_filter='float')
+        inp_tmo.text = f"{self._reply_timeout:g}"
+        box.add_widget(inp_tmo)
+
+        btn_row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(10))
+        btn_cancel = GlassButton(text="Cancel", font_size=14, bg_color=BTN_DANGER)
+        btn_save = GlassButton(text="Save", font_size=14, bg_color=BTN_SUCCESS)
+
+        def on_save_modal(inst):
+            self._expected_reply = inp_rep.text.strip()
+            self._reply_timeout = safe_float(inp_tmo.text, default=3.0)
+            self._refresh_reply_labels()
+            self.save_format(silent=False)
+            self.update_preview()
+            self.msg_lbl.text = (
+                f"Saved: Reply='{self._expected_reply or 'ANY'}', Timeout={self._reply_timeout:g}s"
+            )
+            modal.dismiss()
+
+        btn_cancel.bind(on_release=lambda x: modal.dismiss())
+        btn_save.bind(on_release=on_save_modal)
+        btn_row.add_widget(btn_cancel)
+        btn_row.add_widget(btn_save)
+        box.add_widget(btn_row)
+
+        modal.add_widget(box)
+        modal.open()
+
     def on_pre_enter(self):
         self._loading = True
         app = App.get_running_app()
         ps = app.protocol_settings
+
+        smode = ps.get("send_mode", MODE_SINGLE_10BOX)
+        self.sp_send_mode.text = smode if smode in SEND_MODE_OPTIONS else MODE_SINGLE_10BOX
+        cstyle = ps.get("combined_style", "Values Only")
+        self.sp_combined_style.text = cstyle if cstyle in COMBINED_STYLE_OPTIONS else "Values Only"
+
+        self.sw_wait_reply.active = bool(ps.get("wait_for_reply", False))
+        self._expected_reply = str(ps.get("expected_reply", "OK")).strip()
+        self._reply_timeout = safe_float(ps.get("reply_timeout", 3.0))
+        self._refresh_reply_labels()
 
         s_mark = ps.get("start_marker", "<")
         e_mark = ps.get("end_marker", ">")
@@ -1553,7 +2128,7 @@ class ProtocolScreen(Screen):
         self.sp_ending.text = ps.get("line_ending", "LF (\\n)")
 
         boxes = ps.get("boxes") or copy.deepcopy(DEFAULT_BOXES)
-        for i in range(6):
+        for i in range(10):
             b = boxes[i] if i < len(boxes) else DEFAULT_BOXES[i]
             sp, inp = self.box_widgets[i]
             src = b.get("source", DEFAULT_BOXES[i]["source"])
@@ -1572,10 +2147,15 @@ class ProtocolScreen(Screen):
                 "default": inp.text.strip() if inp.text.strip() != "" else "0"
             })
         return {
+            "send_mode": self.sp_send_mode.text,
+            "combined_style": self.sp_combined_style.text,
             "start_marker": "" if self.sp_start.text == "None" else self.sp_start.text,
             "separator": self.sp_sep.text,
             "end_marker": "" if self.sp_end.text == "None" else self.sp_end.text,
             "line_ending": self.sp_ending.text,
+            "wait_for_reply": self.sw_wait_reply.active,
+            "expected_reply": self._expected_reply,
+            "reply_timeout": self._reply_timeout,
             "boxes": boxes,
         }
 
@@ -1586,31 +2166,64 @@ class ProtocolScreen(Screen):
         self.update_preview()
 
     def update_preview(self):
+        if self._loading:
+            return
         app = App.get_running_app()
         cfg = self._collect_settings()
-        p_joy = app.format_packet(cmd="A", pin="5", x="210", y="180", val="1", settings=cfg)
-        p_sw = app.format_packet(cmd="D", pin="13", val="1", settings=cfg)
-        p_sld = app.format_packet(cmd="A", pin="9", val="150", settings=cfg)
-        self.preview_lbl.text = (
-            f"Joystick (X+Y): {p_joy}\n"
-            f"Switch ON:      {p_sw}\n"
-            f"Slider PWM:     {p_sld}"
-        )
+        t_val = cfg["reply_timeout"]
+        if cfg["wait_for_reply"]:
+            ack_str = f"ON (Reply: '{cfg['expected_reply'] or 'ANY'}', Timeout: {t_val:g}s)"
+        else:
+            ack_str = "OFF"
+
+        if cfg["send_mode"] == MODE_ALL_COMBINED:
+            self.mode_tip_lbl.text = (
+                "All Widgets Mode: Sends every dashboard widget's current value together in ONE message."
+            )
+            self.prev_hdr.text = f"Live Preview: All Widgets ({app.active_profile})"
+            pkt = app.build_combined_packet(settings=cfg)
+            order_lines = app.get_combined_slot_map()
+            order_str = ", ".join(order_lines) if order_lines else "No widgets on screen"
+            self.preview_lbl.text = (
+                f"Packet:   {pkt}\n"
+                f"Order:    {order_str}\n"
+                f"Wait ACK: {ack_str}"
+            )
+        else:
+            self.mode_tip_lbl.text = (
+                "10-Box Mode: Sends only the tapped/moved widget using the 10-Box layout below."
+            )
+            self.prev_hdr.text = "Live Preview: 10-Box (Single Widget)"
+            p_joy = app.format_packet(cmd="A", pin="5", x="210", y="180", val="1", settings=cfg)
+            p_sw = app.format_packet(cmd="D", pin="13", val="1", settings=cfg)
+            p_sld = app.format_packet(cmd="A", pin="9", val="150", settings=cfg)
+            self.preview_lbl.text = (
+                f"Joystick: {p_joy}\n"
+                f"Switch:   {p_sw}\n"
+                f"Slider:   {p_sld}\n"
+                f"Wait ACK: {ack_str}"
+            )
 
     def reset_default_boxes(self, *args):
         self._loading = True
+        self.sp_send_mode.text = MODE_SINGLE_10BOX
+        self.sp_combined_style.text = "Values Only"
+        self.sw_wait_reply.active = False
+        self._expected_reply = "OK"
+        self._reply_timeout = 3.0
+        self._refresh_reply_labels()
         self.sp_start.text = "<"
         self.sp_sep.text = ":"
         self.sp_end.text = ">"
         self.sp_ending.text = "LF (\\n)"
-        for i in range(6):
+        for i in range(10):
             sp, inp = self.box_widgets[i]
             sp.text = DEFAULT_BOXES[i]["source"]
             inp.text = DEFAULT_BOXES[i]["default"]
         self._loading = False
         self.save_format(silent=False)
         self.update_preview()
-        self.msg_lbl.text = "Default 6 Boxes Restored!"
+        self.msg_lbl.text = "Default Format Settings Restored!"
 
     def save_format_click(self, *args):
         self.save_format(silent=False)
@@ -1620,9 +2233,14 @@ class ProtocolScreen(Screen):
         cfg = self._collect_settings()
         app.protocol_settings = cfg
         app.bt.set_line_ending(cfg["line_ending"])
+        app.bt.set_reply_config(
+            cfg["wait_for_reply"],
+            cfg["expected_reply"],
+            cfg["reply_timeout"]
+        )
         app.save_state()
         if not silent:
-            self.msg_lbl.text = "6-Box Format Saved!"
+            self.msg_lbl.text = "Format & Reply Settings Saved!"
 
     def go_back(self, *args):
         self.save_format(silent=True)
@@ -1912,32 +2530,42 @@ class TerminalScreen(Screen):
 
         root = BoxLayout(orientation='vertical', padding=dp(12), spacing=dp(8))
 
-        top_bar = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
-        btn_back = GlassButton(text="< Back", font_size=13, bg_color=CARD_BG, size_hint_x=None, width=dp(80))
+        top_bar = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(6))
+        btn_back = GlassButton(text="< Back", font_size=13, bg_color=CARD_BG, size_hint_x=None, width=dp(74))
         btn_back.bind(on_release=self.go_back)
-        hdr = Label(text="Terminal / Log View", font_size=dp(18), bold=True,
-                    color=TEXT_MAIN, halign='left', valign='middle')
+        hdr = Label(text="Terminal", font_size=dp(17), bold=True,
+                    color=TEXT_MAIN, halign='left', valign='middle', shorten=True)
         hdr.bind(size=hdr.setter('text_size'))
-        btn_clear = GlassButton(text="Clear", font_size=12, bg_color=BTN_DANGER, size_hint_x=None, width=dp(68))
+        btn_unlock = GlassButton(text="Unlock", font_size=11, bg_color=BTN_WARN, size_hint_x=None, width=dp(62))
+        btn_unlock.bind(on_release=lambda x: App.get_running_app().bt.unlock_queue())
+        btn_clear = GlassButton(text="Clear", font_size=11, bg_color=BTN_DANGER, size_hint_x=None, width=dp(56))
         btn_clear.bind(on_release=self.clear_log)
 
         top_bar.add_widget(btn_back)
         top_bar.add_widget(hdr)
+        top_bar.add_widget(btn_unlock)
         top_bar.add_widget(btn_clear)
         root.add_widget(top_bar)
 
         # Quick test packet buttons
         quick_row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(6))
+        qb_all = GlassButton(text="Send All", font_size=11, bg_color=BTN_SUCCESS)
+        qb_all.bind(on_release=lambda x: App.get_running_app().send_all_widgets())
+        quick_row.add_widget(qb_all)
+
         tests = [
-            ("Test Joy", dict(cmd="A", pin="5", x="210", y="180", val="1")),
             ("Test SW", dict(cmd="D", pin="13", val="1")),
             ("Test PWM", dict(cmd="A", pin="9", val="150")),
-            ("Test Mode", dict(cmd="M", pin="13", val="1")),
         ]
         for lbl, kw in tests:
             qb = GlassButton(text=lbl, font_size=11, bg_color=CARD_BG)
             qb.bind(on_release=lambda x, k=kw: App.get_running_app().send_protocol(**k))
             quick_row.add_widget(qb)
+
+        # Manual Sim RX button for testing reply handshake in Pydroid 3 / Preview mode
+        qb_rx = GlassButton(text="Sim RX", font_size=11, bg_color=BTN_WARN)
+        qb_rx.bind(on_release=self.trigger_sim_rx)
+        quick_row.add_widget(qb_rx)
         root.add_widget(quick_row)
 
         term_card = GlassBox(padding=dp(10), bg_color=(0.03, 0.06, 0.12, 0.80),
@@ -1958,7 +2586,7 @@ class TerminalScreen(Screen):
         root.add_widget(term_card)
 
         cmd_row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
-        self.cmd_input = StyledInput(hint="Manual packet (e.g. <13:0:0:1:0:0>)")
+        self.cmd_input = StyledInput(hint="Manual TX (or type reply & tap Sim RX)")
         self.cmd_input.bind(on_text_validate=self.send_manual)
         btn_send = GlassButton(text="Send", bg_color=BTN_PRIMARY, size_hint_x=None, width=dp(80))
         btn_send.bind(on_release=self.send_manual)
@@ -1968,12 +2596,20 @@ class TerminalScreen(Screen):
 
         self.add_widget(root)
 
+    def trigger_sim_rx(self, *args):
+        txt = self.cmd_input.text.strip()
+        App.get_running_app().bt.simulate_rx(txt)
+        if txt:
+            self.cmd_input.text = ""
+
     def append_log(self, ts, tag, msg):
         safe_msg = escape_markup(str(msg))
         if tag == "TX":
             line = f"[color=7799bb]{ts}[/color] [b][color=44ccff][TX][/color][/b] {safe_msg}"
         elif tag == "RX":
             line = f"[color=7799bb]{ts}[/color] [b][color=44ee88][RX][/color][/b] {safe_msg}"
+        elif tag == "ERR":
+            line = f"[color=ff7777]{ts}[/color] [b][color=ff4444][ERR] {safe_msg}[/color][/b]"
         else:
             line = f"[color=7799bb]{ts}[/color] [b][color=ffcc55][SYS][/color][/b] {safe_msg}"
 
@@ -1999,11 +2635,13 @@ class TerminalScreen(Screen):
 
 
 # ==========================================
-# Main Pro Controller Application
+# Main HC05 Controller Application
 # ==========================================
 class ProControllerApp(App):
     def build(self):
-        self.title = "Pro HC-05 Controller"
+        self.title = "HC05 CONTROLLER"
+        self.widget_states = {}
+
         try:
             os.makedirs(self.user_data_dir, exist_ok=True)
             self.state_file = os.path.join(self.user_data_dir, "pro_controller_state.json")
@@ -2022,17 +2660,28 @@ class ProControllerApp(App):
             "auto_connect": True
         }
 
-        # Ensure 6-box protocol structure is initialized cleanly
+        # Upgrade any existing settings cleanly to 10-box + send mode + timeout format
         ps = saved.get("protocol_settings") or {}
-        if not isinstance(ps.get("boxes"), list) or len(ps.get("boxes")) != 6:
-            ps = {
-                "start_marker": "<",
-                "separator": ":",
-                "end_marker": ">",
-                "line_ending": ps.get("line_ending", "LF (\\n)"),
-                "boxes": copy.deepcopy(DEFAULT_BOXES),
-            }
-        self.protocol_settings = ps
+        old_boxes = ps.get("boxes")
+        if isinstance(old_boxes, list) and len(old_boxes) > 0:
+            boxes = old_boxes[:10]
+            while len(boxes) < 10:
+                boxes.append({"source": "OFF", "default": "0"})
+        else:
+            boxes = copy.deepcopy(DEFAULT_BOXES)
+
+        self.protocol_settings = {
+            "send_mode": ps.get("send_mode", MODE_SINGLE_10BOX),
+            "combined_style": ps.get("combined_style", "Values Only"),
+            "start_marker": ps.get("start_marker", "<"),
+            "separator": ps.get("separator", ":"),
+            "end_marker": ps.get("end_marker", ">"),
+            "line_ending": ps.get("line_ending", "LF (\\n)"),
+            "wait_for_reply": bool(ps.get("wait_for_reply", False)),
+            "expected_reply": str(ps.get("expected_reply", "OK")),
+            "reply_timeout": safe_float(ps.get("reply_timeout", 3.0)),
+            "boxes": boxes,
+        }
 
         self.sm = ScreenManager()
         self.dashboard = DashboardScreen(name='dashboard')
@@ -2063,14 +2712,76 @@ class ProControllerApp(App):
             self.bt_settings.get("auto_connect", True)
         )
         self.bt.set_line_ending(self.protocol_settings.get("line_ending", "LF (\\n)"))
+        self.bt.set_reply_config(
+            self.protocol_settings.get("wait_for_reply", False),
+            self.protocol_settings.get("expected_reply", "OK"),
+            self.protocol_settings.get("reply_timeout", 3.0)
+        )
         return self.sm
 
     def get_active_widgets(self):
         return self.profiles.setdefault(self.active_profile, [])
 
+    def get_combined_slot_map(self, widgets=None):
+        """Return human-readable index mapping for All Widgets Combined Mode."""
+        wlist = widgets if widgets is not None else self.get_active_widgets()
+        slots = []
+        idx = 0
+        for w in wlist:
+            name = w.get("name", "Widget")
+            if w.get("type") == "Joystick":
+                slots.append(f"[{idx}]{name}_X")
+                slots.append(f"[{idx + 1}]{name}_Y")
+                idx += 2
+            else:
+                slots.append(f"[{idx}]{name}")
+                idx += 1
+        return slots
+
+    def build_combined_packet(self, settings=None, widgets=None):
+        """Build ONE packet containing the live values of all widgets on screen."""
+        cfg = settings if settings is not None else self.protocol_settings
+        start_m = cfg.get("start_marker", "<")
+        sep = cfg.get("separator", ":")
+        end_m = cfg.get("end_marker", ">")
+        style = cfg.get("combined_style", "Values Only")
+        wlist = widgets if widgets is not None else self.get_active_widgets()
+
+        tokens = []
+        for w in wlist:
+            wid = w.get("id", "")
+            wtype = w.get("type", "Switch")
+            pin = str(w.get("pin", "0"))
+            st = self.widget_states.get(wid, {})
+
+            if wtype == "Joystick":
+                mn = safe_int(w.get("min_val"), 0)
+                mx = safe_int(w.get("max_val"), 255)
+                if mx <= mn:
+                    mx = mn + 255
+                mid = str(int((mn + mx) / 2))
+                xv = str(st.get("x", mid))
+                yv = str(st.get("y", mid))
+                if style == "Pin=Value":
+                    tokens.append(f"{pin}X={xv}")
+                    tokens.append(f"{pin}Y={yv}")
+                else:
+                    tokens.append(xv)
+                    tokens.append(yv)
+            elif wtype == "Slider":
+                mn = str(safe_int(w.get("min_val"), 0))
+                val = str(st.get("val", mn))
+                tokens.append(f"{pin}={val}" if style == "Pin=Value" else val)
+            else:
+                default_off = str(w.get("val_off", "0"))
+                val = str(st.get("val", default_off))
+                tokens.append(f"{pin}={val}" if style == "Pin=Value" else val)
+
+        return f"{start_m}{sep.join(tokens)}{end_m}"
+
     def format_packet(self, cmd="D", pin="0", x=None, y=None, val=None,
-                      custom1="", custom2="", settings=None):
-        """Build the output packet string according to the active 6-box format."""
+                      custom1="", custom2="", custom3="", custom4="", settings=None):
+        """Build the output packet string according to the active 10-box format."""
         cfg = settings if settings is not None else self.protocol_settings
         start_m = cfg.get("start_marker", "<")
         sep = cfg.get("separator", ":")
@@ -2083,6 +2794,8 @@ class ProControllerApp(App):
             default_v = str(b.get("default", "0"))
             if src == "OFF":
                 continue
+            elif src == "TEXT/MSG":
+                v = default_v
             elif src == "PIN":
                 v = str(pin) if (pin is not None and str(pin) != "") else default_v
             elif src == "X":
@@ -2097,6 +2810,10 @@ class ProControllerApp(App):
                 v = str(custom1) if (custom1 is not None and str(custom1) != "") else default_v
             elif src == "CUSTOM2":
                 v = str(custom2) if (custom2 is not None and str(custom2) != "") else default_v
+            elif src == "CUSTOM3":
+                v = str(custom3) if (custom3 is not None and str(custom3) != "") else default_v
+            elif src == "CUSTOM4":
+                v = str(custom4) if (custom4 is not None and str(custom4) != "") else default_v
             else:
                 v = default_v
             values.append(v)
@@ -2104,12 +2821,30 @@ class ProControllerApp(App):
         return f"{start_m}{sep.join(values)}{end_m}"
 
     def send_protocol(self, cmd="D", pin="0", x=None, y=None, val=None,
-                      custom1="", custom2=""):
+                      custom1="", custom2="", custom3="", custom4=""):
+        """Send a single-widget packet using the 10-box builder."""
         pkt = self.format_packet(
             cmd=cmd, pin=pin, x=x, y=y, val=val,
-            custom1=custom1, custom2=custom2
+            custom1=custom1, custom2=custom2,
+            custom3=custom3, custom4=custom4
         )
         return self.bt.send(pkt)
+
+    def send_all_widgets(self):
+        """Send one combined packet with all active dashboard widget values."""
+        pkt = self.build_combined_packet()
+        return self.bt.send(pkt)
+
+    def send_widget_action(self, cmd="D", pin="0", x=None, y=None, val=None,
+                           custom1="", custom2="", custom3="", custom4=""):
+        """Route widget actions according to the selected Packet Send Format Mode."""
+        if self.protocol_settings.get("send_mode") == MODE_ALL_COMBINED:
+            return self.send_all_widgets()
+        return self.send_protocol(
+            cmd=cmd, pin=pin, x=x, y=y, val=val,
+            custom1=custom1, custom2=custom2,
+            custom3=custom3, custom4=custom4
+        )
 
     def _load_json(self, path, default):
         try:
