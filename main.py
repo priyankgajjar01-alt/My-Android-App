@@ -1,5 +1,4 @@
 import os
-import re
 import json
 import time
 import math
@@ -62,6 +61,63 @@ MODE_SINGLE_10BOX = "10-Box (Single Widget)"
 MODE_ALL_COMBINED = "All Widgets (Combined)"
 SEND_MODE_OPTIONS = (MODE_SINGLE_10BOX, MODE_ALL_COMBINED)
 COMBINED_STYLE_OPTIONS = ("Values Only", "Pin=Value")
+
+# Combined Start-End Wrapper Pairs, Separators, and Newline Options
+WRAPPER_PAIRS = {
+    "< >": ("<", ">"),
+    "[ ]": ("[", "]"),
+    "{ }": ("{", "}"),
+    "$ #": ("$", "#"),
+    "None": ("", ""),
+}
+WRAPPER_OPTIONS = ("< >", "[ ]", "{ }", "$ #", "None")
+SEPARATOR_OPTIONS = (":", ",", ";", "|", "-")
+NEWLINE_OPTIONS = ("\\n", "None")
+
+# English App Working Guide text (displayed from Log -> Guide button)
+APP_GUIDE_TEXT = (
+    "[b][color=66ddff]1. BLUETOOTH CONNECTION (BT)[/color][/b]\n"
+    "- Pair your HC-05 module in your phone's Bluetooth settings first.\n"
+    "- Tap 'BT' on the Dashboard to view Paired devices or tap 'Scan Nearby'.\n"
+    "- Select your HC-05 device or enter its MAC address and turn ON 'Auto-Connect'.\n"
+    "- When the app is closed and reopened, it automatically reconnects to the saved MAC.\n\n"
+
+    "[b][color=66ddff]2. DYNAMIC DASHBOARD & WIDGETS[/color][/b]\n"
+    "- Tap '+ Add Widget' to add Switch, Push Button, Slider (PWM), Joystick, or Sensor Display.\n"
+    "- Switch, Push Button, and Sensor Display take half width (2 per row); Slider and Joystick use full width.\n"
+    "- Tap 'Edit UI' to reorder, edit settings, or delete any widget.\n"
+    "- Tap 'Sync Modes (M)' to send Pin Mode setup packets (0=Input, 1=Output, 2=PWM) for all pins.\n\n"
+
+    "[b][color=66ddff]3. PROJECT PROFILES[/color][/b]\n"
+    "- Use the Profile dropdown or 'Profiles' button to save separate layouts (e.g. Home Automation, RC Car).\n"
+    "- You can create blank profiles or copy an existing profile.\n\n"
+
+    "[b][color=66ddff]4. PACKET SEND FORMAT (FORMAT SCREEN)[/color][/b]\n"
+    "- [b]10-Box (Single Widget):[/b] Sends only the widget you tap/move using up to 10 customizable boxes (PIN, X, Y, VAL, CMD, TEXT/MSG, CUSTOM1-4, or OFF).\n"
+    "- [b]All Widgets (Combined):[/b] Sends the live values of EVERY widget on the Dashboard together in ONE single packet.\n"
+    "- Joystick always sends X and Y together in a single packet.\n"
+    "- Configure 3 packet options: Start-End pair (< >, [ ], { }, $ #, None), Separator (:, ,, ;, |, -), and Newline (\\n or None).\n\n"
+
+    "[b][color=66ddff]5. REPLY HANDSHAKE & TIMEOUT[/color][/b]\n"
+    "- Turn ON 'Wait for Controller Reply' in Format settings so the app waits for a controller reply before sending the next packet.\n"
+    "- Tap 'Edit' to change the Expected Reply (e.g. OK, or leave blank for any reply) and Wait Timeout in seconds.\n"
+    "- If no reply arrives within the timeout, a red error 'Controller not responding' appears.\n"
+    "- Tap 'Unlock' in Terminal anytime to clear the queue and unlock immediately.\n\n"
+
+    "[b][color=66ddff]6. SENSOR DISPLAY RECEIVE FORMAT (SYNCED 2-BOX)[/color][/b]\n"
+    "- Sensor Display widgets update automatically in real time as soon as the controller connects and sends data.\n"
+    "- The receive parser STRICTLY uses the Start-End pair and Separator saved in Format settings:\n"
+    "  [b][color=55ff99][Start]pin[Separator]value[End]\\n[/color][/b]\n"
+    "- Example (Start-End='< >', Sep=':'):  <0:28.5>\\n\n"
+    "- Example (Start-End='< >', Sep=','):  <0,28.5>\\n\n"
+    "- Example (Start-End='[ ]', Sep=';'):  [0;28.5]\\n\n"
+    "- Messages that do not match your saved 2-box format (such as 'OK') are ignored by Sensor Displays and shown only in the Terminal.\n\n"
+
+    "[b][color=66ddff]7. TERMINAL / LOG VIEW[/color][/b]\n"
+    "- [color=44ccff][TX][/color] = Sent to controller  |  [color=44ee88][RX][/color] = Received from controller\n"
+    "- [color=ffcc55][SYS][/color] = System status     |  [color=ff5555][ERR][/color] = Timeout / Error\n"
+    "- Use the bottom input bar to send manual commands, or type a 2-box sensor packet and tap 'Sim RX' to test in preview mode."
+)
 
 # Data source options for the 10-Box Packet Builder
 BOX_OPTIONS = (
@@ -170,6 +226,14 @@ def safe_float(val, default=3.0, min_v=0.5, max_v=120.0):
         return f
     except Exception:
         return default
+
+
+def markers_to_wrapper_label(start_m, end_m):
+    """Find matching Start-End dropdown label for stored start and end markers."""
+    for label, (sm, em) in WRAPPER_PAIRS.items():
+        if sm == start_m and em == end_m:
+            return label
+    return "None" if (not start_m and not end_m) else "< >"
 
 
 # ==========================================
@@ -384,7 +448,7 @@ class JoystickPad(Widget):
 
 
 # ==========================================
-# HC-05 Bluetooth Manager (Strict Wait-for-Reply + Timeout Error)
+# HC-05 Bluetooth Manager (Strict Wait-for-Reply + Timeout + Auto-Connect)
 # ==========================================
 class HC05Manager:
     SPP_UUID = "00001101-0000-1000-8000-00805F9B34FB"
@@ -449,9 +513,7 @@ class HC05Manager:
         self.auto_connect = auto_connect
 
     def set_line_ending(self, ending_key):
-        if ending_key == "CRLF (\\r\\n)":
-            self.line_ending = "\r\n"
-        elif ending_key == "None":
+        if ending_key == "None":
             self.line_ending = ""
         else:
             self.line_ending = "\n"
@@ -507,7 +569,7 @@ class HC05Manager:
         self._emit_log("SYS", f"Reply wait unlocked (cleared {cleared} queued packets).")
 
     def simulate_rx(self, text=""):
-        """Manual RX trigger for testing Wait-for-Reply flow in Pydroid 3 / Preview mode."""
+        """Manual RX trigger for testing sensor updates and reply handshake in Preview mode."""
         reply = text.strip() if text and text.strip() else (self.expected_reply or "OK")
         self._handle_incoming_line(reply)
 
@@ -644,7 +706,7 @@ class HC05Manager:
             self._emit_log("SYS", f"Connection failed: {e}")
 
     def _handle_incoming_line(self, line):
-        """Process a received line: log, update sensors, and release strict ACK wait."""
+        """Process a received line: log, update 2-box sensors, and release strict ACK wait."""
         clean_line = line.strip()
         self._emit_log("RX", clean_line)
         if self.on_rx_data:
@@ -698,7 +760,7 @@ class HC05Manager:
                         elif b != 13:  # Ignore carriage return '\r'
                             buffer.append(b)
                 else:
-                    time.sleep(0.04)
+                    time.sleep(0.03)
             except Exception as e:
                 self._emit_log("SYS", f"Connection lost: {e}")
                 self.disconnect(silent=True)
@@ -790,11 +852,11 @@ class HC05Manager:
         self.out_stream = None
 
     def _auto_connect_loop(self):
-        time.sleep(2)
+        time.sleep(0.8)
         while not self._stop_flag:
             if self.auto_connect and self.mac_address and not self.connected and not self.connecting:
                 self._connect_worker()
-            time.sleep(4)
+            time.sleep(3.5)
 
     def shutdown(self):
         self._stop_flag = True
@@ -813,7 +875,7 @@ class DashboardScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.edit_mode = False
-        self.sensor_labels = {}
+        self.sensor_labels = {}  # pin -> list of (read_lbl, status_lbl, unit)
 
         root = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(8))
 
@@ -1311,54 +1373,45 @@ class DashboardScreen(Screen):
         return card
 
     def _build_sensor_card(self, idx, w):
+        """Auto-updating live Sensor Display card synced with saved Start-End & Sep."""
         app = App.get_running_app()
-        wid = w.get("id", str(idx))
-        pin = str(w.get("pin", "0"))
+        pin = str(w.get("pin", "0")).strip()
         unit = w.get("unit", "")
+        saved_rx = app.sensor_values.get(pin)
+
+        rx_fmt = app.get_rx_format_string(pin, "val")
         card = GlassBox(orientation='vertical', padding=dp(9), spacing=dp(4))
-        sub = f"Pin {pin} | {w.get('cmd', 'R')}"
+        sub = f"Pin {pin} | RX {rx_fmt}"
         card.add_widget(self._build_compact_header(idx, w, sub))
 
+        display_text = f"{saved_rx} {unit}".strip() if saved_rx is not None else f"-- {unit}".strip()
         read_lbl = Label(
-            text=f"-- {unit}".strip(),
-            font_size=dp(18),
+            text=display_text,
+            font_size=dp(22),
             bold=True,
             color=(0.35, 0.95, 0.65, 1),
-            size_hint_y=None,
-            height=dp(24),
+            size_hint_y=1,
             halign='left',
             valign='middle',
             shorten=True
         )
         read_lbl.bind(size=read_lbl.setter('text_size'))
-        self.sensor_labels.setdefault(pin, []).append((read_lbl, unit))
         card.add_widget(read_lbl)
 
-        btn_read = GlassButton(
-            text="Read",
-            font_size=12,
-            bg_color=BTN_PRIMARY,
+        rx_status = Label(
+            text="LIVE RX" if saved_rx is not None else "Waiting data...",
+            font_size=dp(10),
+            bold=(saved_rx is not None),
+            color=TEXT_CYAN if saved_rx is not None else TEXT_MUTED,
             size_hint_y=None,
-            height=dp(32)
+            height=dp(14),
+            halign='left',
+            valign='bottom'
         )
+        rx_status.bind(size=rx_status.setter('text_size'))
+        card.add_widget(rx_status)
 
-        def on_read(inst):
-            val_on = str(w.get("val_on", "1"))
-            val_off = str(w.get("val_off", "0"))
-            app.widget_states[wid] = {"val": val_on}
-            app.send_widget_action(
-                cmd=w.get("cmd", "R"),
-                pin=pin,
-                val=val_on,
-                custom1=w.get("custom1", ""),
-                custom2=w.get("custom2", ""),
-                custom3=w.get("custom3", ""),
-                custom4=w.get("custom4", "")
-            )
-            app.widget_states[wid] = {"val": val_off}
-
-        btn_read.bind(on_release=on_read)
-        card.add_widget(btn_read)
+        self.sensor_labels.setdefault(pin, []).append((read_lbl, rx_status, unit))
         return card
 
     def _build_slider_card(self, idx, w):
@@ -1464,34 +1517,14 @@ class DashboardScreen(Screen):
         card.add_widget(pad)
         return card
 
-    def update_sensor_from_rx(self, line):
-        """Parse incoming serial lines and update matching sensor display widgets."""
-        cleaned = line.strip().strip("<>").strip()
-        parts = re.split(r'[: ,;=]+', cleaned)
-        updated = False
-        if len(parts) >= 4 and parts[0] in self.sensor_labels:
-            pin, val = parts[0], parts[3]
-            for lbl, unit in self.sensor_labels[pin]:
-                lbl.text = f"{val} {unit}".strip()
-            updated = True
-        elif len(parts) >= 3 and parts[1] in self.sensor_labels:
-            pin, val = parts[1], parts[2]
-            for lbl, unit in self.sensor_labels[pin]:
-                lbl.text = f"{val} {unit}".strip()
-            updated = True
-        elif len(parts) == 2 and parts[0] in self.sensor_labels:
-            pin, val = parts[0], parts[1]
-            for lbl, unit in self.sensor_labels[pin]:
-                lbl.text = f"{val} {unit}".strip()
-            updated = True
-
-        if not updated and len(self.sensor_labels) == 1:
-            app = App.get_running_app()
-            exp = app.protocol_settings.get("expected_reply", "").strip().lower()
-            if not (app.protocol_settings.get("wait_for_reply") and exp and cleaned.lower() == exp):
-                only_pin = next(iter(self.sensor_labels))
-                for lbl, unit in self.sensor_labels[only_pin]:
-                    lbl.text = f"{cleaned} {unit}".strip()
+    def apply_sensor_value(self, pin, val):
+        """Update all visible Sensor Display cards bound to this pin."""
+        if pin in self.sensor_labels:
+            for read_lbl, rx_status, unit in self.sensor_labels[pin]:
+                read_lbl.text = f"{val} {unit}".strip()
+                rx_status.text = "LIVE RX"
+                rx_status.bold = True
+                rx_status.color = TEXT_CYAN
 
     def update_mini_log(self, ts, tag, msg):
         if tag == "ERR":
@@ -1722,7 +1755,7 @@ class WidgetEditorScreen(Screen):
 
 
 # ==========================================
-# Screen 3: Format Mode + Reply Handshake (Popup Edit) + 10-Box Builder
+# Screen 3: Format Mode + Reply Handshake + 10-Box Builder (Save at Top)
 # ==========================================
 class ProtocolScreen(Screen):
     def __init__(self, **kwargs):
@@ -1732,8 +1765,9 @@ class ProtocolScreen(Screen):
         self._reply_timeout = 3.0
         self.box_widgets = []
 
-        root = BoxLayout(orientation='vertical', padding=dp(12), spacing=dp(10))
+        root = BoxLayout(orientation='vertical', padding=dp(12), spacing=dp(8))
 
+        # --- Top Bar ---
         top_bar = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
         btn_back = GlassButton(text="< Back", font_size=13, bg_color=CARD_BG, size_hint_x=None, width=dp(80))
         btn_back.bind(on_release=self.go_back)
@@ -1747,8 +1781,30 @@ class ProtocolScreen(Screen):
         top_bar.add_widget(btn_reset)
         root.add_widget(top_bar)
 
+        # --- Fixed Top Save Button + Status Message ---
+        btn_save = GlassButton(
+            text="Save Format Settings",
+            font_size=15,
+            bg_color=BTN_SUCCESS,
+            border_color=CARD_BORDER_ACTIVE,
+            size_hint_y=None,
+            height=dp(46)
+        )
+        btn_save.bind(on_release=self.save_format_click)
+        root.add_widget(btn_save)
+
+        self.msg_lbl = Label(
+            text="",
+            font_size=dp(12),
+            color=(0.35, 0.95, 0.55, 1),
+            size_hint_y=None,
+            height=dp(18)
+        )
+        root.add_widget(self.msg_lbl)
+
+        # --- Scrollable Format Cards ---
         scroll = ScrollView(bar_width=dp(4), do_scroll_x=False)
-        body = BoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, padding=[0, dp(4), 0, dp(24)])
+        body = BoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, padding=[0, dp(2), 0, dp(24)])
         body.bind(minimum_height=body.setter('height'))
 
         # --- Card 1: Packet Send Mode Selector ---
@@ -1877,28 +1933,27 @@ class ProtocolScreen(Screen):
         ack_card.add_widget(rep_grid)
 
         ack_tip = Label(
-            text="Tap 'Edit' to change Reply or Timeout. If no reply arrives within Timeout, error 'Controller not responding' appears.",
+            text="Tap 'Edit' to change Reply or Timeout. Sensor RX automatically matches Start-End & Sep set below.",
             font_size=dp(10), color=TEXT_MUTED,
-            size_hint_y=None, height=dp(30), halign='left', valign='middle'
+            size_hint_y=None, height=dp(28), halign='left', valign='middle'
         )
         ack_tip.bind(size=ack_tip.setter('text_size'))
         ack_card.add_widget(ack_tip)
         body.add_widget(ack_card)
 
-        # --- Card 3: Markers & Separator (Applies to Both Modes) ---
+        # --- Card 3: 3-Box Packet Wrapper, Separator & Newline (TX & RX) ---
         wrap_card = GlassBox(orientation='vertical', padding=dp(10), spacing=dp(8), size_hint_y=None)
         wrap_card.bind(minimum_height=wrap_card.setter('height'))
 
-        w_hdr = Label(text="Packet Wrapper & Separator (Both Modes)", font_size=dp(13), bold=True,
+        w_hdr = Label(text="Packet Wrapper, Separator & Newline (TX & RX)", font_size=dp(13), bold=True,
                       color=TEXT_CYAN, size_hint_y=None, height=dp(20), halign='left')
         w_hdr.bind(size=w_hdr.setter('text_size'))
         wrap_card.add_widget(w_hdr)
 
-        m_grid = GridLayout(cols=4, spacing=dp(6), size_hint_y=None, height=dp(62))
-        self.sp_start = self._make_small_spinner(m_grid, "Start", "<", ("<", "[", "{", "$", "None"))
-        self.sp_sep = self._make_small_spinner(m_grid, "Sep", ":", (":", ",", ";", "|", "-"))
-        self.sp_end = self._make_small_spinner(m_grid, "End", ">", (">", "]", "}", "#", "None"))
-        self.sp_ending = self._make_small_spinner(m_grid, "Newline", "LF (\\n)", ("LF (\\n)", "CRLF (\\r\\n)", "None"))
+        m_grid = GridLayout(cols=3, spacing=dp(8), size_hint_y=None, height=dp(62))
+        self.sp_wrapper = self._make_small_spinner(m_grid, "Start-End", "< >", WRAPPER_OPTIONS)
+        self.sp_sep = self._make_small_spinner(m_grid, "Sep", ":", SEPARATOR_OPTIONS)
+        self.sp_ending = self._make_small_spinner(m_grid, "Newline", "\\n", NEWLINE_OPTIONS)
         wrap_card.add_widget(m_grid)
         body.add_widget(wrap_card)
 
@@ -1990,15 +2045,6 @@ class ProtocolScreen(Screen):
         boxes_card.add_widget(tip)
         body.add_widget(boxes_card)
 
-        self.msg_lbl = Label(text="", font_size=dp(12), color=(0.35, 0.95, 0.55, 1),
-                             size_hint_y=None, height=dp(20))
-        body.add_widget(self.msg_lbl)
-
-        btn_save = GlassButton(text="Save Format Settings", font_size=15, bg_color=BTN_SUCCESS,
-                               size_hint_y=None, height=dp(48))
-        btn_save.bind(on_release=self.save_format_click)
-        body.add_widget(btn_save)
-
         scroll.add_widget(body)
         root.add_widget(scroll)
         self.add_widget(root)
@@ -2016,7 +2062,7 @@ class ProtocolScreen(Screen):
             background_normal='',
             background_color=INPUT_BG,
             color=TEXT_MAIN,
-            font_size=dp(12),
+            font_size=dp(13),
             bold=True
         )
         sp.bind(text=self.on_any_change)
@@ -2122,10 +2168,11 @@ class ProtocolScreen(Screen):
 
         s_mark = ps.get("start_marker", "<")
         e_mark = ps.get("end_marker", ">")
-        self.sp_start.text = s_mark if s_mark else "None"
-        self.sp_sep.text = ps.get("separator", ":")
-        self.sp_end.text = e_mark if e_mark else "None"
-        self.sp_ending.text = ps.get("line_ending", "LF (\\n)")
+        self.sp_wrapper.text = markers_to_wrapper_label(s_mark, e_mark)
+        sep = ps.get("separator", ":")
+        self.sp_sep.text = sep if sep in SEPARATOR_OPTIONS else ":"
+        le = ps.get("line_ending", "\\n")
+        self.sp_ending.text = "None" if le == "None" else "\\n"
 
         boxes = ps.get("boxes") or copy.deepcopy(DEFAULT_BOXES)
         for i in range(10):
@@ -2146,12 +2193,13 @@ class ProtocolScreen(Screen):
                 "source": sp.text,
                 "default": inp.text.strip() if inp.text.strip() != "" else "0"
             })
+        start_m, end_m = WRAPPER_PAIRS.get(self.sp_wrapper.text, ("<", ">"))
         return {
             "send_mode": self.sp_send_mode.text,
             "combined_style": self.sp_combined_style.text,
-            "start_marker": "" if self.sp_start.text == "None" else self.sp_start.text,
+            "start_marker": start_m,
             "separator": self.sp_sep.text,
-            "end_marker": "" if self.sp_end.text == "None" else self.sp_end.text,
+            "end_marker": end_m,
             "line_ending": self.sp_ending.text,
             "wait_for_reply": self.sw_wait_reply.active,
             "expected_reply": self._expected_reply,
@@ -2171,6 +2219,8 @@ class ProtocolScreen(Screen):
         app = App.get_running_app()
         cfg = self._collect_settings()
         t_val = cfg["reply_timeout"]
+        rx_fmt = app.get_rx_format_string("pin", "value", settings=cfg)
+        nl_txt = "" if cfg["line_ending"] == "None" else "\\n"
         if cfg["wait_for_reply"]:
             ack_str = f"ON (Reply: '{cfg['expected_reply'] or 'ANY'}', Timeout: {t_val:g}s)"
         else:
@@ -2185,8 +2235,9 @@ class ProtocolScreen(Screen):
             order_lines = app.get_combined_slot_map()
             order_str = ", ".join(order_lines) if order_lines else "No widgets on screen"
             self.preview_lbl.text = (
-                f"Packet:   {pkt}\n"
+                f"Packet:   {pkt}{nl_txt}\n"
                 f"Order:    {order_str}\n"
+                f"SensorRX: {rx_fmt}\\n (Synced 2-Box)\n"
                 f"Wait ACK: {ack_str}"
             )
         else:
@@ -2198,9 +2249,10 @@ class ProtocolScreen(Screen):
             p_sw = app.format_packet(cmd="D", pin="13", val="1", settings=cfg)
             p_sld = app.format_packet(cmd="A", pin="9", val="150", settings=cfg)
             self.preview_lbl.text = (
-                f"Joystick: {p_joy}\n"
-                f"Switch:   {p_sw}\n"
-                f"Slider:   {p_sld}\n"
+                f"Joystick: {p_joy}{nl_txt}\n"
+                f"Switch:   {p_sw}{nl_txt}\n"
+                f"Slider:   {p_sld}{nl_txt}\n"
+                f"SensorRX: {rx_fmt}\\n (Synced 2-Box)\n"
                 f"Wait ACK: {ack_str}"
             )
 
@@ -2212,10 +2264,9 @@ class ProtocolScreen(Screen):
         self._expected_reply = "OK"
         self._reply_timeout = 3.0
         self._refresh_reply_labels()
-        self.sp_start.text = "<"
+        self.sp_wrapper.text = "< >"
         self.sp_sep.text = ":"
-        self.sp_end.text = ">"
-        self.sp_ending.text = "LF (\\n)"
+        self.sp_ending.text = "\\n"
         for i in range(10):
             sp, inp = self.box_widgets[i]
             sp.text = DEFAULT_BOXES[i]["source"]
@@ -2521,7 +2572,7 @@ class ProfileManagerScreen(Screen):
 
 
 # ==========================================
-# Screen 6: Terminal / Log View
+# Screen 6: Terminal / Log View (with App Working Guide Button)
 # ==========================================
 class TerminalScreen(Screen):
     def __init__(self, **kwargs):
@@ -2530,19 +2581,27 @@ class TerminalScreen(Screen):
 
         root = BoxLayout(orientation='vertical', padding=dp(12), spacing=dp(8))
 
-        top_bar = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(6))
-        btn_back = GlassButton(text="< Back", font_size=13, bg_color=CARD_BG, size_hint_x=None, width=dp(74))
+        # --- Top Bar with Guide Button ---
+        top_bar = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(5))
+        btn_back = GlassButton(text="< Back", font_size=12, bg_color=CARD_BG, size_hint_x=None, width=dp(66))
         btn_back.bind(on_release=self.go_back)
-        hdr = Label(text="Terminal", font_size=dp(17), bold=True,
+
+        hdr = Label(text="Log", font_size=dp(17), bold=True,
                     color=TEXT_MAIN, halign='left', valign='middle', shorten=True)
         hdr.bind(size=hdr.setter('text_size'))
-        btn_unlock = GlassButton(text="Unlock", font_size=11, bg_color=BTN_WARN, size_hint_x=None, width=dp(62))
+
+        btn_guide = GlassButton(text="Guide", font_size=11, bg_color=BTN_PRIMARY, size_hint_x=None, width=dp(56))
+        btn_guide.bind(on_release=self.open_app_guide)
+
+        btn_unlock = GlassButton(text="Unlock", font_size=11, bg_color=BTN_WARN, size_hint_x=None, width=dp(58))
         btn_unlock.bind(on_release=lambda x: App.get_running_app().bt.unlock_queue())
-        btn_clear = GlassButton(text="Clear", font_size=11, bg_color=BTN_DANGER, size_hint_x=None, width=dp(56))
+
+        btn_clear = GlassButton(text="Clear", font_size=11, bg_color=BTN_DANGER, size_hint_x=None, width=dp(52))
         btn_clear.bind(on_release=self.clear_log)
 
         top_bar.add_widget(btn_back)
         top_bar.add_widget(hdr)
+        top_bar.add_widget(btn_guide)
         top_bar.add_widget(btn_unlock)
         top_bar.add_widget(btn_clear)
         root.add_widget(top_bar)
@@ -2562,7 +2621,7 @@ class TerminalScreen(Screen):
             qb.bind(on_release=lambda x, k=kw: App.get_running_app().send_protocol(**k))
             quick_row.add_widget(qb)
 
-        # Manual Sim RX button for testing reply handshake in Pydroid 3 / Preview mode
+        # Manual Sim RX button for testing sensor RX and reply handshake in Preview mode
         qb_rx = GlassButton(text="Sim RX", font_size=11, bg_color=BTN_WARN)
         qb_rx.bind(on_release=self.trigger_sim_rx)
         quick_row.add_widget(qb_rx)
@@ -2572,7 +2631,7 @@ class TerminalScreen(Screen):
                              border_color=CARD_BORDER, radius=12)
         self.scroll = ScrollView(bar_width=dp(5), do_scroll_x=False)
         self.log_lbl = Label(
-            text="[color=88aadd]Terminal Ready...[/color]",
+            text="[color=88aadd]Terminal Ready... Tap 'Guide' above to learn how this app works.[/color]",
             markup=True,
             font_size=dp(12),
             halign='left',
@@ -2586,7 +2645,7 @@ class TerminalScreen(Screen):
         root.add_widget(term_card)
 
         cmd_row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
-        self.cmd_input = StyledInput(hint="Manual TX (or type reply & tap Sim RX)")
+        self.cmd_input = StyledInput(hint="Manual TX (or <0:28.5> & tap Sim RX)")
         self.cmd_input.bind(on_text_validate=self.send_manual)
         btn_send = GlassButton(text="Send", bg_color=BTN_PRIMARY, size_hint_x=None, width=dp(80))
         btn_send.bind(on_release=self.send_manual)
@@ -2595,6 +2654,65 @@ class TerminalScreen(Screen):
         root.add_widget(cmd_row)
 
         self.add_widget(root)
+
+    def on_pre_enter(self):
+        app = App.get_running_app()
+        ex_rx = app.get_rx_format_string("0", "28.5")
+        self.cmd_input.hint_text = f"Manual TX (or {ex_rx} & tap Sim RX)"
+
+    def open_app_guide(self, *args):
+        """Show complete English documentation explaining how all app features work."""
+        modal = ModalView(
+            size_hint=(0.94, 0.86),
+            background='',
+            background_color=(0, 0, 0, 0),
+            auto_dismiss=True
+        )
+
+        box = GlassBox(
+            orientation='vertical',
+            padding=dp(14),
+            spacing=dp(10),
+            bg_color=MODAL_BG,
+            border_color=(0.45, 0.78, 1.0, 0.80),
+            radius=16
+        )
+
+        hdr_row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(8))
+        title = Label(
+            text="HC05 CONTROLLER - App Working Guide",
+            font_size=dp(15),
+            bold=True,
+            color=TEXT_CYAN,
+            halign='left',
+            valign='middle',
+            shorten=True
+        )
+        title.bind(size=title.setter('text_size'))
+        btn_close = GlassButton(text="Close", font_size=12, bg_color=BTN_DANGER,
+                                size_hint_x=None, width=dp(68))
+        btn_close.bind(on_release=lambda x: modal.dismiss())
+        hdr_row.add_widget(title)
+        hdr_row.add_widget(btn_close)
+        box.add_widget(hdr_row)
+
+        guide_scroll = ScrollView(bar_width=dp(5), do_scroll_x=False)
+        guide_lbl = Label(
+            text=APP_GUIDE_TEXT,
+            markup=True,
+            font_size=dp(12.5),
+            color=TEXT_MAIN,
+            halign='left',
+            valign='top',
+            size_hint_y=None
+        )
+        guide_lbl.bind(width=lambda inst, w: setattr(inst, 'text_size', (w - dp(6), None)))
+        guide_lbl.bind(texture_size=lambda inst, s: setattr(inst, 'height', s[1] + dp(16)))
+        guide_scroll.add_widget(guide_lbl)
+        box.add_widget(guide_scroll)
+
+        modal.add_widget(box)
+        modal.open()
 
     def trigger_sim_rx(self, *args):
         txt = self.cmd_input.text.strip()
@@ -2641,6 +2759,7 @@ class ProControllerApp(App):
     def build(self):
         self.title = "HC05 CONTROLLER"
         self.widget_states = {}
+        self.sensor_values = {}  # Persists latest live RX value per pin across screen changes
 
         try:
             os.makedirs(self.user_data_dir, exist_ok=True)
@@ -2660,7 +2779,7 @@ class ProControllerApp(App):
             "auto_connect": True
         }
 
-        # Upgrade any existing settings cleanly to 10-box + send mode + timeout format
+        # Upgrade any existing settings cleanly to unified Start-End + Newline (\n / None)
         ps = saved.get("protocol_settings") or {}
         old_boxes = ps.get("boxes")
         if isinstance(old_boxes, list) and len(old_boxes) > 0:
@@ -2670,13 +2789,20 @@ class ProControllerApp(App):
         else:
             boxes = copy.deepcopy(DEFAULT_BOXES)
 
+        raw_start = ps.get("start_marker", "<")
+        raw_end = ps.get("end_marker", ">")
+        pair_label = markers_to_wrapper_label(raw_start, raw_end)
+        clean_start, clean_end = WRAPPER_PAIRS[pair_label]
+        raw_le = ps.get("line_ending", "\\n")
+        clean_le = "None" if raw_le == "None" else "\\n"
+
         self.protocol_settings = {
             "send_mode": ps.get("send_mode", MODE_SINGLE_10BOX),
             "combined_style": ps.get("combined_style", "Values Only"),
-            "start_marker": ps.get("start_marker", "<"),
+            "start_marker": clean_start,
             "separator": ps.get("separator", ":"),
-            "end_marker": ps.get("end_marker", ">"),
-            "line_ending": ps.get("line_ending", "LF (\\n)"),
+            "end_marker": clean_end,
+            "line_ending": clean_le,
             "wait_for_reply": bool(ps.get("wait_for_reply", False)),
             "expected_reply": str(ps.get("expected_reply", "OK")),
             "reply_timeout": safe_float(ps.get("reply_timeout", 3.0)),
@@ -2705,19 +2831,66 @@ class ProControllerApp(App):
         self.bt = HC05Manager(
             on_status=self.dashboard.update_bt_status,
             on_log=on_log,
-            on_rx_data=self.dashboard.update_sensor_from_rx
+            on_rx_data=self.handle_sensor_rx
         )
         self.bt.set_config(
             self.bt_settings.get("mac_address", ""),
             self.bt_settings.get("auto_connect", True)
         )
-        self.bt.set_line_ending(self.protocol_settings.get("line_ending", "LF (\\n)"))
+        self.bt.set_line_ending(self.protocol_settings.get("line_ending", "\\n"))
         self.bt.set_reply_config(
             self.protocol_settings.get("wait_for_reply", False),
             self.protocol_settings.get("expected_reply", "OK"),
             self.protocol_settings.get("reply_timeout", 3.0)
         )
+
+        # Ensure dashboard sensor widgets are built immediately on startup before auto-connect RX arrives
+        Clock.schedule_once(lambda dt: self._init_dashboard_ready(), 0)
         return self.sm
+
+    def _init_dashboard_ready(self):
+        self.dashboard.refresh_profile_spinner()
+        self.dashboard.rebuild_dashboard()
+
+    def get_rx_format_string(self, pin_txt="pin", val_txt="value", settings=None):
+        """Return the active 2-box RX format string using saved Start-End pair and Separator."""
+        cfg = settings if settings is not None else self.protocol_settings
+        start_m = cfg.get("start_marker", "<")
+        sep = cfg.get("separator", ":")
+        end_m = cfg.get("end_marker", ">")
+        return f"{start_m}{pin_txt}{sep}{val_txt}{end_m}"
+
+    def handle_sensor_rx(self, line):
+        """Strictly parse incoming 2-box sensor data using saved Start-End pair and Separator."""
+        cfg = self.protocol_settings
+        start_m = cfg.get("start_marker", "<")
+        sep = cfg.get("separator", ":")
+        end_m = cfg.get("end_marker", ">")
+
+        s = line.strip()
+        if start_m:
+            if not s.startswith(start_m):
+                return
+            s = s[len(start_m):]
+        if end_m:
+            if not s.endswith(end_m):
+                return
+            s = s[:-len(end_m)]
+
+        if not sep or sep not in s:
+            return
+
+        parts = s.split(sep)
+        if len(parts) != 2:
+            return
+
+        pin = parts[0].strip()
+        val = parts[1].strip()
+        if not pin or not val:
+            return
+
+        self.sensor_values[pin] = val
+        self.dashboard.apply_sensor_value(pin, val)
 
     def get_active_widgets(self):
         return self.profiles.setdefault(self.active_profile, [])
@@ -2771,6 +2944,9 @@ class ProControllerApp(App):
             elif wtype == "Slider":
                 mn = str(safe_int(w.get("min_val"), 0))
                 val = str(st.get("val", mn))
+                tokens.append(f"{pin}={val}" if style == "Pin=Value" else val)
+            elif wtype == "Sensor Display":
+                val = str(self.sensor_values.get(pin, w.get("val_off", "0")))
                 tokens.append(f"{pin}={val}" if style == "Pin=Value" else val)
             else:
                 default_off = str(w.get("val_off", "0"))
@@ -2867,6 +3043,9 @@ class ProControllerApp(App):
                 json.dump(data, f, indent=2)
         except Exception:
             pass
+
+    def on_pause(self):
+        return True
 
     def on_stop(self):
         self.bt.shutdown()
