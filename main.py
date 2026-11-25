@@ -152,11 +152,13 @@ NEWLINE_OPTIONS = ("\\n", "None")
 
 # English App Working Guide text (displayed from Log -> Guide button)
 APP_GUIDE_TEXT = (
-    "[b][color=66ddff]1. BLUETOOTH CONNECTION (3 MACs)[/color][/b]\n"
+    "[b][color=66ddff]1. BLUETOOTH CONNECTION (3 MACs & 5s LINK CHECK)[/color][/b]\n"
     "- Pair your HC-05 modules in your phone's Bluetooth settings first.\n"
     "- Tap the top-left 'HC05 CONTROLLER' status box on the Dashboard to open Bluetooth Connection.\n"
     "- Enter MAC 1, MAC 2, and MAC 3 manually, toggle each MAC ON/OFF, and enable 'Auto-Connect'.\n"
-    "- Only MACs switched ON are checked and auto-connected every 5 seconds.\n\n"
+    "- Only MACs switched ON are checked every 5 seconds using a silent null-byte (0x00) write probe so HC-05 power-off is detected without sending text commands to the controller and without pressing a button.\n"
+    "- When HC-05 power is OFF, status updates to 'Disconnected' within 5 seconds and auto-reconnects once power is ON.\n"
+    "- Before sending any widget/manual packet, the app checks the target MAC connection and connects first if disconnected.\n\n"
 
     "[b][color=66ddff]2. DYNAMIC DASHBOARD & WIDGETS[/color][/b]\n"
     "- Tap '+ Widget' on the top bar to add Switch, Push Button, Slider (PWM), Joystick, or Sensor Display.\n"
@@ -623,6 +625,7 @@ class HC05Channel:
         self._tx_queue = []
         self._tx_lock = threading.Lock()
         self._connect_lock = threading.Lock()
+        self._io_lock = threading.Lock()
 
     def _emit_log(self, tag, msg):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -676,7 +679,7 @@ class HC05Channel:
             self._waiting_ack = False
         self._emit_log("SYS", f"Reply wait unlocked (cleared {cleared} queued packets).")
 
-    def is_actually_connected(self, probe_stream=False):
+    def is_actually_connected(self):
         if not self.enabled or not self.connected:
             return False
         if not IS_ANDROID_APK:
@@ -684,23 +687,48 @@ class HC05Channel:
         if not is_bt_adapter_enabled():
             return False
         sock = self.socket
-        in_s = self.in_stream
-        out_s = self.out_stream
-        if not sock or not out_s or not in_s:
+        if not sock or not self.out_stream or not self.in_stream:
             return False
         try:
             if not sock.isConnected():
                 return False
-            if probe_stream:
-                # Probing available() catches RFCOMM teardown when HC-05 module powers off
-                avail = in_s.available()
-                if avail < 0:
-                    return False
         except Exception:
             return False
         return True
 
-    def sync_state(self, silent=True, probe_stream=False):
+    def probe_link_alive(self):
+        """Send a silent null byte (0x00) to detect HC-05 power-off without sending text to controller."""
+        if not self.enabled or not self.connected:
+            return False
+        if not IS_ANDROID_APK:
+            return True
+        if not is_bt_adapter_enabled():
+            return False
+
+        sock = self.socket
+        in_s = self.in_stream
+        out_s = self.out_stream
+        if not sock or not in_s or not out_s:
+            return False
+
+        try:
+            if not sock.isConnected():
+                return False
+            with self._tx_lock:
+                if self._waiting_ack or self._tx_queue:
+                    return True
+            avail = in_s.available()
+            if avail < 0:
+                return False
+            # Null byte (0x00) probes RFCOMM link health without adding text commands to controller
+            with self._io_lock:
+                out_s.write(bytearray([0]))
+                out_s.flush()
+            return True
+        except Exception:
+            return False
+
+    def sync_state(self, silent=True, probe_link=False):
         if not self.enabled:
             if self.connected or self.socket or self.out_stream or self.in_stream:
                 self.disconnect(silent=True, status_label="OFF")
@@ -708,7 +736,8 @@ class HC05Channel:
                 self._set_slot_status(False, "OFF")
             return False
 
-        if not self.is_actually_connected(probe_stream=probe_stream):
+        alive = self.probe_link_alive() if probe_link else self.is_actually_connected()
+        if not alive:
             if self.connected or self.socket or self.out_stream or self.in_stream:
                 self.disconnect(silent=silent, status_label="Disconnected")
             elif self.status_text != "Disconnected" and not self.connecting:
@@ -751,7 +780,7 @@ class HC05Channel:
             self._emit_log("SYS", "MAC Address is empty.")
             self._set_slot_status(False, "Disconnected")
             return
-        self.sync_state(silent=True, probe_stream=True)
+        self.sync_state(silent=True, probe_link=False)
         if self.connecting or self.is_actually_connected():
             return
         threading.Thread(target=self.connect_worker, daemon=True).start()
@@ -882,6 +911,8 @@ class HC05Channel:
                         b = self.in_stream.read()
                         if b == -1:
                             raise Exception("Stream closed")
+                        if b == 0:
+                            continue  # Ignore silent link-probe null byte
                         if b == 10:  # Newline '\n'
                             line = buffer.decode('utf-8', errors='replace').strip()
                             buffer.clear()
@@ -897,7 +928,7 @@ class HC05Channel:
                 break
 
     def _transmit_now(self, cmd):
-        if not self.sync_state(silent=True, probe_stream=False):
+        if not self.sync_state(silent=True, probe_link=False):
             return False
 
         if not IS_ANDROID_APK:
@@ -909,8 +940,9 @@ class HC05Channel:
 
         try:
             payload = (cmd + self.line_ending).encode('utf-8')
-            self.out_stream.write(payload)
-            self.out_stream.flush()
+            with self._io_lock:
+                self.out_stream.write(payload)
+                self.out_stream.flush()
             self._emit_log("TX", cmd)
             if self.wait_for_reply:
                 exp_txt = self.expected_reply if self.expected_reply else "ANY"
@@ -927,7 +959,7 @@ class HC05Channel:
             self._emit_log("SYS", f"Slot is OFF! Packet not sent: {cmd}")
             return False
 
-        if self.sync_state(silent=True, probe_stream=False):
+        if self.sync_state(silent=True, probe_link=False):
             return True
 
         if not self.mac_address:
@@ -1147,7 +1179,7 @@ class HC05Manager:
                 adapter_on = is_bt_adapter_enabled()
                 for slot in MAC_SLOTS:
                     ch = self.channels[slot]
-                    is_live = ch.sync_state(silent=True, probe_stream=True)
+                    is_live = ch.sync_state(silent=True, probe_link=True)
                     if (
                         adapter_on
                         and ch.enabled
@@ -2822,7 +2854,7 @@ class ConnectionScreen(Screen):
         for slot_name, ui in self.slot_ui.items():
             ch = app.bt.channels.get(slot_name)
             if ch:
-                is_live = ch.sync_state(silent=True, probe_stream=False)
+                is_live = ch.sync_state(silent=True, probe_link=False)
                 self.update_slot_status(slot_name, is_live, ch.status_text)
         app.bt.notify_summary_status()
 
