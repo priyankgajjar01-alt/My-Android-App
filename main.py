@@ -129,6 +129,9 @@ ROW_GAP = dp(6)
 TOP_SAFE_SPACE = dp(35)
 BOTTOM_SAFE_SPACE = dp(20)
 
+# Multi-MAC Slot Constants (3 Controllers)
+MAC_SLOTS = ("MAC 1", "MAC 2", "MAC 3")
+
 # Packet Send Modes
 MODE_SINGLE_10BOX = "10-Box (Single Widget)"
 MODE_ALL_COMBINED = "All Widgets (Combined)"
@@ -149,48 +152,39 @@ NEWLINE_OPTIONS = ("\\n", "None")
 
 # English App Working Guide text (displayed from Log -> Guide button)
 APP_GUIDE_TEXT = (
-    "[b][color=66ddff]1. BLUETOOTH CONNECTION[/color][/b]\n"
-    "- Pair your HC-05 module in your phone's Bluetooth settings first.\n"
+    "[b][color=66ddff]1. BLUETOOTH CONNECTION (3 MACs)[/color][/b]\n"
+    "- Pair your HC-05 modules in your phone's Bluetooth settings first.\n"
     "- Tap the top-left 'HC05 CONTROLLER' status box on the Dashboard to open Bluetooth Connection.\n"
-    "- Select a Paired device, tap 'Scan Nearby', or enter the MAC address and enable 'Auto-Connect'.\n"
-    "- When the app is closed and reopened, it automatically reconnects to the saved MAC.\n\n"
+    "- Configure MAC 1, MAC 2, and MAC 3, toggle each MAC ON/OFF, and enable 'Auto-Connect'.\n"
+    "- Only MACs switched ON are checked and auto-connected every 5 seconds.\n\n"
 
     "[b][color=66ddff]2. DYNAMIC DASHBOARD & WIDGETS[/color][/b]\n"
     "- Tap '+ Widget' on the top bar to add Switch, Push Button, Slider (PWM), Joystick, or Sensor Display.\n"
+    "- Each widget has a 'Target Controller' selector (MAC 1, MAC 2, or MAC 3) so data routes to that controller.\n"
     "- Switch, Push Button, and Sensor Display take half width (2 per row); Slider and Joystick use full width.\n"
-    "- Tap 'Edit UI' beside the profile selector to reorder, edit settings, or delete any widget.\n"
-    "- All widget states (ON/OFF, Slider values, etc.) are automatically saved and restored on reopen.\n\n"
+    "- Tap 'Edit UI' beside the profile selector to reorder, edit settings, or delete any widget.\n\n"
 
     "[b][color=66ddff]3. PROJECT PROFILES[/color][/b]\n"
     "- Use the Profile dropdown or 'Profiles' button to manage separate layouts.\n"
     "- You can create new blank profiles or save a copy of your current layout anytime.\n\n"
 
     "[b][color=66ddff]4. PACKET SEND FORMAT (FORMAT SCREEN)[/color][/b]\n"
-    "- [b]10-Box (Single Widget):[/b] Sends only the widget you tap/move using 10 dedicated boxes:\n"
-    "  Box 1 (PIN/OFF), Box 2 (X/OFF), Box 3 (Y/OFF), Box 4 (VAL/OFF) [locked values], and Boxes 5-10 (CUSTOM1-4, CMD, TEXT/MSG, or OFF).\n"
-    "- [b]All Widgets (Combined):[/b] Sends the live values of EVERY widget on the Dashboard together in ONE single packet.\n"
+    "- [b]10-Box (Single Widget):[/b] Sends only the widget you tap/move using 10 dedicated boxes.\n"
+    "- [b]All Widgets (Combined):[/b] Sends live values together in ONE single packet.\n"
     "- Joystick always sends X and Y together in a single packet.\n"
-    "- Configure 3 packet options: Start-End pair (< >, [ ], { }, $ #, None), Separator (:, ,, ;, |, -), and Newline (\\n or None).\n\n"
+    "- Configure Start-End pair, Separator, and Newline (\\n or None).\n\n"
 
     "[b][color=66ddff]5. REPLY HANDSHAKE & TIMEOUT[/color][/b]\n"
-    "- Turn ON 'Wait for Controller Reply' in Format settings so the app waits for a controller reply before sending the next packet.\n"
-    "- Tap 'Edit' to change the Expected Reply (e.g. OK, or leave blank for any reply) and Wait Timeout in seconds.\n"
-    "- If no reply arrives within the timeout, a red error 'Controller not responding' appears.\n"
+    "- Turn ON 'Wait for Controller Reply' in Format settings to wait for controller reply.\n"
+    "- Tap 'Edit' to change Expected Reply (e.g. OK) and Wait Timeout in seconds.\n"
     "- Tap 'Unlock' in Terminal anytime to clear the queue and unlock immediately.\n\n"
 
     "[b][color=66ddff]6. SENSOR DISPLAY RECEIVE FORMAT (SYNCED 2-BOX)[/color][/b]\n"
-    "- Sensor Display widgets update automatically in real time as soon as the controller connects and sends data.\n"
-    "- The receive parser STRICTLY uses the Start-End pair and Separator saved in Format settings:\n"
-    "  [b][color=55ff99][Start]pin[Separator]value[End]\\n[/color][/b]\n"
-    "- Example (Start-End='< >', Sep=':'):  <0:28.5>\\n\n"
-    "- Example (Start-End='< >', Sep=','):  <0,28.5>\\n\n"
-    "- Example (Start-End='[ ]', Sep=';'):  [0;28.5]\\n\n"
-    "- Messages that do not match your saved 2-box format (such as 'OK') are ignored by Sensor Displays and shown only in the Terminal.\n\n"
+    "- Sensor Display widgets update automatically in real time from connected MACs.\n"
+    "- Format: [b][color=55ff99][Start]pin[Separator]value[End]\\n[/color][/b]\n\n"
 
     "[b][color=66ddff]7. TERMINAL / LOG VIEW[/color][/b]\n"
-    "- [color=44ccff][TX][/color] = Sent to controller  |  [color=44ee88][RX][/color] = Received from controller\n"
-    "- [color=ffcc55][SYS][/color] = System status     |  [color=ff5555][ERR][/color] = Timeout / Error\n"
-    "- Use the bottom input bar to send manual commands, or type a 2-box sensor packet and tap 'Sim RX' to test in preview mode."
+    "- [color=44ccff][TX][/color] = Sent  |  [color=44ee88][RX][/color] = Received  |  [color=ffcc55][SYS][/color] = System  |  [color=ff5555][ERR][/color] = Error"
 )
 
 # Dedicated 2-option slot rules for the 10-Box Packet Builder (Boxes 1-4 value locked)
@@ -220,24 +214,28 @@ DEFAULT_PROFILES = {
     "Home Automation": [
         {
             "id": "w1", "type": "Switch", "name": "Main Light",
+            "mac_slot": "MAC 1",
             "pin": "13", "cmd": "D",
             "val_on": "1", "val_off": "0", "min_val": "0", "max_val": "255",
             "custom1": "", "custom2": "", "custom3": "", "custom4": "", "unit": ""
         },
         {
             "id": "w3", "type": "Push Button", "name": "Door Bell",
+            "mac_slot": "MAC 1",
             "pin": "7", "cmd": "D",
             "val_on": "1", "val_off": "0", "min_val": "0", "max_val": "1",
             "custom1": "", "custom2": "", "custom3": "", "custom4": "", "unit": ""
         },
         {
             "id": "w2", "type": "Slider", "name": "Fan Speed (PWM)",
+            "mac_slot": "MAC 1",
             "pin": "9", "cmd": "A",
             "val_on": "255", "val_off": "0", "min_val": "0", "max_val": "255",
             "custom1": "", "custom2": "", "custom3": "", "custom4": "", "unit": ""
         },
         {
             "id": "w4", "type": "Sensor Display", "name": "Room Temp",
+            "mac_slot": "MAC 1",
             "pin": "0", "cmd": "R",
             "val_on": "1", "val_off": "0", "min_val": "0", "max_val": "100",
             "custom1": "", "custom2": "", "custom3": "", "custom4": "", "unit": "C"
@@ -291,6 +289,43 @@ def sanitize_boxes(raw_boxes):
             val = raw_v if raw_v != "" else cfg["default"]
         clean.append({"source": src, "default": val})
     return clean
+
+
+def normalize_bt_settings(raw_bt):
+    """Normalize Bluetooth settings to support 3 MAC slots with individual ON/OFF flags."""
+    if not isinstance(raw_bt, dict):
+        raw_bt = {}
+
+    auto_connect = bool(raw_bt.get("auto_connect", True))
+    slots_in = raw_bt.get("slots")
+
+    # Migrate legacy single mac_address if slots list is not present
+    legacy_mac = str(raw_bt.get("mac_address", "")).strip().upper()
+    default_slots = [
+        {"name": "MAC 1", "mac": legacy_mac, "enabled": True},
+        {"name": "MAC 2", "mac": "", "enabled": False},
+        {"name": "MAC 3", "mac": "", "enabled": False},
+    ]
+
+    clean_slots = []
+    if isinstance(slots_in, list) and len(slots_in) > 0:
+        for idx in range(3):
+            dflt = default_slots[idx]
+            item = slots_in[idx] if idx < len(slots_in) and isinstance(slots_in[idx], dict) else {}
+            mac_val = str(item.get("mac", dflt["mac"])).strip().upper()
+            en_val = bool(item.get("enabled", dflt["enabled"]))
+            clean_slots.append({
+                "name": MAC_SLOTS[idx],
+                "mac": mac_val,
+                "enabled": en_val,
+            })
+    else:
+        clean_slots = default_slots
+
+    return {
+        "auto_connect": auto_connect,
+        "slots": clean_slots,
+    }
 
 
 # ==========================================
@@ -545,25 +580,29 @@ class JoystickPad(Widget):
 
 
 # ==========================================
-# HC-05 Bluetooth Manager (Strict Wait-for-Reply + Timeout + Auto-Connect)
+# Single HC-05 Channel Worker (MAC 1 / MAC 2 / MAC 3)
 # ==========================================
-class HC05Manager:
+class HC05Channel:
+    """Manages a single HC-05 SPP connection with ACK handshake, timeout, and live status."""
     SPP_UUID = "00001101-0000-1000-8000-00805F9B34FB"
 
-    def __init__(self, on_status, on_log, on_rx_data=None):
-        self.on_status = on_status
+    def __init__(self, slot_name, manager, on_log, on_rx_data, on_slot_status):
+        self.slot_name = slot_name
+        self.manager = manager
         self.on_log = on_log
         self.on_rx_data = on_rx_data
+        self.on_slot_status = on_slot_status
+
+        self.mac_address = ""
+        self.enabled = (slot_name == "MAC 1")
         self.socket = None
         self.in_stream = None
         self.out_stream = None
         self.connected = False
         self.connecting = False
-        self.mac_address = ""
-        self.auto_connect = True
-        self.line_ending = "\n"
+        self.status_text = "Disconnected"
 
-        # Strict Wait-for-Reply (ACK handshake) + Timeout state
+        self.line_ending = "\n"
         self.wait_for_reply = False
         self.expected_reply = "OK"
         self.reply_timeout = 3.0
@@ -571,49 +610,88 @@ class HC05Manager:
         self._timeout_ev = None
         self._tx_queue = []
         self._tx_lock = threading.Lock()
-
-        self._stop_flag = False
-        self._lock = threading.Lock()
-        self._br = None
-
-        if IS_ANDROID_APK:
-            self._request_android_permissions()
-        else:
-            self._emit_log("SYS", "Preview Mode active (Tap top-left status box to connect Demo).")
-
-        # Start background auto-connect thread
-        threading.Thread(target=self._auto_connect_loop, daemon=True).start()
-
-    def _request_android_permissions(self):
-        try:
-            from android.permissions import request_permissions, Permission
-            perms = [
-                Permission.BLUETOOTH,
-                Permission.BLUETOOTH_ADMIN,
-                Permission.ACCESS_FINE_LOCATION,
-                "android.permission.BLUETOOTH_CONNECT",
-                "android.permission.BLUETOOTH_SCAN",
-            ]
-            request_permissions(perms)
-        except Exception as e:
-            self._emit_log("SYS", f"Permission request error: {e}")
-
-    def _emit_status(self, is_connected, msg):
-        Clock.schedule_once(lambda dt: self.on_status(is_connected, msg))
+        self._connect_lock = threading.Lock()
 
     def _emit_log(self, tag, msg):
         ts = datetime.now().strftime("%H:%M:%S")
-        Clock.schedule_once(lambda dt: self.on_log(ts, tag, msg))
+        Clock.schedule_once(lambda dt: self.on_log(ts, tag, f"[{self.slot_name}] {msg}"))
 
-    def set_config(self, mac_address, auto_connect):
-        self.mac_address = mac_address.strip().upper()
-        self.auto_connect = auto_connect
+    def _set_slot_status(self, is_connected, text):
+        self.status_text = text
+        Clock.schedule_once(lambda dt: self.on_slot_status(self.slot_name, is_connected, text))
+        Clock.schedule_once(lambda dt: self.manager.notify_summary_status())
+
+    def configure(self, mac_address, enabled):
+        new_mac = str(mac_address or "").strip().upper()
+        new_en = bool(enabled)
+        mac_changed = (new_mac != self.mac_address)
+
+        self.mac_address = new_mac
+        self.enabled = new_en
+
+        if not self.enabled:
+            self.disconnect(silent=True, status_label="OFF")
+            return
+
+        if mac_changed:
+            self.disconnect(silent=True, status_label="Disconnected")
+        elif not self.is_actually_connected():
+            self._set_slot_status(False, "Disconnected")
 
     def set_line_ending(self, ending_key):
-        if ending_key == "None":
-            self.line_ending = ""
-        else:
-            self.line_ending = "\n"
+        self.line_ending = "" if ending_key == "None" else "\n"
+
+    def set_reply_config(self, wait_enabled, expected_reply, reply_timeout):
+        pending_flush = []
+        with self._tx_lock:
+            self.wait_for_reply = bool(wait_enabled)
+            self.expected_reply = str(expected_reply).strip()
+            self.reply_timeout = safe_float(reply_timeout, default=3.0)
+            if not self.wait_for_reply:
+                self._cancel_timer_locked()
+                self._waiting_ack = False
+                pending_flush = list(self._tx_queue)
+                self._tx_queue.clear()
+        for cmd in pending_flush:
+            if self.is_actually_connected():
+                self._transmit_now(cmd)
+
+    def unlock_queue(self):
+        with self._tx_lock:
+            self._cancel_timer_locked()
+            cleared = len(self._tx_queue)
+            self._tx_queue.clear()
+            self._waiting_ack = False
+        self._emit_log("SYS", f"Reply wait unlocked (cleared {cleared} queued packets).")
+
+    def is_actually_connected(self):
+        if not self.enabled or not self.connected:
+            return False
+        if not IS_ANDROID_APK:
+            return True
+        sock = self.socket
+        if not sock or not self.out_stream or not self.in_stream:
+            return False
+        try:
+            if not sock.isConnected():
+                return False
+        except Exception:
+            return False
+        return True
+
+    def sync_state(self, silent=True):
+        if not self.enabled:
+            if self.connected or self.socket or self.out_stream or self.in_stream:
+                self.disconnect(silent=True, status_label="OFF")
+            elif self.status_text != "OFF":
+                self._set_slot_status(False, "OFF")
+            return False
+
+        if not self.is_actually_connected():
+            if self.connected or self.socket or self.out_stream or self.in_stream:
+                self.disconnect(silent=silent, status_label="Disconnected")
+            return False
+        return True
 
     def _cancel_timer_locked(self):
         if self._timeout_ev is not None:
@@ -625,7 +703,6 @@ class HC05Manager:
         self._timeout_ev = Clock.schedule_once(self._on_reply_timeout, self.reply_timeout)
 
     def _on_reply_timeout(self, dt):
-        """Fired when controller does not reply within the configured timeout seconds."""
         timed_out = False
         dropped = 0
         t_sec = self.reply_timeout
@@ -641,125 +718,47 @@ class HC05Manager:
             extra = f" ({dropped} queued dropped)" if dropped > 0 else ""
             self._emit_log("ERR", f"Controller not responding (no reply in {t_sec:g}s){extra}")
 
-    def set_reply_config(self, wait_enabled, expected_reply, reply_timeout=3.0):
-        pending_flush = []
-        with self._tx_lock:
-            self.wait_for_reply = bool(wait_enabled)
-            self.expected_reply = str(expected_reply).strip()
-            self.reply_timeout = safe_float(reply_timeout, default=3.0)
-            if not self.wait_for_reply:
-                self._cancel_timer_locked()
-                self._waiting_ack = False
-                pending_flush = list(self._tx_queue)
-                self._tx_queue.clear()
-        for cmd in pending_flush:
-            if self.connected:
-                self._transmit_now(cmd)
-
-    def unlock_queue(self):
-        """Force-unlock waiting state and clear any pending queued messages."""
-        with self._tx_lock:
-            self._cancel_timer_locked()
-            cleared = len(self._tx_queue)
-            self._tx_queue.clear()
-            self._waiting_ack = False
-        self._emit_log("SYS", f"Reply wait unlocked (cleared {cleared} queued packets).")
-
-    def simulate_rx(self, text=""):
-        """Manual RX trigger for testing sensor updates and reply handshake in Preview mode."""
-        reply = text.strip() if text and text.strip() else (self.expected_reply or "OK")
-        self._handle_incoming_line(reply)
-
-    def get_paired_devices(self):
-        if not IS_ANDROID_APK:
-            return [
-                ("HC-05 Controller (Demo)", "00:21:13:00:AB:CD"),
-                ("HC-05 Module 2 (Demo)", "98:D3:31:F5:12:44")
-            ]
-        devices_list = []
-        try:
-            from jnius import autoclass
-            BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
-            adapter = BluetoothAdapter.getDefaultAdapter()
-            if adapter and adapter.isEnabled():
-                bonded = adapter.getBondedDevices().toArray()
-                for dev in bonded:
-                    devices_list.append((dev.getName() or "Unknown", dev.getAddress()))
-            else:
-                self._emit_log("SYS", "Bluetooth is OFF. Please turn ON Bluetooth.")
-        except Exception as e:
-            self._emit_log("SYS", f"Paired device error: {e}")
-        return devices_list
-
-    def start_nearby_scan(self, on_device_found):
-        if not IS_ANDROID_APK:
-            on_device_found("HC-05 Nearby (Demo)", "98:D3:32:10:88:99")
-            self._emit_log("SYS", "Demo scan complete.")
+    def connect_async(self, mac=None):
+        if mac is not None:
+            self.mac_address = str(mac).strip().upper()
+        if not self.enabled:
+            self._set_slot_status(False, "OFF")
             return
-        try:
-            from jnius import autoclass
-            from android.broadcast import BroadcastReceiver
-            BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
-            BluetoothDevice = autoclass('android.bluetooth.BluetoothDevice')
-            adapter = BluetoothAdapter.getDefaultAdapter()
-            if not adapter or not adapter.isEnabled():
-                self._emit_log("SYS", "Scan failed: Please turn ON Bluetooth.")
-                return
-
-            if self._br:
-                try:
-                    self._br.stop()
-                except Exception:
-                    pass
-
-            def on_receive(context, intent):
-                try:
-                    if intent.getAction() == BluetoothDevice.ACTION_FOUND:
-                        dev = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                        if dev:
-                            name = dev.getName() or "HC-05 / BT Device"
-                            addr = dev.getAddress()
-                            Clock.schedule_once(lambda dt, n=name, a=addr: on_device_found(n, a))
-                except Exception:
-                    pass
-
-            self._br = BroadcastReceiver(on_receive, actions=[BluetoothDevice.ACTION_FOUND])
-            self._br.start()
-            if adapter.isDiscovering():
-                adapter.cancelDiscovery()
-            adapter.startDiscovery()
-            self._emit_log("SYS", "Nearby HC-05 scanning started...")
-        except Exception as e:
-            self._emit_log("SYS", f"Nearby scan unavailable ({e}); please use the Paired list.")
-
-    def connect(self, mac=None):
-        if mac:
-            self.mac_address = mac.strip().upper()
         if not self.mac_address:
-            self._emit_log("SYS", "MAC Address is empty. Select a device in the Connection screen.")
+            self._emit_log("SYS", "MAC Address is empty.")
+            self._set_slot_status(False, "Disconnected")
             return
-        if self.connecting or self.connected:
+        self.sync_state(silent=True)
+        if self.connecting or self.is_actually_connected():
             return
-        threading.Thread(target=self._connect_worker, daemon=True).start()
+        threading.Thread(target=self.connect_worker, daemon=True).start()
 
-    def _connect_worker(self):
-        with self._lock:
-            if self.connected or self.connecting:
+    def connect_worker(self):
+        if not self.enabled or not self.mac_address:
+            self.sync_state(silent=True)
+            return
+
+        with self._connect_lock:
+            if self.connecting or self.is_actually_connected() or not self.enabled:
                 return
             self.connecting = True
 
-        self._emit_status(False, "Connecting...")
+        self._set_slot_status(False, "Connecting...")
         self._emit_log("SYS", f"Connecting to {self.mac_address}...")
 
         if not IS_ANDROID_APK:
-            time.sleep(0.3)
+            time.sleep(0.25)
+            if not self.enabled:
+                self.connecting = False
+                self._set_slot_status(False, "OFF")
+                return
             self.connected = True
             self.connecting = False
             with self._tx_lock:
                 self._cancel_timer_locked()
                 self._waiting_ack = False
                 self._tx_queue.clear()
-            self._emit_status(True, f"Demo ({self.mac_address[-5:]})")
+            self._set_slot_status(True, f"Connected ({self.mac_address[-5:]})")
             self._emit_log("SYS", "Demo mode connected.")
             return
 
@@ -779,6 +778,15 @@ class HC05Manager:
             sock = device.createRfcommSocketToServiceRecord(UUID.fromString(self.SPP_UUID))
             sock.connect()
 
+            if not self.enabled:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                self.connecting = False
+                self._set_slot_status(False, "OFF")
+                return
+
             self.socket = sock
             self.in_stream = sock.getInputStream()
             self.out_stream = sock.getOutputStream()
@@ -790,7 +798,7 @@ class HC05Manager:
                 self._waiting_ack = False
                 self._tx_queue.clear()
 
-            self._emit_status(True, f"Connected ({self.mac_address[-5:]})")
+            self._set_slot_status(True, f"Connected ({self.mac_address[-5:]})")
             self._emit_log("SYS", f"HC-05 Connected: {self.mac_address}")
 
             threading.Thread(target=self._read_loop, daemon=True).start()
@@ -799,15 +807,14 @@ class HC05Manager:
             self.connected = False
             self.connecting = False
             self._close_socket()
-            self._emit_status(False, "Disconnected")
+            self._set_slot_status(False, "Disconnected")
             self._emit_log("SYS", f"Connection failed: {e}")
 
     def _handle_incoming_line(self, line):
-        """Process a received line: log, update 2-box sensors, and release strict ACK wait."""
         clean_line = line.strip()
         self._emit_log("RX", clean_line)
         if self.on_rx_data:
-            Clock.schedule_once(lambda dt, ln=clean_line: self.on_rx_data(ln))
+            Clock.schedule_once(lambda dt, ln=clean_line, s=self.slot_name: self.on_rx_data(ln, s))
 
         next_cmd = None
         unlocked = False
@@ -828,7 +835,7 @@ class HC05Manager:
                         self._waiting_ack = False
                         unlocked = True
 
-        if next_cmd is not None and self.connected:
+        if next_cmd is not None and self.is_actually_connected():
             self._emit_log("SYS", "Reply matched -> Sending next queued packet.")
             ok = self._transmit_now(next_cmd)
             if not ok:
@@ -840,8 +847,10 @@ class HC05Manager:
 
     def _read_loop(self):
         buffer = bytearray()
-        while self.connected and not self._stop_flag:
+        while self.connected and self.enabled and not self.manager._stop_flag:
             try:
+                if not self.socket or not self.socket.isConnected():
+                    raise Exception("Socket disconnected")
                 avail = self.in_stream.available()
                 if avail > 0:
                     for _ in range(avail):
@@ -859,11 +868,11 @@ class HC05Manager:
                     time.sleep(0.03)
             except Exception as e:
                 self._emit_log("SYS", f"Connection lost: {e}")
-                self.disconnect(silent=True)
+                self.disconnect(silent=True, status_label="Disconnected")
                 break
 
     def _transmit_now(self, cmd):
-        if not self.connected:
+        if not self.sync_state(silent=True):
             return False
 
         if not IS_ANDROID_APK:
@@ -884,15 +893,38 @@ class HC05Manager:
             return True
         except Exception as e:
             self._emit_log("SYS", f"TX Error: {e}")
-            self.disconnect(silent=True)
+            self.disconnect(silent=True, status_label="Disconnected")
             return False
+
+    def _ensure_connected_before_send(self, cmd):
+        if not self.enabled:
+            self._set_slot_status(False, "OFF")
+            self._emit_log("SYS", f"Slot is OFF! Packet not sent: {cmd}")
+            return False
+
+        if self.sync_state(silent=True):
+            return True
+
+        if not self.mac_address:
+            self._set_slot_status(False, "Disconnected")
+            self._emit_log("SYS", f"MAC Address empty! Packet: {cmd}")
+            return False
+
+        self._emit_log("SYS", f"Not connected -> Connecting before sending: {cmd}")
+        threading.Thread(target=self.connect_worker, daemon=True).start()
+
+        if self.wait_for_reply:
+            with self._tx_lock:
+                if len(self._tx_queue) < 50 and cmd not in self._tx_queue:
+                    self._tx_queue.append(cmd)
+        return False
 
     def send(self, command_str):
         cmd = str(command_str).strip()
         if not cmd:
             return False
-        if not self.connected:
-            self._emit_log("SYS", f"Not Connected (Tap status box first)! Packet: {cmd}")
+
+        if not self._ensure_connected_before_send(cmd):
             return False
 
         send_immediately = False
@@ -925,7 +957,7 @@ class HC05Manager:
             return ok
         return True
 
-    def disconnect(self, silent=False):
+    def disconnect(self, silent=False, status_label="Disconnected"):
         self.connected = False
         self.connecting = False
         with self._tx_lock:
@@ -933,7 +965,7 @@ class HC05Manager:
             self._waiting_ack = False
             self._tx_queue.clear()
         self._close_socket()
-        self._emit_status(False, "Disconnected")
+        self._set_slot_status(False, status_label if self.enabled else "OFF")
         if not silent:
             self._emit_log("SYS", "Disconnected.")
 
@@ -947,21 +979,166 @@ class HC05Manager:
         self.in_stream = None
         self.out_stream = None
 
+
+# ==========================================
+# Multi-HC-05 Bluetooth Manager (3 MACs + 5s Check/Auto-Connect)
+# ==========================================
+class HC05Manager:
+    def __init__(self, on_status, on_log, on_rx_data=None, on_slot_status=None):
+        self.on_status = on_status
+        self.on_log = on_log
+        self.on_rx_data = on_rx_data
+        self.on_slot_status = on_slot_status
+        self.auto_connect = True
+        self._stop_flag = False
+
+        self.channels = {
+            slot: HC05Channel(
+                slot_name=slot,
+                manager=self,
+                on_log=on_log,
+                on_rx_data=on_rx_data,
+                on_slot_status=self._handle_slot_status
+            )
+            for slot in MAC_SLOTS
+        }
+
+        if IS_ANDROID_APK:
+            self._request_android_permissions()
+        else:
+            self._emit_log("SYS", "Preview Mode active (Tap top-left status box to connect Demo).")
+
+        # Start background 5-second connection monitor & auto-connect thread (only for ON slots)
+        threading.Thread(target=self._auto_connect_loop, daemon=True).start()
+
+    def _request_android_permissions(self):
+        try:
+            from android.permissions import request_permissions, Permission
+            perms = [
+                Permission.BLUETOOTH,
+                Permission.BLUETOOTH_ADMIN,
+                Permission.ACCESS_FINE_LOCATION,
+                "android.permission.BLUETOOTH_CONNECT",
+                "android.permission.BLUETOOTH_SCAN",
+            ]
+            request_permissions(perms)
+        except Exception as e:
+            self._emit_log("SYS", f"Permission request error: {e}")
+
+    def _emit_log(self, tag, msg):
+        ts = datetime.now().strftime("%H:%M:%S")
+        Clock.schedule_once(lambda dt: self.on_log(ts, tag, msg))
+
+    def _handle_slot_status(self, slot_name, is_connected, text):
+        if self.on_slot_status:
+            self.on_slot_status(slot_name, is_connected, text)
+
+    def get_summary_status(self):
+        """Return (any_connected, summary_text) using exact count of active/disconnected MACs."""
+        enabled_slots = [self.channels[s] for s in MAC_SLOTS if self.channels[s].enabled]
+        if not enabled_slots:
+            return False, "Disconnected"
+
+        connected_count = sum(1 for ch in enabled_slots if ch.is_actually_connected())
+        disconnected_count = len(enabled_slots) - connected_count
+
+        if connected_count > 0:
+            return True, f"Connected {connected_count}"
+        return False, f"Disconnected {disconnected_count}"
+
+    def notify_summary_status(self):
+        any_conn, txt = self.get_summary_status()
+        self.on_status(any_conn, txt)
+
+    def apply_bt_config(self, bt_settings):
+        norm = normalize_bt_settings(bt_settings)
+        self.auto_connect = norm["auto_connect"]
+        for item in norm["slots"]:
+            ch = self.channels[item["name"]]
+            ch.configure(item["mac"], item["enabled"])
+        self.notify_summary_status()
+
+    def set_line_ending(self, ending_key):
+        for ch in self.channels.values():
+            ch.set_line_ending(ending_key)
+
+    def set_reply_config(self, wait_enabled, expected_reply, reply_timeout=3.0):
+        for ch in self.channels.values():
+            ch.set_reply_config(wait_enabled, expected_reply, reply_timeout)
+
+    def unlock_queue(self):
+        for ch in self.channels.values():
+            ch.unlock_queue()
+
+    def simulate_rx(self, text="", slot_name="MAC 1"):
+        ch = self.channels.get(slot_name, self.channels["MAC 1"])
+        reply = text.strip() if text and text.strip() else (ch.expected_reply or "OK")
+        ch._handle_incoming_line(reply)
+
+    def get_paired_devices(self):
+        if not IS_ANDROID_APK:
+            return [
+                ("HC-05 Controller 1 (Demo)", "00:21:13:00:AB:CD"),
+                ("HC-05 Controller 2 (Demo)", "98:D3:31:F5:12:44"),
+                ("HC-05 Controller 3 (Demo)", "00:14:03:06:22:11"),
+            ]
+        devices_list = []
+        try:
+            from jnius import autoclass
+            BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
+            adapter = BluetoothAdapter.getDefaultAdapter()
+            if adapter and adapter.isEnabled():
+                bonded = adapter.getBondedDevices().toArray()
+                for dev in bonded:
+                    devices_list.append((dev.getName() or "Unknown", dev.getAddress()))
+            else:
+                self._emit_log("SYS", "Bluetooth is OFF. Please turn ON Bluetooth.")
+        except Exception as e:
+            self._emit_log("SYS", f"Paired device error: {e}")
+        return devices_list
+
+    def connect_slot(self, slot_name, mac=None):
+        ch = self.channels.get(slot_name, self.channels["MAC 1"])
+        ch.connect_async(mac=mac)
+
+    def connect_enabled_slots(self):
+        for slot in MAC_SLOTS:
+            ch = self.channels[slot]
+            if ch.enabled and ch.mac_address:
+                ch.connect_async()
+
+    def disconnect_slot(self, slot_name, silent=False):
+        ch = self.channels.get(slot_name, self.channels["MAC 1"])
+        ch.disconnect(silent=silent, status_label="Disconnected" if ch.enabled else "OFF")
+
+    def disconnect_all(self, silent=False):
+        for slot in MAC_SLOTS:
+            ch = self.channels[slot]
+            ch.disconnect(silent=silent, status_label="Disconnected" if ch.enabled else "OFF")
+
+    def send(self, command_str, slot_name="MAC 1"):
+        target_slot = slot_name if slot_name in self.channels else "MAC 1"
+        ch = self.channels[target_slot]
+        return ch.send(command_str)
+
     def _auto_connect_loop(self):
-        time.sleep(0.8)
+        """Every 5 seconds: check enabled MACs (update OFF/Disconnected) & auto-connect only ON MACs."""
+        time.sleep(1.0)
         while not self._stop_flag:
-            if self.auto_connect and self.mac_address and not self.connected and not self.connecting:
-                self._connect_worker()
-            time.sleep(3.5)
+            try:
+                for slot in MAC_SLOTS:
+                    ch = self.channels[slot]
+                    is_live = ch.sync_state(silent=True)
+                    if ch.enabled and self.auto_connect and ch.mac_address and not is_live and not ch.connecting:
+                        ch.connect_worker()
+                Clock.schedule_once(lambda dt: self.notify_summary_status())
+            except Exception:
+                pass
+            time.sleep(5.0)
 
     def shutdown(self):
         self._stop_flag = True
-        if self._br:
-            try:
-                self._br.stop()
-            except Exception:
-                pass
-        self.disconnect(silent=True)
+        self.disconnect_all(silent=True)
 
 
 # ==========================================
@@ -1004,7 +1181,7 @@ class DashboardScreen(Screen):
         self.title_lbl.bind(size=self.title_lbl.setter('text_size'))
 
         self.status_lbl = Label(
-            text="OFF: Disconnected",
+            text="Disconnected",
             font_size=dp(10),
             color=(1.0, 0.45, 0.45, 1),
             halign='left',
@@ -1129,6 +1306,9 @@ class DashboardScreen(Screen):
     def on_pre_enter(self):
         self.refresh_profile_spinner()
         self.rebuild_dashboard(reset_scroll=True)
+        app = App.get_running_app()
+        if hasattr(app, "bt"):
+            app.bt.notify_summary_status()
 
     def refresh_profile_spinner(self):
         app = App.get_running_app()
@@ -1199,7 +1379,7 @@ class DashboardScreen(Screen):
                 size_hint_y=None,
                 height=dp(38)
             )
-            btn_all.bind(on_release=lambda x: app.send_all_widgets())
+            btn_all.bind(on_release=lambda x: app.send_all_widgets(mac_slot="MAC 1"))
             self.top_strip.add_widget(btn_all)
             self.top_strip.add_widget(self.mini_log_btn)
             self.top_strip.height = dp(38) + dp(6) + dp(36)
@@ -1401,6 +1581,7 @@ class DashboardScreen(Screen):
     def _build_switch_card(self, idx, w):
         app = App.get_running_app()
         wid = w.get("id", str(idx))
+        mac_slot = w.get("mac_slot", "MAC 1")
         st = app.get_widget_state(wid)
         is_on = bool(st.get("on", False))
         cur_val = str(w.get("val_on", "1") if is_on else w.get("val_off", "0"))
@@ -1412,7 +1593,7 @@ class DashboardScreen(Screen):
             bg_color=CARD_BG_ACTIVE if is_on else CARD_BG,
             border_color=CARD_BORDER_ACTIVE if is_on else CARD_BORDER
         )
-        left_txt = f"Pin {w.get('pin')} | {w.get('cmd', 'D')}"
+        left_txt = f"{mac_slot} | Pin {w.get('pin')}"
         right_txt = f"ON ({cur_val})" if is_on else f"OFF ({cur_val})"
         hdr, state_lbl = self._build_compact_header(
             idx, w,
@@ -1444,7 +1625,8 @@ class DashboardScreen(Screen):
                 custom1=w.get("custom1", ""),
                 custom2=w.get("custom2", ""),
                 custom3=w.get("custom3", ""),
-                custom4=w.get("custom4", "")
+                custom4=w.get("custom4", ""),
+                mac_slot=mac_slot
             )
             if new_state:
                 card.set_colors(CARD_BG_ACTIVE, CARD_BORDER_ACTIVE)
@@ -1466,8 +1648,9 @@ class DashboardScreen(Screen):
     def _build_push_card(self, idx, w):
         app = App.get_running_app()
         wid = w.get("id", str(idx))
+        mac_slot = w.get("mac_slot", "MAC 1")
         card = GlassBox(orientation='vertical', padding=[dp(8), dp(6)], spacing=dp(5))
-        left_txt = f"Pin {w.get('pin')} | {w.get('cmd', 'D')}"
+        left_txt = f"{mac_slot} | Pin {w.get('pin')}"
         hdr, state_lbl = self._build_compact_header(
             idx, w,
             left_text=left_txt,
@@ -1499,7 +1682,8 @@ class DashboardScreen(Screen):
                 custom1=w.get("custom1", ""),
                 custom2=w.get("custom2", ""),
                 custom3=w.get("custom3", ""),
-                custom4=w.get("custom4", "")
+                custom4=w.get("custom4", ""),
+                mac_slot=mac_slot
             )
 
         def on_up(inst):
@@ -1516,7 +1700,8 @@ class DashboardScreen(Screen):
                 custom1=w.get("custom1", ""),
                 custom2=w.get("custom2", ""),
                 custom3=w.get("custom3", ""),
-                custom4=w.get("custom4", "")
+                custom4=w.get("custom4", ""),
+                mac_slot=mac_slot
             )
 
         btn.bind(on_press=on_down, on_release=on_up)
@@ -1527,14 +1712,14 @@ class DashboardScreen(Screen):
         """Auto-updating live Sensor Display card with uniform row height."""
         app = App.get_running_app()
         pin = str(w.get("pin", "0")).strip()
+        mac_slot = w.get("mac_slot", "MAC 1")
         unit = w.get("unit", "")
         saved_rx = app.sensor_values.get(pin)
 
-        rx_fmt = app.get_rx_format_string(pin, "val")
         card = GlassBox(orientation='vertical', padding=[dp(8), dp(6)], spacing=dp(5))
         hdr, rx_status = self._build_compact_header(
             idx, w,
-            left_text=f"Pin {pin} | {rx_fmt}",
+            left_text=f"{mac_slot} | Pin {pin}",
             right_text="LIVE RX" if saved_rx is not None else "WAIT",
             right_color=TEXT_CYAN if saved_rx is not None else TEXT_MUTED,
             right_bold=(saved_rx is not None)
@@ -1562,6 +1747,7 @@ class DashboardScreen(Screen):
         """Full-width PWM Slider card matching the exact same height as all other cards."""
         app = App.get_running_app()
         wid = w.get("id", str(idx))
+        mac_slot = w.get("mac_slot", "MAC 1")
         mn = safe_int(w.get("min_val"), 0)
         mx = safe_int(w.get("max_val"), 255)
         if mx <= mn:
@@ -1576,7 +1762,7 @@ class DashboardScreen(Screen):
             size_hint_y=None,
             height=self._get_row_height()
         )
-        sub = f"Pin {w.get('pin')} | {w.get('cmd', 'A')} ({mn}-{mx})"
+        sub = f"{mac_slot} | Pin {w.get('pin')} ({mn}-{mx})"
         hdr, _ = self._build_full_header(idx, w, sub)
         card.add_widget(hdr)
 
@@ -1607,7 +1793,8 @@ class DashboardScreen(Screen):
                     custom1=w.get("custom1", ""),
                     custom2=w.get("custom2", ""),
                     custom3=w.get("custom3", ""),
-                    custom4=w.get("custom4", "")
+                    custom4=w.get("custom4", ""),
+                    mac_slot=mac_slot
                 )
 
         sld.bind(value=lambda inst, v: send_slider(v, force=False))
@@ -1626,6 +1813,7 @@ class DashboardScreen(Screen):
         """Full-width Joystick card aligned cleanly to 2 uniform row heights."""
         app = App.get_running_app()
         wid = w.get("id", str(idx))
+        mac_slot = w.get("mac_slot", "MAC 1")
         mn = safe_int(w.get("min_val"), 0)
         mx = safe_int(w.get("max_val"), 255)
         if mx <= mn:
@@ -1644,13 +1832,13 @@ class DashboardScreen(Screen):
             size_hint_y=None,
             height=joy_h
         )
-        hdr, xy_lbl = self._build_full_header(idx, w, f"Pin {pin} | X:{init_x} Y:{init_y}")
+        hdr, xy_lbl = self._build_full_header(idx, w, f"{mac_slot} | Pin {pin} | X:{init_x} Y:{init_y}")
         xy_lbl.color = TEXT_CYAN
         xy_lbl.bold = True
         card.add_widget(hdr)
 
         def on_joy_move(xv, yv, is_moving):
-            xy_lbl.text = f"Pin {pin} | X:{xv} Y:{yv}"
+            xy_lbl.text = f"{mac_slot} | Pin {pin} | X:{xv} Y:{yv}"
             val_state = w.get("val_on", "1") if is_moving else w.get("val_off", "0")
             app.set_widget_state(
                 wid,
@@ -1666,7 +1854,8 @@ class DashboardScreen(Screen):
                 custom1=w.get("custom1", ""),
                 custom2=w.get("custom2", ""),
                 custom3=w.get("custom3", ""),
-                custom4=w.get("custom4", "")
+                custom4=w.get("custom4", ""),
+                mac_slot=mac_slot
             )
 
         pad = JoystickPad(min_val=mn, max_val=mx, on_move=on_joy_move, size_hint=(1, 1))
@@ -1693,11 +1882,10 @@ class DashboardScreen(Screen):
             self.mini_log_btn.set_text(f"[{tag}] {msg}")
 
     def update_bt_status(self, connected, msg):
+        self.status_lbl.text = str(msg)
         if connected:
-            self.status_lbl.text = f"ON: {msg}"
             self.status_lbl.color = (0.30, 0.95, 0.55, 1)
         else:
-            self.status_lbl.text = f"OFF: {msg}"
             self.status_lbl.color = (1.0, 0.45, 0.45, 1)
 
     def go_to(self, screen_name):
@@ -1706,7 +1894,7 @@ class DashboardScreen(Screen):
 
 
 # ==========================================
-# Screen 2: Add / Edit Widget Screen
+# Screen 2: Add / Edit Widget Screen (with Target MAC Selection)
 # ==========================================
 class WidgetEditorScreen(Screen):
     def __init__(self, **kwargs):
@@ -1746,6 +1934,16 @@ class WidgetEditorScreen(Screen):
         )
         self.sp_type.bind(text=self.on_type_changed)
         card.add_widget(self.sp_type)
+
+        card.add_widget(self._flbl("Target Controller (MAC 1 / MAC 2 / MAC 3)"))
+        self.sp_mac_slot = Spinner(
+            text='MAC 1',
+            values=MAC_SLOTS,
+            size_hint_y=None, height=dp(44),
+            background_normal='', background_color=(0.14, 0.38, 0.66, 0.75),
+            color=TEXT_CYAN, font_size=dp(14), bold=True
+        )
+        card.add_widget(self.sp_mac_slot)
 
         card.add_widget(self._flbl("Widget Name"))
         self.in_name = StyledInput(hint="e.g. Drive Joystick / Light 1")
@@ -1833,6 +2031,7 @@ class WidgetEditorScreen(Screen):
         if widget_index is None:
             self.hdr_lbl.text = "Add New Widget"
             self.sp_type.text = "Switch"
+            self.sp_mac_slot.text = "MAC 1"
             self.in_name.text = ""
             self.in_pin.text = "13"
             self.sp_cmd.text = "D"
@@ -1849,6 +2048,8 @@ class WidgetEditorScreen(Screen):
             w = app.get_active_widgets()[widget_index]
             self.hdr_lbl.text = f"Edit: {w.get('name', 'Widget')}"
             self.sp_type.text = w.get("type", "Switch")
+            ms = w.get("mac_slot", "MAC 1")
+            self.sp_mac_slot.text = ms if ms in MAC_SLOTS else "MAC 1"
             self.in_name.text = w.get("name", "")
             self.in_pin.text = str(w.get("pin", "13"))
             c = w.get("cmd", "D")
@@ -1867,9 +2068,11 @@ class WidgetEditorScreen(Screen):
         app = App.get_running_app()
         wlist = app.get_active_widgets()
         wtype = self.sp_type.text
+        ms = self.sp_mac_slot.text if self.sp_mac_slot.text in MAC_SLOTS else "MAC 1"
         wdata = {
             "id": f"w_{int(time.time() * 1000)}",
             "type": wtype,
+            "mac_slot": ms,
             "name": self.in_name.text.strip() or f"{wtype} {self.in_pin.text.strip() or '1'}",
             "pin": self.in_pin.text.strip() or "13",
             "cmd": self.sp_cmd.text.strip() or "D",
@@ -2460,158 +2663,278 @@ class ProtocolScreen(Screen):
 
 
 # ==========================================
-# Screen 4: Connection Screen (Scan + Auto-Connect)
+# Screen 4: 3-MAC Connection Screen (Per-MAC ON/OFF + Live Box Status + Paired List)
 # ==========================================
 class ConnectionScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.seen_macs = set()
         self._loading = False
+        self.slot_ui = {}  # slot_name -> dict of inputs, switch, status_lbl, card
 
         root = BoxLayout(
             orientation='vertical',
             padding=[dp(12), TOP_SAFE_SPACE, dp(12), BOTTOM_SAFE_SPACE],
-            spacing=dp(10)
+            spacing=dp(8)
         )
 
-        top_bar = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(10))
-        btn_back = GlassButton(text="< Back", font_size=13, bg_color=CARD_BG, size_hint_x=None, width=dp(82))
+        top_bar = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
+        btn_back = GlassButton(text="< Back", font_size=13, bg_color=CARD_BG, size_hint_x=None, width=dp(80))
         btn_back.bind(on_release=self.go_back)
-        hdr = Label(text="HC-05 Connection", font_size=dp(18), bold=True,
-                    color=TEXT_MAIN, halign='left', valign='middle')
+        hdr = Label(text="HC-05 MAC Settings (3)", font_size=dp(16), bold=True,
+                    color=TEXT_MAIN, halign='left', valign='middle', shorten=True)
         hdr.bind(size=hdr.setter('text_size'))
+        b_paired = GlassButton(text="Paired", font_size=12, bg_color=BTN_PRIMARY,
+                               size_hint_x=None, width=dp(74))
+        b_paired.bind(on_release=self.load_paired)
         top_bar.add_widget(btn_back)
         top_bar.add_widget(hdr)
+        top_bar.add_widget(b_paired)
         root.add_widget(top_bar)
 
-        card = GlassBox(orientation='vertical', padding=dp(12), spacing=dp(8), size_hint_y=None)
-        card.bind(minimum_height=card.setter('height'))
+        # Global Auto-Connect + Save All + Disconnect All bar
+        top_ctrl = GlassBox(orientation='vertical', padding=dp(10), spacing=dp(6), size_hint_y=None)
+        top_ctrl.bind(minimum_height=top_ctrl.setter('height'))
 
-        l_mac = Label(text="HC-05 MAC Address (Auto-Connect)", font_size=dp(12),
-                      color=TEXT_MUTED, size_hint_y=None, height=dp(20), halign='left')
-        l_mac.bind(size=l_mac.setter('text_size'))
-        card.add_widget(l_mac)
-
-        self.in_mac = StyledInput(hint="XX:XX:XX:XX:XX:XX")
-        card.add_widget(self.in_mac)
-
-        sw_row = BoxLayout(size_hint_y=None, height=dp(38))
-        sw_lbl = Label(text="Auto-Connect ON/OFF", font_size=dp(14), color=TEXT_MAIN,
-                       halign='left', valign='middle')
+        sw_row = BoxLayout(size_hint_y=None, height=dp(34))
+        sw_lbl = Label(text="Auto-Connect (Only ON MACs every 5s)", font_size=dp(12.5),
+                       color=TEXT_MAIN, halign='left', valign='middle', shorten=True)
         sw_lbl.bind(size=sw_lbl.setter('text_size'))
-        self.sw_auto = Switch(active=True, size_hint_x=None, width=dp(70))
+        self.sw_auto = Switch(active=True, size_hint_x=None, width=dp(68))
         self.sw_auto.bind(active=self.on_auto_toggle)
         sw_row.add_widget(sw_lbl)
         sw_row.add_widget(self.sw_auto)
-        card.add_widget(sw_row)
+        top_ctrl.add_widget(sw_row)
 
-        btn_row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(8))
-        b_conn = GlassButton(text="Save & Connect", bg_color=BTN_SUCCESS)
-        b_conn.bind(on_release=self.save_and_connect)
-        b_disc = GlassButton(text="Disconnect", bg_color=BTN_DANGER)
-        b_disc.bind(on_release=lambda x: App.get_running_app().bt.disconnect())
-        btn_row.add_widget(b_conn)
-        btn_row.add_widget(b_disc)
-        card.add_widget(btn_row)
+        act_row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
+        b_save_all = GlassButton(text="Save & Connect ON", font_size=12.5, bg_color=BTN_SUCCESS)
+        b_save_all.bind(on_release=self.save_and_connect_all)
+        b_disc_all = GlassButton(text="Disconnect All", font_size=12.5, bg_color=BTN_DANGER)
+        b_disc_all.bind(on_release=self.disconnect_all)
+        act_row.add_widget(b_save_all)
+        act_row.add_widget(b_disc_all)
+        top_ctrl.add_widget(act_row)
 
-        self.msg_lbl = Label(text="", font_size=dp(12), color=(0.35, 0.95, 0.55, 1),
-                             size_hint_y=None, height=dp(20))
-        card.add_widget(self.msg_lbl)
-        root.add_widget(card)
-
-        dev_hdr = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
-        d_lbl = Label(text="HC-05 Devices", font_size=dp(15), bold=True,
-                      color=TEXT_MAIN, halign='left', valign='middle')
-        d_lbl.bind(size=d_lbl.setter('text_size'))
-        b_paired = GlassButton(text="Paired", font_size=12, bg_color=CARD_BG,
-                               size_hint_x=None, width=dp(72))
-        b_paired.bind(on_release=self.load_paired)
-        b_scan = GlassButton(text="Scan Nearby", font_size=12, bg_color=BTN_PRIMARY,
-                             size_hint_x=None, width=dp(100))
-        b_scan.bind(on_release=self.scan_nearby)
-        dev_hdr.add_widget(d_lbl)
-        dev_hdr.add_widget(b_paired)
-        dev_hdr.add_widget(b_scan)
-        root.add_widget(dev_hdr)
+        self.msg_lbl = Label(text="", font_size=dp(11.5), color=(0.35, 0.95, 0.55, 1),
+                             size_hint_y=None, height=dp(18))
+        top_ctrl.add_widget(self.msg_lbl)
+        root.add_widget(top_ctrl)
 
         scroll = ScrollView(bar_width=dp(4), do_scroll_x=False)
-        self.dev_box = BoxLayout(orientation='vertical', spacing=dp(8), size_hint_y=None, padding=[dp(2), dp(3), dp(2), dp(3)])
-        self.dev_box.bind(minimum_height=self.dev_box.setter('height'))
-        scroll.add_widget(self.dev_box)
-        root.add_widget(scroll)
+        body = BoxLayout(orientation='vertical', spacing=dp(8), size_hint_y=None, padding=[dp(2), dp(3), dp(2), dp(3)])
+        body.bind(minimum_height=body.setter('height'))
 
+        # 3 MAC Address Boxes (MAC 1, MAC 2, MAC 3) with per-box live status & ON/OFF toggle
+        for slot_name in MAC_SLOTS:
+            scard = GlassBox(orientation='vertical', padding=dp(10), spacing=dp(6), size_hint_y=None)
+            scard.bind(minimum_height=scard.setter('height'))
+
+            s_hdr = BoxLayout(size_hint_y=None, height=dp(30), spacing=dp(6))
+            s_title = Label(
+                text=slot_name,
+                font_size=dp(13.5), bold=True, color=TEXT_CYAN,
+                halign='left', valign='middle', size_hint_x=0.25
+            )
+            s_title.bind(size=s_title.setter('text_size'))
+
+            s_status = Label(
+                text="Disconnected",
+                font_size=dp(11.5), bold=True, color=(1.0, 0.45, 0.45, 1),
+                halign='right', valign='middle', shorten=True, size_hint_x=0.53
+            )
+            s_status.bind(size=s_status.setter('text_size'))
+
+            s_sw = Switch(active=(slot_name == "MAC 1"), size_hint_x=None, width=dp(62))
+            s_sw.bind(active=lambda inst, val, sn=slot_name: self.on_slot_toggle(sn, val))
+
+            s_hdr.add_widget(s_title)
+            s_hdr.add_widget(s_status)
+            s_hdr.add_widget(s_sw)
+            scard.add_widget(s_hdr)
+
+            in_mac = StyledInput(hint="XX:XX:XX:XX:XX:XX")
+            in_mac.height = dp(40)
+            scard.add_widget(in_mac)
+
+            btn_r = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(6))
+            b_c = GlassButton(text="Connect", font_size=12, bg_color=BTN_PRIMARY)
+            b_c.bind(on_release=lambda x, sn=slot_name: self.connect_single_slot(sn))
+            b_d = GlassButton(text="Disconnect", font_size=12, bg_color=BTN_DANGER)
+            b_d.bind(on_release=lambda x, sn=slot_name: self.disconnect_single_slot(sn))
+            btn_r.add_widget(b_c)
+            btn_r.add_widget(b_d)
+            scard.add_widget(btn_r)
+
+            body.add_widget(scard)
+            self.slot_ui[slot_name] = {
+                "card": scard,
+                "status_lbl": s_status,
+                "switch": s_sw,
+                "input": in_mac,
+            }
+
+        # Paired Devices Section (tap a paired device to fill into MAC 1)
+        p_hdr = BoxLayout(size_hint_y=None, height=dp(30), spacing=dp(6))
+        p_lbl = Label(text="Paired Devices (Tap to fill MAC 1)", font_size=dp(12.5),
+                      bold=True, color=TEXT_MUTED, halign='left', valign='middle')
+        p_lbl.bind(size=p_lbl.setter('text_size'))
+        p_hdr.add_widget(p_lbl)
+        body.add_widget(p_hdr)
+
+        self.dev_box = BoxLayout(orientation='vertical', spacing=dp(6), size_hint_y=None)
+        self.dev_box.bind(minimum_height=self.dev_box.setter('height'))
+        body.add_widget(self.dev_box)
+
+        scroll.add_widget(body)
+        root.add_widget(scroll)
         self.add_widget(root)
 
     def on_pre_enter(self):
         self._loading = True
         app = App.get_running_app()
-        self.in_mac.text = app.bt_settings.get("mac_address", "")
-        self.sw_auto.active = app.bt_settings.get("auto_connect", True)
+        bt_cfg = app.bt_settings
+        self.sw_auto.active = bool(bt_cfg.get("auto_connect", True))
+
+        slots = bt_cfg.get("slots", [])
+        for idx, slot_name in enumerate(MAC_SLOTS):
+            item = slots[idx] if idx < len(slots) else {"mac": "", "enabled": (idx == 0)}
+            ui = self.slot_ui[slot_name]
+            ui["input"].text = str(item.get("mac", "")).upper()
+            ui["switch"].active = bool(item.get("enabled", False))
+
         self._loading = False
         self.msg_lbl.text = ""
+        self._sync_all_slot_status_from_bt()
         self.load_paired()
+
+    def _sync_all_slot_status_from_bt(self):
+        app = App.get_running_app()
+        if not hasattr(app, "bt"):
+            return
+        for slot_name, ui in self.slot_ui.items():
+            ch = app.bt.channels.get(slot_name)
+            if ch:
+                is_live = ch.sync_state(silent=True)
+                self.update_slot_status(slot_name, is_live, ch.status_text)
+        app.bt.notify_summary_status()
+
+    def update_slot_status(self, slot_name, is_connected, text):
+        ui = self.slot_ui.get(slot_name)
+        if not ui:
+            return
+        lbl = ui["status_lbl"]
+        card = ui["card"]
+        lbl.text = str(text)
+        if is_connected:
+            lbl.color = (0.30, 0.95, 0.55, 1)
+            card.set_colors(CARD_BG_ACTIVE, CARD_BORDER_ACTIVE)
+        elif str(text) == "OFF":
+            lbl.color = TEXT_MUTED
+            card.set_colors(CARD_BG, CARD_BORDER)
+        else:
+            lbl.color = (1.0, 0.45, 0.45, 1)
+            card.set_colors(CARD_BG, CARD_BORDER)
+
+    def _collect_bt_settings(self):
+        slots_out = []
+        for slot_name in MAC_SLOTS:
+            ui = self.slot_ui[slot_name]
+            mac_val = ui["input"].text.strip().upper()
+            en_val = bool(ui["switch"].active)
+            slots_out.append({
+                "name": slot_name,
+                "mac": mac_val,
+                "enabled": en_val,
+            })
+        return {
+            "auto_connect": bool(self.sw_auto.active),
+            "slots": slots_out,
+        }
 
     def on_auto_toggle(self, inst, val):
         if self._loading:
             return
         app = App.get_running_app()
-        app.bt_settings["auto_connect"] = bool(val)
-        app.bt.set_config(app.bt_settings.get("mac_address", ""), bool(val))
+        app.bt_settings = self._collect_bt_settings()
+        app.bt.apply_bt_config(app.bt_settings)
         app.save_state()
 
-    def _add_device_row(self, name, mac, tag="Paired"):
-        if mac in self.seen_macs:
+    def on_slot_toggle(self, slot_name, val):
+        if self._loading:
             return
-        self.seen_macs.add(mac)
-        b = GlassButton(
-            text=f"[{tag}]  {name}   ({mac})",
-            font_size=13,
-            bg_color=CARD_BG,
-            size_hint_y=None,
-            height=dp(48)
-        )
-        b.bind(on_release=lambda inst, m=mac: self.select_and_connect(m))
-        self.dev_box.add_widget(b)
+        app = App.get_running_app()
+        app.bt_settings = self._collect_bt_settings()
+        app.bt.apply_bt_config(app.bt_settings)
+        app.save_state()
+        if val and app.bt_settings["auto_connect"]:
+            mac = self.slot_ui[slot_name]["input"].text.strip().upper()
+            if mac:
+                app.bt.connect_slot(slot_name, mac=mac)
+
+    def connect_single_slot(self, slot_name):
+        app = App.get_running_app()
+        ui = self.slot_ui[slot_name]
+        mac = ui["input"].text.strip().upper()
+        if not ui["switch"].active:
+            self._loading = True
+            ui["switch"].active = True
+            self._loading = False
+        app.bt_settings = self._collect_bt_settings()
+        app.save_state()
+        app.bt.apply_bt_config(app.bt_settings)
+        if mac:
+            app.bt.connect_slot(slot_name, mac=mac)
+            self.msg_lbl.text = f"Connecting {slot_name} ({mac})..."
+        else:
+            self.msg_lbl.text = f"{slot_name} MAC address is empty."
+
+    def disconnect_single_slot(self, slot_name):
+        app = App.get_running_app()
+        app.bt.disconnect_slot(slot_name, silent=False)
+        self.msg_lbl.text = f"{slot_name} disconnected."
+
+    def save_and_connect_all(self, *args):
+        app = App.get_running_app()
+        app.bt_settings = self._collect_bt_settings()
+        app.save_state()
+        app.bt.apply_bt_config(app.bt_settings)
+        app.bt.connect_enabled_slots()
+        self.msg_lbl.text = "Saved! Checking ON MACs..."
+
+    def disconnect_all(self, *args):
+        app = App.get_running_app()
+        app.bt.disconnect_all(silent=False)
+        self.msg_lbl.text = "All MAC connections closed."
 
     def load_paired(self, *args):
         self.dev_box.clear_widgets()
-        self.seen_macs.clear()
         devices = App.get_running_app().bt.get_paired_devices()
         if not devices:
             self.dev_box.add_widget(Label(
-                text="No paired devices found.\nPair HC-05 in Phone Bluetooth settings or tap Scan Nearby.",
-                color=TEXT_MUTED, size_hint_y=None, height=dp(52), halign='center'
+                text="No paired devices found.\nPair HC-05 in Phone Bluetooth settings.",
+                color=TEXT_MUTED, size_hint_y=None, height=dp(44), halign='center'
             ))
             return
         for name, mac in devices:
-            self._add_device_row(name, mac, tag="Paired")
+            b = GlassButton(
+                text=f"[Paired]  {name}   ({mac})",
+                font_size=12.5,
+                bg_color=CARD_BG,
+                size_hint_y=None,
+                height=dp(44)
+            )
+            b.bind(on_release=lambda inst, m=mac: self._fill_mac1(m))
+            self.dev_box.add_widget(b)
 
-    def scan_nearby(self, *args):
-        self.msg_lbl.text = "Scanning nearby Bluetooth devices..."
-        App.get_running_app().bt.start_nearby_scan(
-            lambda name, mac: self._add_device_row(name, mac, tag="Nearby")
-        )
-
-    def select_and_connect(self, mac):
-        self.in_mac.text = mac
-        self.save_and_connect()
-
-    def save_and_connect(self, *args):
-        app = App.get_running_app()
-        mac = self.in_mac.text.strip().upper()
-        auto = self.sw_auto.active
-        app.bt_settings["mac_address"] = mac
-        app.bt_settings["auto_connect"] = auto
-        app.save_state()
-        app.bt.set_config(mac, auto)
-        app.bt.disconnect(silent=True)
-        if mac:
-            app.bt.connect(mac)
-            self.msg_lbl.text = f"Saved! Connecting to {mac}..."
-        else:
-            self.msg_lbl.text = "Settings Saved."
+    def _fill_mac1(self, mac):
+        self.slot_ui["MAC 1"]["input"].text = mac
+        self.slot_ui["MAC 1"]["switch"].active = True
+        self.msg_lbl.text = f"Filled {mac} into MAC 1. Tap Connect or Save & Connect ON."
 
     def go_back(self, *args):
+        app = App.get_running_app()
+        app.bt_settings = self._collect_bt_settings()
+        app.save_state()
+        app.bt.apply_bt_config(app.bt_settings)
         self.manager.transition = SlideTransition(direction='right')
         self.manager.current = 'dashboard'
 
@@ -2796,12 +3119,12 @@ class TerminalScreen(Screen):
         # Quick test packet buttons
         quick_row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(6))
         qb_all = GlassButton(text="Send All", font_size=11, bg_color=BTN_SUCCESS)
-        qb_all.bind(on_release=lambda x: App.get_running_app().send_all_widgets())
+        qb_all.bind(on_release=lambda x: App.get_running_app().send_all_widgets(mac_slot="MAC 1"))
         quick_row.add_widget(qb_all)
 
         tests = [
-            ("Test SW", dict(cmd="D", pin="13", val="1")),
-            ("Test PWM", dict(cmd="A", pin="9", val="150")),
+            ("Test SW", dict(cmd="D", pin="13", val="1", mac_slot="MAC 1")),
+            ("Test PWM", dict(cmd="A", pin="9", val="150", mac_slot="MAC 1")),
         ]
         for lbl, kw in tests:
             qb = GlassButton(text=lbl, font_size=11, bg_color=CARD_BG)
@@ -2903,7 +3226,7 @@ class TerminalScreen(Screen):
 
     def trigger_sim_rx(self, *args):
         txt = self.cmd_input.text.strip()
-        App.get_running_app().bt.simulate_rx(txt)
+        App.get_running_app().bt.simulate_rx(txt, slot_name="MAC 1")
         if txt:
             self.cmd_input.text = ""
 
@@ -2931,7 +3254,7 @@ class TerminalScreen(Screen):
     def send_manual(self, *args):
         cmd = self.cmd_input.text.strip()
         if cmd:
-            App.get_running_app().bt.send(cmd)
+            App.get_running_app().bt.send(cmd, slot_name="MAC 1")
             self.cmd_input.text = ""
 
     def go_back(self, *args):
@@ -2960,16 +3283,20 @@ class ProControllerApp(App):
         if self.active_profile not in self.profiles:
             self.active_profile = next(iter(self.profiles.keys()))
 
+        # Ensure existing widgets have mac_slot defaulted cleanly to MAC 1
+        for wlist in self.profiles.values():
+            if isinstance(wlist, list):
+                for w in wlist:
+                    if isinstance(w, dict) and w.get("mac_slot") not in MAC_SLOTS:
+                        w["mac_slot"] = "MAC 1"
+
         # Restore persisted widget values/states and sensor readings
         loaded_states = saved.get("widget_states")
         self.widget_states = loaded_states if isinstance(loaded_states, dict) else {}
         loaded_sensors = saved.get("sensor_values")
         self.sensor_values = loaded_sensors if isinstance(loaded_sensors, dict) else {}
 
-        self.bt_settings = saved.get("bt_settings") or {
-            "mac_address": "",
-            "auto_connect": True
-        }
+        self.bt_settings = normalize_bt_settings(saved.get("bt_settings"))
 
         # Upgrade any existing settings cleanly to unified Start-End + 2-option 10-Box rules
         ps = saved.get("protocol_settings") or {}
@@ -3014,15 +3341,16 @@ class ProControllerApp(App):
             self.terminal.append_log(ts, tag, msg)
             self.dashboard.update_mini_log(ts, tag, msg)
 
+        def on_slot_status(slot_name, is_connected, text):
+            self.connection.update_slot_status(slot_name, is_connected, text)
+
         self.bt = HC05Manager(
             on_status=self.dashboard.update_bt_status,
             on_log=on_log,
-            on_rx_data=self.handle_sensor_rx
+            on_rx_data=self.handle_sensor_rx,
+            on_slot_status=on_slot_status
         )
-        self.bt.set_config(
-            self.bt_settings.get("mac_address", ""),
-            self.bt_settings.get("auto_connect", True)
-        )
+        self.bt.apply_bt_config(self.bt_settings)
         self.bt.set_line_ending(self.protocol_settings.get("line_ending", "\\n"))
         self.bt.set_reply_config(
             self.protocol_settings.get("wait_for_reply", False),
@@ -3043,6 +3371,7 @@ class ProControllerApp(App):
     def _init_dashboard_ready(self):
         self.dashboard.refresh_profile_spinner()
         self.dashboard.rebuild_dashboard(reset_scroll=True)
+        self.bt.notify_summary_status()
 
     # --- Per-Profile Persistent Widget State Helpers ---
     def _state_key(self, wid, profile_name=None):
@@ -3095,7 +3424,7 @@ class ProControllerApp(App):
         end_m = cfg.get("end_marker", ">")
         return f"{start_m}{pin_txt}{sep}{val_txt}{end_m}"
 
-    def handle_sensor_rx(self, line):
+    def handle_sensor_rx(self, line, slot_name="MAC 1"):
         """Strictly parse incoming 2-box sensor data using saved Start-End pair and Separator."""
         cfg = self.protocol_settings
         start_m = cfg.get("start_marker", "<")
@@ -3233,29 +3562,30 @@ class ProControllerApp(App):
         return f"{start_m}{sep.join(values)}{end_m}"
 
     def send_protocol(self, cmd="D", pin="0", x=None, y=None, val=None,
-                      custom1="", custom2="", custom3="", custom4=""):
-        """Send a single-widget packet using the 10-box builder."""
+                      custom1="", custom2="", custom3="", custom4="", mac_slot="MAC 1"):
+        """Send a single-widget packet using the 10-box builder to the widget's target MAC."""
         pkt = self.format_packet(
             cmd=cmd, pin=pin, x=x, y=y, val=val,
             custom1=custom1, custom2=custom2,
             custom3=custom3, custom4=custom4
         )
-        return self.bt.send(pkt)
+        return self.bt.send(pkt, slot_name=mac_slot)
 
-    def send_all_widgets(self):
+    def send_all_widgets(self, mac_slot="MAC 1"):
         """Send one combined packet with all active dashboard widget values."""
         pkt = self.build_combined_packet()
-        return self.bt.send(pkt)
+        return self.bt.send(pkt, slot_name=mac_slot)
 
     def send_widget_action(self, cmd="D", pin="0", x=None, y=None, val=None,
-                           custom1="", custom2="", custom3="", custom4=""):
-        """Route widget actions according to the selected Packet Send Format Mode."""
+                           custom1="", custom2="", custom3="", custom4="", mac_slot="MAC 1"):
+        """Route widget actions according to the selected Packet Send Format Mode & Target MAC."""
         if self.protocol_settings.get("send_mode") == MODE_ALL_COMBINED:
-            return self.send_all_widgets()
+            return self.send_all_widgets(mac_slot=mac_slot)
         return self.send_protocol(
             cmd=cmd, pin=pin, x=x, y=y, val=val,
             custom1=custom1, custom2=custom2,
-            custom3=custom3, custom4=custom4
+            custom3=custom3, custom4=custom4,
+            mac_slot=mac_slot
         )
 
     def _load_json(self, path, default):
