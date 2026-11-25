@@ -155,7 +155,7 @@ APP_GUIDE_TEXT = (
     "[b][color=66ddff]1. BLUETOOTH CONNECTION (3 MACs)[/color][/b]\n"
     "- Pair your HC-05 modules in your phone's Bluetooth settings first.\n"
     "- Tap the top-left 'HC05 CONTROLLER' status box on the Dashboard to open Bluetooth Connection.\n"
-    "- Configure MAC 1, MAC 2, and MAC 3, toggle each MAC ON/OFF, and enable 'Auto-Connect'.\n"
+    "- Enter MAC 1, MAC 2, and MAC 3 manually, toggle each MAC ON/OFF, and enable 'Auto-Connect'.\n"
     "- Only MACs switched ON are checked and auto-connected every 5 seconds.\n\n"
 
     "[b][color=66ddff]2. DYNAMIC DASHBOARD & WIDGETS[/color][/b]\n"
@@ -244,6 +244,19 @@ DEFAULT_PROFILES = {
 }
 
 
+def is_bt_adapter_enabled():
+    """Check if Android Bluetooth adapter is powered ON."""
+    if not IS_ANDROID_APK:
+        return True
+    try:
+        from jnius import autoclass
+        BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
+        adapter = BluetoothAdapter.getDefaultAdapter()
+        return bool(adapter and adapter.isEnabled())
+    except Exception:
+        return False
+
+
 def safe_int(val, default=0):
     """Safely convert a value to an integer with a fallback default."""
     try:
@@ -299,7 +312,6 @@ def normalize_bt_settings(raw_bt):
     auto_connect = bool(raw_bt.get("auto_connect", True))
     slots_in = raw_bt.get("slots")
 
-    # Migrate legacy single mac_address if slots list is not present
     legacy_mac = str(raw_bt.get("mac_address", "")).strip().upper()
     default_slots = [
         {"name": "MAC 1", "mac": legacy_mac, "enabled": True},
@@ -664,22 +676,31 @@ class HC05Channel:
             self._waiting_ack = False
         self._emit_log("SYS", f"Reply wait unlocked (cleared {cleared} queued packets).")
 
-    def is_actually_connected(self):
+    def is_actually_connected(self, probe_stream=False):
         if not self.enabled or not self.connected:
             return False
         if not IS_ANDROID_APK:
             return True
+        if not is_bt_adapter_enabled():
+            return False
         sock = self.socket
-        if not sock or not self.out_stream or not self.in_stream:
+        in_s = self.in_stream
+        out_s = self.out_stream
+        if not sock or not out_s or not in_s:
             return False
         try:
             if not sock.isConnected():
                 return False
+            if probe_stream:
+                # Probing available() catches RFCOMM teardown when HC-05 module powers off
+                avail = in_s.available()
+                if avail < 0:
+                    return False
         except Exception:
             return False
         return True
 
-    def sync_state(self, silent=True):
+    def sync_state(self, silent=True, probe_stream=False):
         if not self.enabled:
             if self.connected or self.socket or self.out_stream or self.in_stream:
                 self.disconnect(silent=True, status_label="OFF")
@@ -687,9 +708,11 @@ class HC05Channel:
                 self._set_slot_status(False, "OFF")
             return False
 
-        if not self.is_actually_connected():
+        if not self.is_actually_connected(probe_stream=probe_stream):
             if self.connected or self.socket or self.out_stream or self.in_stream:
                 self.disconnect(silent=silent, status_label="Disconnected")
+            elif self.status_text != "Disconnected" and not self.connecting:
+                self._set_slot_status(False, "Disconnected")
             return False
         return True
 
@@ -728,7 +751,7 @@ class HC05Channel:
             self._emit_log("SYS", "MAC Address is empty.")
             self._set_slot_status(False, "Disconnected")
             return
-        self.sync_state(silent=True)
+        self.sync_state(silent=True, probe_stream=True)
         if self.connecting or self.is_actually_connected():
             return
         threading.Thread(target=self.connect_worker, daemon=True).start()
@@ -849,6 +872,8 @@ class HC05Channel:
         buffer = bytearray()
         while self.connected and self.enabled and not self.manager._stop_flag:
             try:
+                if not is_bt_adapter_enabled():
+                    raise Exception("Bluetooth power turned OFF")
                 if not self.socket or not self.socket.isConnected():
                     raise Exception("Socket disconnected")
                 avail = self.in_stream.available()
@@ -865,14 +890,14 @@ class HC05Channel:
                         elif b != 13:  # Ignore carriage return '\r'
                             buffer.append(b)
                 else:
-                    time.sleep(0.03)
+                    time.sleep(0.05)
             except Exception as e:
                 self._emit_log("SYS", f"Connection lost: {e}")
                 self.disconnect(silent=True, status_label="Disconnected")
                 break
 
     def _transmit_now(self, cmd):
-        if not self.sync_state(silent=True):
+        if not self.sync_state(silent=True, probe_stream=False):
             return False
 
         if not IS_ANDROID_APK:
@@ -902,12 +927,17 @@ class HC05Channel:
             self._emit_log("SYS", f"Slot is OFF! Packet not sent: {cmd}")
             return False
 
-        if self.sync_state(silent=True):
+        if self.sync_state(silent=True, probe_stream=False):
             return True
 
         if not self.mac_address:
             self._set_slot_status(False, "Disconnected")
             self._emit_log("SYS", f"MAC Address empty! Packet: {cmd}")
+            return False
+
+        if not is_bt_adapter_enabled():
+            self._set_slot_status(False, "Disconnected")
+            self._emit_log("SYS", f"Bluetooth is OFF! Packet: {cmd}")
             return False
 
         self._emit_log("SYS", f"Not connected -> Connecting before sending: {cmd}")
@@ -970,6 +1000,16 @@ class HC05Channel:
             self._emit_log("SYS", "Disconnected.")
 
     def _close_socket(self):
+        try:
+            if self.in_stream:
+                self.in_stream.close()
+        except Exception:
+            pass
+        try:
+            if self.out_stream:
+                self.out_stream.close()
+        except Exception:
+            pass
         try:
             if self.socket:
                 self.socket.close()
@@ -1075,28 +1115,6 @@ class HC05Manager:
         reply = text.strip() if text and text.strip() else (ch.expected_reply or "OK")
         ch._handle_incoming_line(reply)
 
-    def get_paired_devices(self):
-        if not IS_ANDROID_APK:
-            return [
-                ("HC-05 Controller 1 (Demo)", "00:21:13:00:AB:CD"),
-                ("HC-05 Controller 2 (Demo)", "98:D3:31:F5:12:44"),
-                ("HC-05 Controller 3 (Demo)", "00:14:03:06:22:11"),
-            ]
-        devices_list = []
-        try:
-            from jnius import autoclass
-            BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
-            adapter = BluetoothAdapter.getDefaultAdapter()
-            if adapter and adapter.isEnabled():
-                bonded = adapter.getBondedDevices().toArray()
-                for dev in bonded:
-                    devices_list.append((dev.getName() or "Unknown", dev.getAddress()))
-            else:
-                self._emit_log("SYS", "Bluetooth is OFF. Please turn ON Bluetooth.")
-        except Exception as e:
-            self._emit_log("SYS", f"Paired device error: {e}")
-        return devices_list
-
     def connect_slot(self, slot_name, mac=None):
         ch = self.channels.get(slot_name, self.channels["MAC 1"])
         ch.connect_async(mac=mac)
@@ -1122,14 +1140,22 @@ class HC05Manager:
         return ch.send(command_str)
 
     def _auto_connect_loop(self):
-        """Every 5 seconds: check enabled MACs (update OFF/Disconnected) & auto-connect only ON MACs."""
+        """Every 5 seconds: probe HC-05 link (detect power-off disconnect) & auto-connect ON MACs."""
         time.sleep(1.0)
         while not self._stop_flag:
             try:
+                adapter_on = is_bt_adapter_enabled()
                 for slot in MAC_SLOTS:
                     ch = self.channels[slot]
-                    is_live = ch.sync_state(silent=True)
-                    if ch.enabled and self.auto_connect and ch.mac_address and not is_live and not ch.connecting:
+                    is_live = ch.sync_state(silent=True, probe_stream=True)
+                    if (
+                        adapter_on
+                        and ch.enabled
+                        and self.auto_connect
+                        and ch.mac_address
+                        and not is_live
+                        and not ch.connecting
+                    ):
                         ch.connect_worker()
                 Clock.schedule_once(lambda dt: self.notify_summary_status())
             except Exception:
@@ -2663,13 +2689,13 @@ class ProtocolScreen(Screen):
 
 
 # ==========================================
-# Screen 4: 3-MAC Connection Screen (Per-MAC ON/OFF + Live Box Status + Paired List)
+# Screen 4: 3-MAC Connection Screen (Manual MAC Entry + Per-MAC ON/OFF + Live Box Status)
 # ==========================================
 class ConnectionScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._loading = False
-        self.slot_ui = {}  # slot_name -> dict of inputs, switch, status_lbl, card
+        self.slot_ui = {}  # slot_name -> dict of input, switch, status_lbl, card
 
         root = BoxLayout(
             orientation='vertical',
@@ -2683,12 +2709,8 @@ class ConnectionScreen(Screen):
         hdr = Label(text="HC-05 MAC Settings (3)", font_size=dp(16), bold=True,
                     color=TEXT_MAIN, halign='left', valign='middle', shorten=True)
         hdr.bind(size=hdr.setter('text_size'))
-        b_paired = GlassButton(text="Paired", font_size=12, bg_color=BTN_PRIMARY,
-                               size_hint_x=None, width=dp(74))
-        b_paired.bind(on_release=self.load_paired)
         top_bar.add_widget(btn_back)
         top_bar.add_widget(hdr)
-        top_bar.add_widget(b_paired)
         root.add_widget(top_bar)
 
         # Global Auto-Connect + Save All + Disconnect All bar
@@ -2772,18 +2794,6 @@ class ConnectionScreen(Screen):
                 "input": in_mac,
             }
 
-        # Paired Devices Section (tap a paired device to fill into MAC 1)
-        p_hdr = BoxLayout(size_hint_y=None, height=dp(30), spacing=dp(6))
-        p_lbl = Label(text="Paired Devices (Tap to fill MAC 1)", font_size=dp(12.5),
-                      bold=True, color=TEXT_MUTED, halign='left', valign='middle')
-        p_lbl.bind(size=p_lbl.setter('text_size'))
-        p_hdr.add_widget(p_lbl)
-        body.add_widget(p_hdr)
-
-        self.dev_box = BoxLayout(orientation='vertical', spacing=dp(6), size_hint_y=None)
-        self.dev_box.bind(minimum_height=self.dev_box.setter('height'))
-        body.add_widget(self.dev_box)
-
         scroll.add_widget(body)
         root.add_widget(scroll)
         self.add_widget(root)
@@ -2804,7 +2814,6 @@ class ConnectionScreen(Screen):
         self._loading = False
         self.msg_lbl.text = ""
         self._sync_all_slot_status_from_bt()
-        self.load_paired()
 
     def _sync_all_slot_status_from_bt(self):
         app = App.get_running_app()
@@ -2813,7 +2822,7 @@ class ConnectionScreen(Screen):
         for slot_name, ui in self.slot_ui.items():
             ch = app.bt.channels.get(slot_name)
             if ch:
-                is_live = ch.sync_state(silent=True)
+                is_live = ch.sync_state(silent=True, probe_stream=False)
                 self.update_slot_status(slot_name, is_live, ch.status_text)
         app.bt.notify_summary_status()
 
@@ -2904,31 +2913,6 @@ class ConnectionScreen(Screen):
         app = App.get_running_app()
         app.bt.disconnect_all(silent=False)
         self.msg_lbl.text = "All MAC connections closed."
-
-    def load_paired(self, *args):
-        self.dev_box.clear_widgets()
-        devices = App.get_running_app().bt.get_paired_devices()
-        if not devices:
-            self.dev_box.add_widget(Label(
-                text="No paired devices found.\nPair HC-05 in Phone Bluetooth settings.",
-                color=TEXT_MUTED, size_hint_y=None, height=dp(44), halign='center'
-            ))
-            return
-        for name, mac in devices:
-            b = GlassButton(
-                text=f"[Paired]  {name}   ({mac})",
-                font_size=12.5,
-                bg_color=CARD_BG,
-                size_hint_y=None,
-                height=dp(44)
-            )
-            b.bind(on_release=lambda inst, m=mac: self._fill_mac1(m))
-            self.dev_box.add_widget(b)
-
-    def _fill_mac1(self, mac):
-        self.slot_ui["MAC 1"]["input"].text = mac
-        self.slot_ui["MAC 1"]["switch"].active = True
-        self.msg_lbl.text = f"Filled {mac} into MAC 1. Tap Connect or Save & Connect ON."
 
     def go_back(self, *args):
         app = App.get_running_app()
