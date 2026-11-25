@@ -51,7 +51,7 @@ if platform == 'android':
 
 
 def apply_android_fullscreen(*args):
-    """Apply edge-to-edge dark-navy fullscreen on Android (removes top white border on all screens)."""
+    """Apply edge-to-edge dark-navy fullscreen safely on Android after resume."""
     if not IS_ANDROID_APK:
         return
     try:
@@ -69,17 +69,19 @@ def apply_android_fullscreen(*args):
                 BuildVersion = autoclass('android.os.Build$VERSION')
 
                 activity = PythonActivity.mActivity
+                if not activity:
+                    return
                 window = activity.getWindow()
+                if not window:
+                    return
                 navy = AndroidColor.rgb(10, 20, 41)
 
-                # Match window & system bars to dark-navy theme so no white border ever appears
                 window.setBackgroundDrawable(ColorDrawable(navy))
                 if BuildVersion.SDK_INT >= 21:
                     window.addFlags(LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
                     window.setStatusBarColor(navy)
                     window.setNavigationBarColor(navy)
 
-                # Extend cleanly into notch / punch-hole cutout area on tall displays
                 if BuildVersion.SDK_INT >= 28:
                     lp = window.getAttributes()
                     lp.layoutInDisplayCutoutMode = (
@@ -87,16 +89,16 @@ def apply_android_fullscreen(*args):
                     )
                     window.setAttributes(lp)
 
-                # Fullscreen sticky mode for top bar across all Android screen sizes
                 window.addFlags(LayoutParams.FLAG_FULLSCREEN)
                 decor = window.getDecorView()
-                flags = (
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                    | View.SYSTEM_UI_FLAG_FULLSCREEN
-                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                )
-                decor.setSystemUiVisibility(flags)
+                if decor:
+                    flags = (
+                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    )
+                    decor.setSystemUiVisibility(flags)
             except Exception:
                 pass
 
@@ -163,6 +165,7 @@ APP_GUIDE_TEXT = (
     "[b][color=66ddff]2. DYNAMIC DASHBOARD & WIDGETS[/color][/b]\n"
     "- Tap '+ Widget' on the top bar to add Switch, Push Button, Slider (PWM), Joystick, or Sensor Display.\n"
     "- Each widget has a 'Target Controller' selector (MAC 1, MAC 2, or MAC 3) so data routes to that controller.\n"
+    "- Sensor Display shows which MAC sent the latest reading (e.g. RX: MAC 1 / MAC 2 / MAC 3).\n"
     "- Switch, Push Button, and Sensor Display take half width (2 per row); Slider and Joystick use full width.\n"
     "- Tap 'Edit UI' beside the profile selector to reorder, edit settings, or delete any widget.\n\n"
 
@@ -628,11 +631,15 @@ class HC05Channel:
         self._io_lock = threading.Lock()
 
     def _emit_log(self, tag, msg):
+        if self.manager._stop_flag:
+            return
         ts = datetime.now().strftime("%H:%M:%S")
         Clock.schedule_once(lambda dt: self.on_log(ts, tag, f"[{self.slot_name}] {msg}"))
 
     def _set_slot_status(self, is_connected, text):
         self.status_text = text
+        if self.manager._stop_flag:
+            return
         Clock.schedule_once(lambda dt: self.on_slot_status(self.slot_name, is_connected, text))
         Clock.schedule_once(lambda dt: self.manager.notify_summary_status())
 
@@ -720,7 +727,6 @@ class HC05Channel:
             avail = in_s.available()
             if avail < 0:
                 return False
-            # Null byte (0x00) probes RFCOMM link health without adding text commands to controller
             with self._io_lock:
                 out_s.write(bytearray([0]))
                 out_s.flush()
@@ -786,12 +792,12 @@ class HC05Channel:
         threading.Thread(target=self.connect_worker, daemon=True).start()
 
     def connect_worker(self):
-        if not self.enabled or not self.mac_address:
+        if not self.enabled or not self.mac_address or self.manager._stop_flag:
             self.sync_state(silent=True)
             return
 
         with self._connect_lock:
-            if self.connecting or self.is_actually_connected() or not self.enabled:
+            if self.connecting or self.is_actually_connected() or not self.enabled or self.manager._stop_flag:
                 return
             self.connecting = True
 
@@ -800,7 +806,7 @@ class HC05Channel:
 
         if not IS_ANDROID_APK:
             time.sleep(0.25)
-            if not self.enabled:
+            if not self.enabled or self.manager._stop_flag:
                 self.connecting = False
                 self._set_slot_status(False, "OFF")
                 return
@@ -830,7 +836,7 @@ class HC05Channel:
             sock = device.createRfcommSocketToServiceRecord(UUID.fromString(self.SPP_UUID))
             sock.connect()
 
-            if not self.enabled:
+            if not self.enabled or self.manager._stop_flag:
                 try:
                     sock.close()
                 except Exception:
@@ -863,6 +869,8 @@ class HC05Channel:
             self._emit_log("SYS", f"Connection failed: {e}")
 
     def _handle_incoming_line(self, line):
+        if self.manager._stop_flag:
+            return
         clean_line = line.strip()
         self._emit_log("RX", clean_line)
         if self.on_rx_data:
@@ -901,6 +909,9 @@ class HC05Channel:
         buffer = bytearray()
         while self.connected and self.enabled and not self.manager._stop_flag:
             try:
+                if self.manager._is_paused:
+                    time.sleep(0.15)
+                    continue
                 if not is_bt_adapter_enabled():
                     raise Exception("Bluetooth power turned OFF")
                 if not self.socket or not self.socket.isConnected():
@@ -923,8 +934,9 @@ class HC05Channel:
                 else:
                     time.sleep(0.05)
             except Exception as e:
-                self._emit_log("SYS", f"Connection lost: {e}")
-                self.disconnect(silent=True, status_label="Disconnected")
+                if not self.manager._stop_flag:
+                    self._emit_log("SYS", f"Connection lost: {e}")
+                    self.disconnect(silent=True, status_label="Disconnected")
                 break
 
     def _transmit_now(self, cmd):
@@ -1063,6 +1075,7 @@ class HC05Manager:
         self.on_slot_status = on_slot_status
         self.auto_connect = True
         self._stop_flag = False
+        self._is_paused = False
 
         self.channels = {
             slot: HC05Channel(
@@ -1080,8 +1093,10 @@ class HC05Manager:
         else:
             self._emit_log("SYS", "Preview Mode active (Tap top-left status box to connect Demo).")
 
-        # Start background 5-second connection monitor & auto-connect thread (only for ON slots)
         threading.Thread(target=self._auto_connect_loop, daemon=True).start()
+
+    def set_paused(self, paused):
+        self._is_paused = bool(paused)
 
     def _request_android_permissions(self):
         try:
@@ -1098,6 +1113,8 @@ class HC05Manager:
             self._emit_log("SYS", f"Permission request error: {e}")
 
     def _emit_log(self, tag, msg):
+        if self._stop_flag:
+            return
         ts = datetime.now().strftime("%H:%M:%S")
         Clock.schedule_once(lambda dt: self.on_log(ts, tag, msg))
 
@@ -1119,6 +1136,8 @@ class HC05Manager:
         return False, f"Disconnected {disconnected_count}"
 
     def notify_summary_status(self):
+        if self._stop_flag:
+            return
         any_conn, txt = self.get_summary_status()
         self.on_status(any_conn, txt)
 
@@ -1176,20 +1195,24 @@ class HC05Manager:
         time.sleep(1.0)
         while not self._stop_flag:
             try:
-                adapter_on = is_bt_adapter_enabled()
-                for slot in MAC_SLOTS:
-                    ch = self.channels[slot]
-                    is_live = ch.sync_state(silent=True, probe_link=True)
-                    if (
-                        adapter_on
-                        and ch.enabled
-                        and self.auto_connect
-                        and ch.mac_address
-                        and not is_live
-                        and not ch.connecting
-                    ):
-                        ch.connect_worker()
-                Clock.schedule_once(lambda dt: self.notify_summary_status())
+                if not self._is_paused:
+                    adapter_on = is_bt_adapter_enabled()
+                    for slot in MAC_SLOTS:
+                        if self._stop_flag or self._is_paused:
+                            break
+                        ch = self.channels[slot]
+                        is_live = ch.sync_state(silent=True, probe_link=True)
+                        if (
+                            adapter_on
+                            and ch.enabled
+                            and self.auto_connect
+                            and ch.mac_address
+                            and not is_live
+                            and not ch.connecting
+                        ):
+                            ch.connect_worker()
+                    if not self._stop_flag:
+                        Clock.schedule_once(lambda dt: self.notify_summary_status())
             except Exception:
                 pass
             time.sleep(5.0)
@@ -1598,7 +1621,7 @@ class DashboardScreen(Screen):
             halign='left',
             valign='middle',
             shorten=True,
-            size_hint_x=0.56
+            size_hint_x=0.54
         )
         left_lbl.bind(size=left_lbl.setter('text_size'))
 
@@ -1610,7 +1633,7 @@ class DashboardScreen(Screen):
             halign='right',
             valign='middle',
             shorten=True,
-            size_hint_x=0.44
+            size_hint_x=0.46
         )
         right_lbl.bind(size=right_lbl.setter('text_size'))
 
@@ -1767,18 +1790,19 @@ class DashboardScreen(Screen):
         return card
 
     def _build_sensor_card(self, idx, w):
-        """Auto-updating live Sensor Display card with uniform row height."""
+        """Auto-updating live Sensor Display card showing which MAC sent the latest reading."""
         app = App.get_running_app()
         pin = str(w.get("pin", "0")).strip()
         mac_slot = w.get("mac_slot", "MAC 1")
         unit = w.get("unit", "")
         saved_rx = app.sensor_values.get(pin)
+        last_src = app.sensor_sources.get(pin, mac_slot)
 
         card = GlassBox(orientation='vertical', padding=[dp(8), dp(6)], spacing=dp(5))
         hdr, rx_status = self._build_compact_header(
             idx, w,
-            left_text=f"{mac_slot} | Pin {pin}",
-            right_text="LIVE RX" if saved_rx is not None else "WAIT",
+            left_text=f"Pin {pin} | {last_src}",
+            right_text=f"RX {last_src[-1]}" if saved_rx is not None else "WAIT",
             right_color=TEXT_CYAN if saved_rx is not None else TEXT_MUTED,
             right_bold=(saved_rx is not None)
         )
@@ -1920,12 +1944,12 @@ class DashboardScreen(Screen):
         card.add_widget(pad)
         return card
 
-    def apply_sensor_value(self, pin, val):
-        """Update all visible Sensor Display cards bound to this pin."""
+    def apply_sensor_value(self, pin, val, source_mac="MAC 1"):
+        """Update all visible Sensor Display cards bound to this pin with source MAC."""
         if pin in self.sensor_labels:
             for read_lbl, rx_status, unit in self.sensor_labels[pin]:
                 read_lbl.text = f"{val} {unit}".strip()
-                rx_status.text = "LIVE RX"
+                rx_status.text = f"RX {source_mac}"
                 rx_status.bold = True
                 rx_status.color = TEXT_CYAN
 
@@ -2431,7 +2455,6 @@ class ProtocolScreen(Screen):
             sp.bind(text=self.on_any_change)
 
             if slot_cfg["locked"]:
-                # Boxes 1 to 4 value fields are non-editable
                 inp = LockedBoxField(text=slot_cfg["default"], size_hint_x=0.36)
             else:
                 inp = StyledInput(hint="Val / Msg", size_hint_x=0.36)
@@ -3147,7 +3170,6 @@ class TerminalScreen(Screen):
             qb.bind(on_release=lambda x, k=kw: App.get_running_app().send_protocol(**k))
             quick_row.add_widget(qb)
 
-        # Manual Sim RX button for testing sensor RX and reply handshake in Preview mode
         qb_rx = GlassButton(text="Sim RX", font_size=11, bg_color=BTN_WARN)
         qb_rx.bind(on_release=self.trigger_sim_rx)
         quick_row.add_widget(qb_rx)
@@ -3299,22 +3321,21 @@ class ProControllerApp(App):
         if self.active_profile not in self.profiles:
             self.active_profile = next(iter(self.profiles.keys()))
 
-        # Ensure existing widgets have mac_slot defaulted cleanly to MAC 1
         for wlist in self.profiles.values():
             if isinstance(wlist, list):
                 for w in wlist:
                     if isinstance(w, dict) and w.get("mac_slot") not in MAC_SLOTS:
                         w["mac_slot"] = "MAC 1"
 
-        # Restore persisted widget values/states and sensor readings
         loaded_states = saved.get("widget_states")
         self.widget_states = loaded_states if isinstance(loaded_states, dict) else {}
         loaded_sensors = saved.get("sensor_values")
         self.sensor_values = loaded_sensors if isinstance(loaded_sensors, dict) else {}
+        loaded_sources = saved.get("sensor_sources")
+        self.sensor_sources = loaded_sources if isinstance(loaded_sources, dict) else {}
 
         self.bt_settings = normalize_bt_settings(saved.get("bt_settings"))
 
-        # Upgrade any existing settings cleanly to unified Start-End + 2-option 10-Box rules
         ps = saved.get("protocol_settings") or {}
         boxes = sanitize_boxes(ps.get("boxes"))
 
@@ -3374,15 +3395,28 @@ class ProControllerApp(App):
             self.protocol_settings.get("reply_timeout", 3.0)
         )
 
-        # Ensure dashboard widgets and saved states render immediately on startup
         Clock.schedule_once(lambda dt: self._init_dashboard_ready(), 0)
         return self.sm
 
     def on_start(self):
+        if hasattr(self, "bt"):
+            self.bt.set_paused(False)
         apply_android_fullscreen()
 
+    def on_pause(self):
+        if hasattr(self, "bt"):
+            self.bt.set_paused(True)
+        try:
+            self.save_state()
+        except Exception:
+            pass
+        return True
+
     def on_resume(self):
-        Clock.schedule_once(apply_android_fullscreen, 0.1)
+        if hasattr(self, "bt"):
+            self.bt.set_paused(False)
+        Clock.schedule_once(apply_android_fullscreen, 0.35)
+        Clock.schedule_once(lambda dt: self.bt.notify_summary_status() if hasattr(self, "bt") else None, 0.40)
 
     def _init_dashboard_ready(self):
         self.dashboard.refresh_profile_spinner()
@@ -3469,8 +3503,10 @@ class ProControllerApp(App):
         if not pin or not val:
             return
 
+        src_mac = slot_name if slot_name in MAC_SLOTS else "MAC 1"
         self.sensor_values[pin] = val
-        self.dashboard.apply_sensor_value(pin, val)
+        self.sensor_sources[pin] = src_mac
+        self.dashboard.apply_sensor_value(pin, val, source_mac=src_mac)
         self.schedule_save_state()
 
     def get_active_widgets(self):
@@ -3622,6 +3658,7 @@ class ProControllerApp(App):
             "protocol_settings": self.protocol_settings,
             "widget_states": self.widget_states,
             "sensor_values": self.sensor_values,
+            "sensor_sources": self.sensor_sources,
         }
         try:
             tmp_file = self.state_file + ".tmp"
@@ -3635,13 +3672,15 @@ class ProControllerApp(App):
             except Exception:
                 pass
 
-    def on_pause(self):
-        self.save_state()
-        return True
-
     def on_stop(self):
-        self.save_state()
-        self.bt.shutdown()
+        if hasattr(self, "bt"):
+            self.bt.set_paused(True)
+        try:
+            self.save_state()
+        except Exception:
+            pass
+        if hasattr(self, "bt"):
+            self.bt.shutdown()
 
 
 if __name__ == '__main__':
