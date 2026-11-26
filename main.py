@@ -125,7 +125,11 @@ TEXT_MAIN = (0.94, 0.97, 1.0, 1)
 TEXT_MUTED = (0.62, 0.74, 0.90, 1)
 TEXT_CYAN = (0.40, 0.86, 1.0, 1)
 
-# Uniform Dashboard Card Sizing & Safe Margins
+# Uniform Dashboard Card Sizing, Profile Limit & Safe Margins
+MAX_WIDGETS_PER_PROFILE = 20
+PER_CARD_STEP = 0.05
+FADE_DURATION = 0.16
+
 ROW_CARD_H = dp(88)
 ROW_CARD_H_EDIT = dp(116)
 ROW_GAP = dp(6)
@@ -170,8 +174,8 @@ APP_GUIDE_TEXT = (
     "- When HC-05 power is OFF, status updates to 'Disconnected' within 5 seconds and auto-reconnects once power is ON.\n"
     "- Before sending any widget/manual packet, the app checks the target MAC connection and connects first if disconnected.\n\n"
 
-    "[b][color=66ddff]2. DYNAMIC DASHBOARD & WIDGETS[/color][/b]\n"
-    "- Tap '+ Widget' on the top bar to add Switch, Push Button, Slider (PWM), Joystick, or Sensor Display.\n"
+    "[b][color=66ddff]2. DYNAMIC DASHBOARD & WIDGETS (MAX 20 / PROFILE)[/color][/b]\n"
+    "- Tap '+ Widget' on the top bar to add Switch, Push Button, Slider (PWM), Joystick, or Sensor Display (up to 20 widgets per profile).\n"
     "- Each widget has a 'Target Controller' selector (MAC 1, MAC 2, or MAC 3) so data routes to that controller.\n"
     "- Sensor Display shows which MAC sent the latest reading (e.g. RX: MAC 1 / MAC 2 / MAC 3).\n"
     "- Switch, Push Button, and Sensor Display take half width (2 per row); Slider and Joystick use full width.\n"
@@ -360,19 +364,16 @@ def refresh_widget_tree(widget):
         refresh_widget_tree(child)
 
 
-def animate_staggered_reveal(targets, total_window=0.92, fade_duration=0.22):
-    """Reveal a list of widgets smoothly over ~1s in staggered steps to avoid GPU spikes."""
+def animate_per_card_reveal(targets, step=PER_CARD_STEP, fade_duration=FADE_DURATION):
+    """Reveal widgets using a fixed per-card step time (no dynamic window division)."""
     items = [w for w in targets if w is not None]
     if not items:
         return
 
-    count = len(items)
-    step = (total_window / count) if count > 1 else 0.0
-
     for idx, w in enumerate(items):
         Animation.cancel_all(w, 'opacity')
         w.opacity = 0.0
-        delay = min(total_window, idx * step)
+        delay = idx * step
 
         def _start_item(dt, target=w):
             refresh_widget_tree(target)
@@ -638,6 +639,7 @@ class JoystickPad(Widget):
 class HC05Channel:
     """Manages a single HC-05 SPP connection with ACK handshake, timeout, and live status."""
     SPP_UUID = "00001101-0000-1000-8000-00805F9B34FB"
+    RX_BATCH_DELAY = 0.08
 
     def __init__(self, slot_name, manager, on_log, on_rx_data, on_slot_status):
         self.slot_name = slot_name
@@ -665,12 +667,44 @@ class HC05Channel:
         self._tx_lock = threading.Lock()
         self._connect_lock = threading.Lock()
         self._io_lock = threading.Lock()
+        self._pending_logs = []
+        self._pending_rx = []
+        self._batch_lock = threading.Lock()
+        self._batch_ev = None
+
+    def _flush_pending_batches(self, dt):
+        with self._batch_lock:
+            self._batch_ev = None
+            logs = list(self._pending_logs)
+            self._pending_logs.clear()
+            rxs = list(self._pending_rx)
+            self._pending_rx.clear()
+
+        if self.manager._stop_flag:
+            return
+
+        for ts, tag, full_msg in logs:
+            self.on_log(ts, tag, full_msg)
+
+        for clean_line in rxs:
+            if self.on_rx_data:
+                self.on_rx_data(clean_line, self.slot_name)
+
+    def _schedule_batch_flush_locked(self):
+        if self._batch_ev is None:
+            self._batch_ev = Clock.schedule_once(self._flush_pending_batches, self.RX_BATCH_DELAY)
 
     def _emit_log(self, tag, msg):
         if self.manager._stop_flag:
             return
         ts = datetime.now().strftime("%H:%M:%S")
-        Clock.schedule_once(lambda dt: self.on_log(ts, tag, f"[{self.slot_name}] {msg}"))
+        full_msg = f"[{self.slot_name}] {msg}"
+        if tag == "RX":
+            with self._batch_lock:
+                self._pending_logs.append((ts, tag, full_msg))
+                self._schedule_batch_flush_locked()
+        else:
+            Clock.schedule_once(lambda dt, t=ts, g=tag, m=full_msg: self.on_log(t, g, m))
 
     def _set_slot_status(self, is_connected, text):
         self.status_text = text
@@ -907,7 +941,9 @@ class HC05Channel:
         clean_line = line.strip()
         self._emit_log("RX", clean_line)
         if self.on_rx_data:
-            Clock.schedule_once(lambda dt, ln=clean_line, s=self.slot_name: self.on_rx_data(ln, s))
+            with self._batch_lock:
+                self._pending_rx.append(clean_line)
+                self._schedule_batch_flush_locked()
 
         next_cmd = None
         unlocked = False
@@ -1071,6 +1107,12 @@ class HC05Channel:
             self._cancel_timer_locked()
             self._waiting_ack = False
             self._tx_queue.clear()
+        with self._batch_lock:
+            if self._batch_ev is not None:
+                Clock.unschedule(self._batch_ev)
+                self._batch_ev = None
+            self._pending_logs.clear()
+            self._pending_rx.clear()
         self._close_socket()
         self._set_slot_status(False, status_label if self.enabled else "OFF")
         if not silent:
@@ -1464,6 +1506,15 @@ class DashboardScreen(Screen):
         self.rebuild_dashboard(reset_scroll=False)
 
     def add_new_widget(self, *args):
+        app = App.get_running_app()
+        wlist = app.get_active_widgets()
+        if len(wlist) >= MAX_WIDGETS_PER_PROFILE:
+            self.update_mini_log(
+                datetime.now().strftime("%H:%M:%S"),
+                "SYS",
+                f"Max {MAX_WIDGETS_PER_PROFILE} widgets per profile! Create a new profile."
+            )
+            return
         editor = self.manager.get_screen('editor')
         editor.load_widget(widget_index=None)
         self.manager.transition = SlideTransition(direction='left')
@@ -2114,11 +2165,13 @@ class WidgetEditorScreen(Screen):
         self.in_unit = StyledInput(hint="Optional unit")
         card.add_widget(self.in_unit)
 
+        self.editor_card = card
         form.add_widget(card)
 
         btn_save = GlassButton(text="Save Widget", font_size=15, bg_color=BTN_SUCCESS,
                                size_hint_y=None, height=dp(50))
         btn_save.bind(on_release=self.save_widget)
+        self.btn_save = btn_save
         form.add_widget(btn_save)
 
         self.scroll.add_widget(form)
@@ -2193,6 +2246,10 @@ class WidgetEditorScreen(Screen):
     def save_widget(self, *args):
         app = App.get_running_app()
         wlist = app.get_active_widgets()
+        if self.editing_index is None and len(wlist) >= MAX_WIDGETS_PER_PROFILE:
+            self.hdr_lbl.text = f"Max {MAX_WIDGETS_PER_PROFILE} Widgets Reached"
+            return
+
         wtype = self.sp_type.text
         ms = self.sp_mac_slot.text if self.sp_mac_slot.text in MAC_SLOTS else "MAC 1"
         wdata = {
@@ -3063,7 +3120,7 @@ class ProfileManagerScreen(Screen):
             return
         if duplicate_current:
             src_profile = app.active_profile
-            app.profiles[name] = copy.deepcopy(app.get_active_widgets())
+            app.profiles[name] = copy.deepcopy(app.get_active_widgets()[:MAX_WIDGETS_PER_PROFILE])
             app.copy_profile_states(src_profile, name)
         else:
             app.profiles[name] = []
@@ -3188,6 +3245,9 @@ class TerminalScreen(Screen):
         self.add_widget(root)
 
     def on_pre_enter(self):
+        self.sync_from_app_state()
+
+    def sync_from_app_state(self):
         app = App.get_running_app()
         ex_rx = app.get_rx_format_string("0", "28.5")
         self.cmd_input.hint_text = f"Manual TX (or {ex_rx} & tap Sim RX)"
@@ -3378,6 +3438,7 @@ class ProControllerApp(App):
         self.title = "HC05 CONTROLLER"
         self._resume_anim_ev = None
         self._resume_status_ev = None
+        self._resume_fs_ev = None
         apply_android_fullscreen()
 
         try:
@@ -3433,11 +3494,15 @@ class ProControllerApp(App):
         active_prof = saved.get("active_profile")
         self.active_profile = active_prof if active_prof in self.profiles else next(iter(self.profiles.keys()))
 
-        for wlist in self.profiles.values():
+        for pname, wlist in list(self.profiles.items()):
             if isinstance(wlist, list):
-                for w in wlist:
-                    if isinstance(w, dict) and w.get("mac_slot") not in MAC_SLOTS:
+                trimmed = [w for w in wlist[:MAX_WIDGETS_PER_PROFILE] if isinstance(w, dict)]
+                for w in trimmed:
+                    if w.get("mac_slot") not in MAC_SLOTS:
                         w["mac_slot"] = "MAC 1"
+                self.profiles[pname] = trimmed
+            else:
+                self.profiles[pname] = []
 
         loaded_states = saved.get("widget_states")
         self.widget_states = copy.deepcopy(loaded_states) if isinstance(loaded_states, dict) else {}
@@ -3483,34 +3548,49 @@ class ProControllerApp(App):
         if self._resume_status_ev is not None:
             Clock.unschedule(self._resume_status_ev)
             self._resume_status_ev = None
+        if self._resume_fs_ev is not None:
+            Clock.unschedule(self._resume_fs_ev)
+            self._resume_fs_ev = None
 
-    def redraw_ui_staggered(self, total_window=0.92, reset_scroll=False):
-        """Rebuild screen UI from JSON state and reveal over ~1s in steps."""
+    def _sync_screen_state(self, screen, reset_scroll=False):
+        """Sync only the given screen from current app state."""
+        if screen is self.dashboard:
+            self.dashboard.refresh_profile_spinner()
+            self.dashboard.rebuild_dashboard(reset_scroll=reset_scroll)
+        elif screen is self.protocol:
+            self.protocol.sync_from_app_state()
+        elif screen is self.connection:
+            self.connection.sync_from_app_state()
+        elif screen is self.profiles_screen:
+            self.profiles_screen.refresh_list()
+        elif screen is self.terminal:
+            self.terminal.sync_from_app_state()
+
+    def _get_screen_stagger_targets(self, screen):
+        """Return ordered UI targets for the active screen only."""
+        if screen is self.dashboard:
+            return self.dashboard.get_stagger_targets()
+        if screen is self.protocol:
+            return list(self.protocol.format_cards)
+        if screen is self.connection:
+            return [self.connection.top_ctrl_card] + list(self.connection.slot_cards)
+        if screen is self.profiles_screen:
+            return [self.profiles_screen.new_card] + list(self.profiles_screen.list_box.children)
+        if screen is self.terminal:
+            return [self.terminal.term_card, self.terminal.cmd_row]
+        if screen is self.editor:
+            return [self.editor.editor_card, self.editor.btn_save]
+        return [screen] if screen is not None else []
+
+    def redraw_ui_staggered(self, step=PER_CARD_STEP, reset_scroll=False):
+        """Rebuild ONLY the active screen from JSON state and reveal with fixed per-card step."""
         self._cancel_resume_timers()
         if not hasattr(self, "sm"):
             return
 
-        # Rebuild screens from JSON state immediately
-        self.dashboard.refresh_profile_spinner()
-        self.dashboard.rebuild_dashboard(reset_scroll=reset_scroll)
-        self.protocol.sync_from_app_state()
-        self.connection.sync_from_app_state()
-        self.profiles_screen.refresh_list()
-
-        # Pre-dim current screen so staggered ~1s reveal is smooth and never jumps
         cur_screen = self.sm.current_screen
-        if cur_screen is self.dashboard:
-            targets = self.dashboard.get_stagger_targets()
-        elif cur_screen is self.protocol:
-            targets = list(self.protocol.format_cards)
-        elif cur_screen is self.connection:
-            targets = [self.connection.top_ctrl_card] + list(self.connection.slot_cards)
-        elif cur_screen is self.profiles_screen:
-            targets = [self.profiles_screen.new_card] + list(self.profiles_screen.list_box.children)
-        elif cur_screen is self.terminal:
-            targets = [self.terminal.term_card, self.terminal.cmd_row]
-        else:
-            targets = [cur_screen]
+        self._sync_screen_state(cur_screen, reset_scroll=reset_scroll)
+        targets = self._get_screen_stagger_targets(cur_screen)
 
         for w in targets:
             if w is not None:
@@ -3519,10 +3599,9 @@ class ProControllerApp(App):
 
         def _run_stagger(dt):
             self._resume_anim_ev = None
-            animate_staggered_reveal(targets, total_window=total_window, fade_duration=0.22)
+            animate_per_card_reveal(targets, step=step, fade_duration=FADE_DURATION)
 
-        # Short 0.08s settle delay before starting the ~1s staggered reveal
-        self._resume_anim_ev = Clock.schedule_once(_run_stagger, 0.08)
+        self._resume_anim_ev = Clock.schedule_once(_run_stagger, 0.05)
 
     def on_start(self):
         if hasattr(self, "bt"):
@@ -3540,22 +3619,31 @@ class ProControllerApp(App):
         return True
 
     def on_resume(self):
+        self._cancel_resume_timers()
         if hasattr(self, "bt"):
             self.bt.set_paused(False)
-        apply_android_fullscreen()
-        Clock.schedule_once(apply_android_fullscreen, 0.35)
+
+        def _run_fs(dt):
+            self._resume_fs_ev = None
+            apply_android_fullscreen()
+
+        self._resume_fs_ev = Clock.schedule_once(_run_fs, 0.25)
         self.reload_from_json(apply_to_bt=True)
-        self.redraw_ui_staggered(total_window=0.92, reset_scroll=False)
+        cur_screen = self.sm.current_screen if hasattr(self, "sm") else None
+        targets = self._get_screen_stagger_targets(cur_screen)
+        self.redraw_ui_staggered(step=PER_CARD_STEP, reset_scroll=False)
+
+        status_delay = max(0.35, len(targets) * PER_CARD_STEP + FADE_DURATION + 0.05)
 
         def _sync_status(dt):
             self._resume_status_ev = None
             if hasattr(self, "bt"):
                 self.bt.notify_summary_status()
 
-        self._resume_status_ev = Clock.schedule_once(_sync_status, 0.96)
+        self._resume_status_ev = Clock.schedule_once(_sync_status, status_delay)
 
     def _init_dashboard_ready(self):
-        self.redraw_ui_staggered(total_window=0.92, reset_scroll=True)
+        self.redraw_ui_staggered(step=PER_CARD_STEP, reset_scroll=True)
         self.bt.notify_summary_status()
 
     # --- Per-Profile Persistent Widget State Helpers ---
