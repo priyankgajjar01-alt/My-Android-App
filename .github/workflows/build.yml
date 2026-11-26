@@ -84,6 +84,7 @@ jobs:
 
         rm -rf latest
         unzip -q commandlinetools-linux-11076708_latest.zip
+        rm -f commandlinetools-linux-11076708_latest.zip
         mv cmdline-tools latest
 
         if [ -d "$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin" ]; then
@@ -167,6 +168,7 @@ jobs:
         [ -f main.py ] && echo "main.py FOUND" || (echo "main.py MISSING" && exit 1)
         [ -f icon.png ] && echo "icon.png FOUND" || (echo "icon.png MISSING" && exit 1)
 
+        rm -rf build_src
         mkdir -p build_src
         cp main.py icon.png build_src/
 
@@ -203,9 +205,9 @@ jobs:
     # Step 6: Copy generated APK to temp
     - name: Find & Prepare APK
       run: |
-        NEW_APK=$(find . -type f -name "*.apk" 2>/dev/null | grep -v "APK/" | grep -v "gradle" | head -n 1)
+        NEW_APK=$(find "$GITHUB_WORKSPACE" "$HOME" -type f -name "*.apk" 2>/dev/null | grep -v "/APK/" | grep -v "/gradle/" | xargs -r ls -t 2>/dev/null | head -n 1)
 
-        if [ ! -z "$NEW_APK" ]; then
+        if [ -n "$NEW_APK" ] && [ -f "$NEW_APK" ]; then
           echo "APK found: $NEW_APK"
           cp "$NEW_APK" "/tmp/HC05_CONTROLLER_V${{ env.CURRENT_VERSION }}.apk"
           echo "Prepared in /tmp/HC05_CONTROLLER_V${{ env.CURRENT_VERSION }}.apk"
@@ -221,16 +223,13 @@ jobs:
         git config user.name "github-actions"
         git config user.email "actions@github.com"
 
-        # Sync latest main branch first to avoid merge conflicts
-        git fetch origin main
-        git checkout -f -B main origin/main
+        git checkout -B main
+        git pull --rebase origin main || true
 
-        # Save new APK and updated version
         mkdir -p APK
         cp "/tmp/HC05_CONTROLLER_V${{ env.CURRENT_VERSION }}.apk" "APK/HC05_CONTROLLER_V${{ env.CURRENT_VERSION }}.apk"
         echo "${{ env.NEXT_VERSION }}" > version.txt
 
-        # Commit and push to GitHub
         git add APK/ version.txt
         git commit -m "Add New HC05 CONTROLLER APK V${{ env.CURRENT_VERSION }} [skip ci]"
-        git push origin main
+        git push origin main || (git pull --rebase origin main && git push origin main)
