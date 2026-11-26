@@ -140,6 +140,20 @@ MODE_ALL_COMBINED = "All Widgets (Combined)"
 SEND_MODE_OPTIONS = (MODE_SINGLE_10BOX, MODE_ALL_COMBINED)
 COMBINED_STYLE_OPTIONS = ("Values Only", "Pin=Value")
 
+# Terminal-Only Send All Box Value Selector Options (Box Number : Field)
+TERMINAL_BOX_OPTIONS = (
+    "1: PIN",
+    "2: X",
+    "3: Y",
+    "4: VAL",
+    "5: CUSTOM1",
+    "6: CUSTOM2",
+    "7: CUSTOM3",
+    "8: CUSTOM4",
+    "9: CMD",
+    "10: TEXT/MSG",
+)
+
 # Combined Start-End Wrapper Pairs, Separators, and Newline Options
 WRAPPER_PAIRS = {
     "< >": ("<", ">"),
@@ -189,6 +203,7 @@ APP_GUIDE_TEXT = (
     "- Format: [b][color=55ff99][Start]pin[Separator]value[End]\\n[/color][/b]\n\n"
 
     "[b][color=66ddff]7. TERMINAL / LOG VIEW[/color][/b]\n"
+    "- Select a box value (e.g. 1: PIN, 2: X, 3: Y, 4: VAL) beside 'Send All' to send that field of all widgets with the selected box number in the first box.\n"
     "- [color=44ccff][TX][/color] = Sent  |  [color=44ee88][RX][/color] = Received  |  [color=ffcc55][SYS][/color] = System  |  [color=ff5555][ERR][/color] = Error"
 )
 
@@ -3117,7 +3132,7 @@ class ProfileManagerScreen(Screen):
 
 
 # ==========================================
-# Screen 6: Terminal / Log View (with App Working Guide Button)
+# Screen 6: Terminal / Log View (with Box-Field Send All & App Guide)
 # ==========================================
 class TerminalScreen(Screen):
     def __init__(self, **kwargs):
@@ -3155,22 +3170,25 @@ class TerminalScreen(Screen):
         top_bar.add_widget(btn_clear)
         root.add_widget(top_bar)
 
-        # Quick test packet buttons
-        quick_row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(6))
-        qb_all = GlassButton(text="Send All", font_size=11, bg_color=BTN_SUCCESS)
-        qb_all.bind(on_release=lambda x: App.get_running_app().send_all_widgets(mac_slot="MAC 1"))
+        # Terminal-only Send All + Widget Box Value Selector + Sim RX
+        quick_row = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(6))
+        qb_all = GlassButton(text="Send All", font_size=11.5, bg_color=BTN_SUCCESS, size_hint_x=0.30)
+        qb_all.bind(on_release=self.trigger_terminal_send_all)
         quick_row.add_widget(qb_all)
 
-        tests = [
-            ("Test SW", dict(cmd="D", pin="13", val="1", mac_slot="MAC 1")),
-            ("Test PWM", dict(cmd="A", pin="9", val="150", mac_slot="MAC 1")),
-        ]
-        for lbl, kw in tests:
-            qb = GlassButton(text=lbl, font_size=11, bg_color=CARD_BG)
-            qb.bind(on_release=lambda x, k=kw: App.get_running_app().send_protocol(**k))
-            quick_row.add_widget(qb)
+        self.sp_term_box = Spinner(
+            text=TERMINAL_BOX_OPTIONS[0],
+            values=TERMINAL_BOX_OPTIONS,
+            background_normal='',
+            background_color=(0.14, 0.34, 0.62, 0.78),
+            color=TEXT_CYAN,
+            font_size=dp(11.5),
+            bold=True,
+            size_hint_x=0.44
+        )
+        quick_row.add_widget(self.sp_term_box)
 
-        qb_rx = GlassButton(text="Sim RX", font_size=11, bg_color=BTN_WARN)
+        qb_rx = GlassButton(text="Sim RX", font_size=11.5, bg_color=BTN_WARN, size_hint_x=0.26)
         qb_rx.bind(on_release=self.trigger_sim_rx)
         quick_row.add_widget(qb_rx)
         root.add_widget(quick_row)
@@ -3207,6 +3225,95 @@ class TerminalScreen(Screen):
         app = App.get_running_app()
         ex_rx = app.get_rx_format_string("0", "28.5")
         self.cmd_input.hint_text = f"Manual TX (or {ex_rx} & tap Sim RX)"
+
+    def _parse_selected_box(self):
+        """Return (box_number, field_name) from the Terminal-only box selector."""
+        sel = self.sp_term_box.text
+        try:
+            num_str, field = sel.split(":", 1)
+            box_num = int(num_str.strip())
+            field = field.strip()
+            if 1 <= box_num <= 10:
+                return box_num, field
+        except Exception:
+            pass
+        return 1, "PIN"
+
+    def build_terminal_field_packet(self):
+        """Build Terminal-only Send All packet: first box = selected box number, then every widget's selected value."""
+        app = App.get_running_app()
+        cfg = app.protocol_settings
+        start_m = cfg.get("start_marker", "<")
+        sep = cfg.get("separator", ":")
+        end_m = cfg.get("end_marker", ">")
+        boxes = sanitize_boxes(cfg.get("boxes"))
+
+        box_num, field = self._parse_selected_box()
+        box_default = str(boxes[box_num - 1].get("default", "0"))
+
+        tokens = [str(box_num)]
+        for w in app.get_active_widgets():
+            wid = w.get("id", "")
+            wtype = w.get("type", "Switch")
+            st = app.get_widget_state(wid)
+
+            if field == "PIN":
+                raw = str(w.get("pin", "")).strip()
+                v = raw if raw != "" else box_default
+            elif field == "X":
+                if wtype == "Joystick":
+                    mn = safe_int(w.get("min_val"), 0)
+                    mx = safe_int(w.get("max_val"), 255)
+                    if mx <= mn:
+                        mx = mn + 255
+                    mid = str(int((mn + mx) / 2))
+                    v = str(st.get("x", mid))
+                else:
+                    v = box_default
+            elif field == "Y":
+                if wtype == "Joystick":
+                    mn = safe_int(w.get("min_val"), 0)
+                    mx = safe_int(w.get("max_val"), 255)
+                    if mx <= mn:
+                        mx = mn + 255
+                    mid = str(int((mn + mx) / 2))
+                    v = str(st.get("y", mid))
+                else:
+                    v = box_default
+            elif field == "VAL":
+                if wtype == "Slider":
+                    mn = str(safe_int(w.get("min_val"), 0))
+                    v = str(st.get("val", mn))
+                elif wtype == "Sensor Display":
+                    pin = str(w.get("pin", "0")).strip()
+                    v = str(app.sensor_values.get(pin, w.get("val_off", box_default)))
+                else:
+                    v = str(st.get("val", w.get("val_off", box_default)))
+            elif field == "CUSTOM1":
+                raw = str(w.get("custom1", "")).strip()
+                v = raw if raw != "" else box_default
+            elif field == "CUSTOM2":
+                raw = str(w.get("custom2", "")).strip()
+                v = raw if raw != "" else box_default
+            elif field == "CUSTOM3":
+                raw = str(w.get("custom3", "")).strip()
+                v = raw if raw != "" else box_default
+            elif field == "CUSTOM4":
+                raw = str(w.get("custom4", "")).strip()
+                v = raw if raw != "" else box_default
+            elif field == "CMD":
+                raw = str(w.get("cmd", "")).strip()
+                v = raw if raw != "" else box_default
+            else:
+                v = box_default
+
+            tokens.append(v)
+
+        return f"{start_m}{sep.join(tokens)}{end_m}"
+
+    def trigger_terminal_send_all(self, *args):
+        pkt = self.build_terminal_field_packet()
+        App.get_running_app().bt.send(pkt, slot_name="MAC 1")
 
     def open_app_guide(self, *args):
         """Show complete English documentation explaining how all app features work."""
