@@ -138,7 +138,12 @@ MAC_SLOTS = ("MAC 1", "MAC 2", "MAC 3")
 MODE_SINGLE_10BOX = "10-Box (Single Widget)"
 MODE_ALL_COMBINED = "All Widgets (Combined)"
 SEND_MODE_OPTIONS = (MODE_SINGLE_10BOX, MODE_ALL_COMBINED)
-COMBINED_STYLE_OPTIONS = ("Values Only", "Pin=Value")
+
+# Universal Packet Framing Constants (< start, > end, , separator, \n newline)
+START_MARKER = "<"
+END_MARKER = ">"
+SEPARATOR = ","
+LINE_ENDING = "\n"
 
 # Terminal-Only Send All Box Value Selector Options (Box Number : Field)
 TERMINAL_BOX_OPTIONS = (
@@ -153,18 +158,6 @@ TERMINAL_BOX_OPTIONS = (
     "9: CMD",
     "10: TEXT/MSG",
 )
-
-# Combined Start-End Wrapper Pairs, Separators, and Newline Options
-WRAPPER_PAIRS = {
-    "< >": ("<", ">"),
-    "[ ]": ("[", "]"),
-    "{ }": ("{", "}"),
-    "$ #": ("$", "#"),
-    "None": ("", ""),
-}
-WRAPPER_OPTIONS = ("< >", "[ ]", "{ }", "$ #", "None")
-SEPARATOR_OPTIONS = (":", ",", ";", "|", "-")
-NEWLINE_OPTIONS = ("\\n", "None")
 
 # English App Working Guide text (displayed from Log -> Guide button)
 APP_GUIDE_TEXT = (
@@ -187,20 +180,20 @@ APP_GUIDE_TEXT = (
     "- Use the Profile dropdown or 'Profiles' button to manage separate layouts.\n"
     "- You can create new blank profiles or save a copy of your current layout anytime.\n\n"
 
-    "[b][color=66ddff]4. PACKET SEND FORMAT (FORMAT SCREEN)[/color][/b]\n"
+    "[b][color=66ddff]4. UNIVERSAL PACKET FORMAT (< , > + \\n)[/color][/b]\n"
+    "- All packets use [b]<[/b] start, [b],[/b] separator, [b]>[/b] end, and [b]\\n[/b] newline.\n"
     "- [b]10-Box (Single Widget):[/b] Sends only the widget you tap/move using 10 dedicated boxes.\n"
     "- [b]All Widgets (Combined):[/b] Sends live values together in ONE single packet.\n"
-    "- Joystick always sends X and Y together in a single packet.\n"
-    "- Configure Start-End pair, Separator, and Newline (\\n or None).\n\n"
+    "- Joystick always sends X and Y together in a single packet.\n\n"
 
     "[b][color=66ddff]5. REPLY HANDSHAKE & TIMEOUT[/color][/b]\n"
     "- Turn ON 'Wait for Controller Reply' in Format settings to wait for controller reply.\n"
     "- Tap 'Edit' to change Expected Reply (e.g. OK) and Wait Timeout in seconds.\n"
     "- Tap 'Unlock' in Terminal anytime to clear the queue and unlock immediately.\n\n"
 
-    "[b][color=66ddff]6. SENSOR DISPLAY RECEIVE FORMAT (SYNCED 2-BOX)[/color][/b]\n"
+    "[b][color=66ddff]6. SENSOR DISPLAY RECEIVE FORMAT[/color][/b]\n"
     "- Sensor Display widgets update automatically in real time from connected MACs.\n"
-    "- Format: [b][color=55ff99][Start]pin[Separator]value[End]\\n[/color][/b]\n\n"
+    "- Format: [b][color=55ff99]<pin,value>\\n[/color][/b]\n\n"
 
     "[b][color=66ddff]7. TERMINAL / LOG VIEW[/color][/b]\n"
     "- Select a box value (e.g. 1: PIN, 2: X, 3: Y, 4: VAL) beside 'Send All' to send that field of all widgets with the selected box number in the first box.\n"
@@ -296,14 +289,6 @@ def safe_float(val, default=3.0, min_v=0.5, max_v=120.0):
         return f
     except Exception:
         return default
-
-
-def markers_to_wrapper_label(start_m, end_m):
-    """Find matching Start-End dropdown label for stored start and end markers."""
-    for label, (sm, em) in WRAPPER_PAIRS.items():
-        if sm == start_m and em == end_m:
-            return label
-    return "None" if (not start_m and not end_m) else "< >"
 
 
 def sanitize_boxes(raw_boxes):
@@ -634,7 +619,7 @@ class HC05Channel:
         self.connecting = False
         self.status_text = "Disconnected"
 
-        self.line_ending = "\n"
+        self.line_ending = LINE_ENDING
         self.wait_for_reply = False
         self.expected_reply = "OK"
         self.reply_timeout = 3.0
@@ -674,9 +659,6 @@ class HC05Channel:
             self.disconnect(silent=True, status_label="Disconnected")
         elif not self.is_actually_connected():
             self._set_slot_status(False, "Disconnected")
-
-    def set_line_ending(self, ending_key):
-        self.line_ending = "" if ending_key == "None" else "\n"
 
     def set_reply_config(self, wait_enabled, expected_reply, reply_timeout):
         pending_flush = []
@@ -1164,10 +1146,6 @@ class HC05Manager:
             ch.configure(item["mac"], item["enabled"])
         self.notify_summary_status()
 
-    def set_line_ending(self, ending_key):
-        for ch in self.channels.values():
-            ch.set_line_ending(ending_key)
-
     def set_reply_config(self, wait_enabled, expected_reply, reply_timeout=3.0):
         for ch in self.channels.values():
             ch.set_reply_config(wait_enabled, expected_reply, reply_timeout)
@@ -1603,7 +1581,7 @@ class DashboardScreen(Screen):
 
     def _build_compact_header(self, idx, w, left_text, right_text="",
                               right_color=TEXT_MUTED, right_bold=False):
-        """Uniform 2-line header: Name on line 1; Pin|CMD (left) & State (right) on line 2."""
+        """Uniform 2-line header: Name on line 1; Pin|MAC (left) & State (right) on line 2."""
         box = BoxLayout(orientation='vertical', spacing=dp(2), size_hint_y=None)
         box.height = dp(60) if self.edit_mode else dp(33)
 
@@ -1622,7 +1600,6 @@ class DashboardScreen(Screen):
         name_lbl.bind(size=name_lbl.setter('text_size'))
         box.add_widget(name_lbl)
 
-        # Single combined row: Pin | CMD on LEFT, Status/State on RIGHT
         info_row = BoxLayout(
             orientation='horizontal',
             size_hint_y=None,
@@ -2198,7 +2175,7 @@ class WidgetEditorScreen(Screen):
 
 
 # ==========================================
-# Screen 3: Format Mode + Reply Handshake + 10-Box Builder (Save at Top)
+# Screen 3: Format Mode + Reply Handshake + 10-Box Builder (Universal < , > + \n)
 # ==========================================
 class ProtocolScreen(Screen):
     def __init__(self, **kwargs):
@@ -2259,9 +2236,9 @@ class ProtocolScreen(Screen):
         mode_card.bind(minimum_height=mode_card.setter('height'))
 
         m_hdr = Label(
-            text="Packet Send Format Mode",
+            text="Packet Send Mode (Fixed Format: < , > + \\n)",
             font_size=dp(13), bold=True, color=TEXT_CYAN,
-            size_hint_y=None, height=dp(20), halign='left'
+            size_hint_y=None, height=dp(20), halign='left', shorten=True
         )
         m_hdr.bind(size=m_hdr.setter('text_size'))
         mode_card.add_widget(m_hdr)
@@ -2280,31 +2257,9 @@ class ProtocolScreen(Screen):
         self.sp_send_mode.bind(text=self.on_any_change)
         mode_card.add_widget(self.sp_send_mode)
 
-        cstyle_row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
-        cs_lbl = Label(
-            text="Combined Style:",
-            font_size=dp(12), color=TEXT_MUTED,
-            size_hint_x=0.42, halign='left', valign='middle'
-        )
-        cs_lbl.bind(size=cs_lbl.setter('text_size'))
-        self.sp_combined_style = Spinner(
-            text="Values Only",
-            values=COMBINED_STYLE_OPTIONS,
-            size_hint_x=0.58,
-            background_normal='',
-            background_color=INPUT_BG,
-            color=TEXT_MAIN,
-            font_size=dp(12),
-            bold=True
-        )
-        self.sp_combined_style.bind(text=self.on_any_change)
-        cstyle_row.add_widget(cs_lbl)
-        cstyle_row.add_widget(self.sp_combined_style)
-        mode_card.add_widget(cstyle_row)
-
         self.mode_tip_lbl = Label(
             text="",
-            font_size=dp(10), color=TEXT_MUTED,
+            font_size=dp(10.5), color=TEXT_MUTED,
             size_hint_y=None, height=dp(28), halign='left', valign='middle'
         )
         self.mode_tip_lbl.bind(size=self.mode_tip_lbl.setter('text_size'))
@@ -2380,31 +2335,15 @@ class ProtocolScreen(Screen):
         ack_card.add_widget(rep_grid)
 
         ack_tip = Label(
-            text="Tap 'Edit' to change Reply or Timeout. Sensor RX automatically matches Start-End & Sep set below.",
-            font_size=dp(10), color=TEXT_MUTED,
-            size_hint_y=None, height=dp(28), halign='left', valign='middle'
+            text="Tap 'Edit' to change Reply or Timeout. Sensor RX uses <pin,value>\\n.",
+            font_size=dp(10.5), color=TEXT_MUTED,
+            size_hint_y=None, height=dp(26), halign='left', valign='middle'
         )
         ack_tip.bind(size=ack_tip.setter('text_size'))
         ack_card.add_widget(ack_tip)
         body.add_widget(ack_card)
 
-        # --- Card 3: 3-Box Packet Wrapper, Separator & Newline (TX & RX) ---
-        wrap_card = GlassBox(orientation='vertical', padding=dp(10), spacing=dp(8), size_hint_y=None)
-        wrap_card.bind(minimum_height=wrap_card.setter('height'))
-
-        w_hdr = Label(text="Packet Wrapper, Separator & Newline (TX & RX)", font_size=dp(13), bold=True,
-                      color=TEXT_CYAN, size_hint_y=None, height=dp(20), halign='left')
-        w_hdr.bind(size=w_hdr.setter('text_size'))
-        wrap_card.add_widget(w_hdr)
-
-        m_grid = GridLayout(cols=3, spacing=dp(8), size_hint_y=None, height=dp(62))
-        self.sp_wrapper = self._make_small_spinner(m_grid, "Start-End", "< >", WRAPPER_OPTIONS)
-        self.sp_sep = self._make_small_spinner(m_grid, "Sep", ":", SEPARATOR_OPTIONS)
-        self.sp_ending = self._make_small_spinner(m_grid, "Newline", "\\n", NEWLINE_OPTIONS)
-        wrap_card.add_widget(m_grid)
-        body.add_widget(wrap_card)
-
-        # --- Card 4: Live Packet Preview (Auto-Sized) ---
+        # --- Card 3: Live Packet Preview (Auto-Sized) ---
         prev_card = GlassBox(orientation='vertical', padding=dp(12), spacing=dp(6),
                              bg_color=(0.04, 0.10, 0.20, 0.78), size_hint_y=None)
         prev_card.bind(minimum_height=prev_card.setter('height'))
@@ -2422,7 +2361,7 @@ class ProtocolScreen(Screen):
         prev_card.add_widget(self.preview_lbl)
         body.add_widget(prev_card)
 
-        # --- Card 5: 10 Configurable Boxes (Boxes 1-4 Locked, 2 Options Per Box) ---
+        # --- Card 4: 10 Configurable Boxes (Boxes 1-4 Locked, 2 Options Per Box) ---
         boxes_card = GlassBox(orientation='vertical', padding=dp(10), spacing=dp(7), size_hint_y=None)
         boxes_card.bind(minimum_height=boxes_card.setter('height'))
 
@@ -2499,28 +2438,6 @@ class ProtocolScreen(Screen):
         scroll.add_widget(body)
         root.add_widget(scroll)
         self.add_widget(root)
-
-    def _make_small_spinner(self, parent_grid, title, default_val, values):
-        col = BoxLayout(orientation='vertical', spacing=dp(3))
-        l = Label(text=title, font_size=dp(11), color=TEXT_MUTED,
-                  size_hint_y=None, height=dp(16), halign='center')
-        l.bind(size=l.setter('text_size'))
-        sp = Spinner(
-            text=default_val,
-            values=values,
-            size_hint_y=None,
-            height=dp(40),
-            background_normal='',
-            background_color=INPUT_BG,
-            color=TEXT_MAIN,
-            font_size=dp(13),
-            bold=True
-        )
-        sp.bind(text=self.on_any_change)
-        col.add_widget(l)
-        col.add_widget(sp)
-        parent_grid.add_widget(col)
-        return sp
 
     def _refresh_reply_labels(self):
         self.lbl_reply_val.text = self._expected_reply if self._expected_reply else "ANY (Blank)"
@@ -2609,21 +2526,11 @@ class ProtocolScreen(Screen):
 
         smode = ps.get("send_mode", MODE_SINGLE_10BOX)
         self.sp_send_mode.text = smode if smode in SEND_MODE_OPTIONS else MODE_SINGLE_10BOX
-        cstyle = ps.get("combined_style", "Values Only")
-        self.sp_combined_style.text = cstyle if cstyle in COMBINED_STYLE_OPTIONS else "Values Only"
 
         self.sw_wait_reply.active = bool(ps.get("wait_for_reply", False))
         self._expected_reply = str(ps.get("expected_reply", "OK")).strip()
         self._reply_timeout = safe_float(ps.get("reply_timeout", 3.0))
         self._refresh_reply_labels()
-
-        s_mark = ps.get("start_marker", "<")
-        e_mark = ps.get("end_marker", ">")
-        self.sp_wrapper.text = markers_to_wrapper_label(s_mark, e_mark)
-        sep = ps.get("separator", ":")
-        self.sp_sep.text = sep if sep in SEPARATOR_OPTIONS else ":"
-        le = ps.get("line_ending", "\\n")
-        self.sp_ending.text = "None" if le == "None" else "\\n"
 
         boxes = sanitize_boxes(ps.get("boxes"))
         for i in range(10):
@@ -2651,14 +2558,12 @@ class ProtocolScreen(Screen):
                 "source": src,
                 "default": val
             })
-        start_m, end_m = WRAPPER_PAIRS.get(self.sp_wrapper.text, ("<", ">"))
         return {
             "send_mode": self.sp_send_mode.text,
-            "combined_style": self.sp_combined_style.text,
-            "start_marker": start_m,
-            "separator": self.sp_sep.text,
-            "end_marker": end_m,
-            "line_ending": self.sp_ending.text,
+            "start_marker": START_MARKER,
+            "separator": SEPARATOR,
+            "end_marker": END_MARKER,
+            "line_ending": "\\n",
             "wait_for_reply": self.sw_wait_reply.active,
             "expected_reply": self._expected_reply,
             "reply_timeout": self._reply_timeout,
@@ -2677,8 +2582,7 @@ class ProtocolScreen(Screen):
         app = App.get_running_app()
         cfg = self._collect_settings()
         t_val = cfg["reply_timeout"]
-        rx_fmt = app.get_rx_format_string("pin", "value", settings=cfg)
-        nl_txt = "" if cfg["line_ending"] == "None" else "\\n"
+        rx_fmt = app.get_rx_format_string("pin", "value")
         if cfg["wait_for_reply"]:
             ack_str = f"ON (Reply: '{cfg['expected_reply'] or 'ANY'}', Timeout: {t_val:g}s)"
         else:
@@ -2689,13 +2593,13 @@ class ProtocolScreen(Screen):
                 "All Widgets Mode: Sends every dashboard widget's current value together in ONE message."
             )
             self.prev_hdr.text = f"Live Preview: All Widgets ({app.active_profile})"
-            pkt = app.build_combined_packet(settings=cfg)
+            pkt = app.build_combined_packet()
             order_lines = app.get_combined_slot_map()
             order_str = ", ".join(order_lines) if order_lines else "No widgets on screen"
             self.preview_lbl.text = (
-                f"Packet:   {pkt}{nl_txt}\n"
+                f"Packet:   {pkt}\\n\n"
                 f"Order:    {order_str}\n"
-                f"SensorRX: {rx_fmt}\\n (Synced 2-Box)\n"
+                f"SensorRX: {rx_fmt}\\n\n"
                 f"Wait ACK: {ack_str}"
             )
         else:
@@ -2707,24 +2611,20 @@ class ProtocolScreen(Screen):
             p_sw = app.format_packet(cmd="D", pin="13", val="1", settings=cfg)
             p_sld = app.format_packet(cmd="A", pin="9", val="150", settings=cfg)
             self.preview_lbl.text = (
-                f"Joystick: {p_joy}{nl_txt}\n"
-                f"Switch:   {p_sw}{nl_txt}\n"
-                f"Slider:   {p_sld}{nl_txt}\n"
-                f"SensorRX: {rx_fmt}\\n (Synced 2-Box)\n"
+                f"Joystick: {p_joy}\\n\n"
+                f"Switch:   {p_sw}\\n\n"
+                f"Slider:   {p_sld}\\n\n"
+                f"SensorRX: {rx_fmt}\\n\n"
                 f"Wait ACK: {ack_str}"
             )
 
     def reset_default_boxes(self, *args):
         self._loading = True
         self.sp_send_mode.text = MODE_SINGLE_10BOX
-        self.sp_combined_style.text = "Values Only"
         self.sw_wait_reply.active = False
         self._expected_reply = "OK"
         self._reply_timeout = 3.0
         self._refresh_reply_labels()
-        self.sp_wrapper.text = "< >"
-        self.sp_sep.text = ":"
-        self.sp_ending.text = "\\n"
         for i in range(10):
             slot_cfg = BOX_SLOT_CONFIG[i]
             sp, inp = self.box_widgets[i]
@@ -2742,7 +2642,6 @@ class ProtocolScreen(Screen):
         app = App.get_running_app()
         cfg = self._collect_settings()
         app.protocol_settings = cfg
-        app.bt.set_line_ending(cfg["line_ending"])
         app.bt.set_reply_config(
             cfg["wait_for_reply"],
             cfg["expected_reply"],
@@ -3211,7 +3110,7 @@ class TerminalScreen(Screen):
         root.add_widget(term_card)
 
         cmd_row = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
-        self.cmd_input = StyledInput(hint="Manual TX (or <0:28.5> & tap Sim RX)")
+        self.cmd_input = StyledInput(hint="Manual TX (or <0,28.5> & tap Sim RX)")
         self.cmd_input.bind(on_text_validate=self.send_manual)
         btn_send = GlassButton(text="Send", bg_color=BTN_PRIMARY, size_hint_x=None, width=dp(80))
         btn_send.bind(on_release=self.send_manual)
@@ -3243,9 +3142,6 @@ class TerminalScreen(Screen):
         """Build Terminal-only Send All packet: first box = selected box number, then every widget's selected value."""
         app = App.get_running_app()
         cfg = app.protocol_settings
-        start_m = cfg.get("start_marker", "<")
-        sep = cfg.get("separator", ":")
-        end_m = cfg.get("end_marker", ">")
         boxes = sanitize_boxes(cfg.get("boxes"))
 
         box_num, field = self._parse_selected_box()
@@ -3309,7 +3205,7 @@ class TerminalScreen(Screen):
 
             tokens.append(v)
 
-        return f"{start_m}{sep.join(tokens)}{end_m}"
+        return f"{START_MARKER}{SEPARATOR.join(tokens)}{END_MARKER}"
 
     def trigger_terminal_send_all(self, *args):
         pkt = self.build_terminal_field_packet()
@@ -3446,20 +3342,12 @@ class ProControllerApp(App):
         ps = saved.get("protocol_settings") or {}
         boxes = sanitize_boxes(ps.get("boxes"))
 
-        raw_start = ps.get("start_marker", "<")
-        raw_end = ps.get("end_marker", ">")
-        pair_label = markers_to_wrapper_label(raw_start, raw_end)
-        clean_start, clean_end = WRAPPER_PAIRS[pair_label]
-        raw_le = ps.get("line_ending", "\\n")
-        clean_le = "None" if raw_le == "None" else "\\n"
-
         self.protocol_settings = {
             "send_mode": ps.get("send_mode", MODE_SINGLE_10BOX),
-            "combined_style": ps.get("combined_style", "Values Only"),
-            "start_marker": clean_start,
-            "separator": ps.get("separator", ":"),
-            "end_marker": clean_end,
-            "line_ending": clean_le,
+            "start_marker": START_MARKER,
+            "separator": SEPARATOR,
+            "end_marker": END_MARKER,
+            "line_ending": "\\n",
             "wait_for_reply": bool(ps.get("wait_for_reply", False)),
             "expected_reply": str(ps.get("expected_reply", "OK")),
             "reply_timeout": safe_float(ps.get("reply_timeout", 3.0)),
@@ -3495,7 +3383,6 @@ class ProControllerApp(App):
             on_slot_status=on_slot_status
         )
         self.bt.apply_bt_config(self.bt_settings)
-        self.bt.set_line_ending(self.protocol_settings.get("line_ending", "\\n"))
         self.bt.set_reply_config(
             self.protocol_settings.get("wait_for_reply", False),
             self.protocol_settings.get("expected_reply", "OK"),
@@ -3573,35 +3460,20 @@ class ProControllerApp(App):
     def _deferred_save(self, dt):
         self.save_state()
 
-    def get_rx_format_string(self, pin_txt="pin", val_txt="value", settings=None):
-        """Return the active 2-box RX format string using saved Start-End pair and Separator."""
-        cfg = settings if settings is not None else self.protocol_settings
-        start_m = cfg.get("start_marker", "<")
-        sep = cfg.get("separator", ":")
-        end_m = cfg.get("end_marker", ">")
-        return f"{start_m}{pin_txt}{sep}{val_txt}{end_m}"
+    def get_rx_format_string(self, pin_txt="pin", val_txt="value"):
+        """Return the universal 2-box RX format string (<pin,value>)."""
+        return f"{START_MARKER}{pin_txt}{SEPARATOR}{val_txt}{END_MARKER}"
 
     def handle_sensor_rx(self, line, slot_name="MAC 1"):
-        """Strictly parse incoming 2-box sensor data using saved Start-End pair and Separator."""
-        cfg = self.protocol_settings
-        start_m = cfg.get("start_marker", "<")
-        sep = cfg.get("separator", ":")
-        end_m = cfg.get("end_marker", ">")
-
+        """Strictly parse incoming 2-box sensor data using universal <pin,value> framing."""
         s = line.strip()
-        if start_m:
-            if not s.startswith(start_m):
-                return
-            s = s[len(start_m):]
-        if end_m:
-            if not s.endswith(end_m):
-                return
-            s = s[:-len(end_m)]
-
-        if not sep or sep not in s:
+        if not s.startswith(START_MARKER) or not s.endswith(END_MARKER):
+            return
+        inner = s[len(START_MARKER):len(s) - len(END_MARKER)]
+        if SEPARATOR not in inner:
             return
 
-        parts = s.split(sep)
+        parts = inner.split(SEPARATOR)
         if len(parts) != 2:
             return
 
@@ -3635,15 +3507,9 @@ class ProControllerApp(App):
                 idx += 1
         return slots
 
-    def build_combined_packet(self, settings=None, widgets=None):
-        """Build ONE packet containing the live values of all widgets on screen."""
-        cfg = settings if settings is not None else self.protocol_settings
-        start_m = cfg.get("start_marker", "<")
-        sep = cfg.get("separator", ":")
-        end_m = cfg.get("end_marker", ">")
-        style = cfg.get("combined_style", "Values Only")
+    def build_combined_packet(self, widgets=None):
+        """Build ONE universal <...> packet containing live values of all widgets on screen."""
         wlist = widgets if widgets is not None else self.get_active_widgets()
-
         tokens = []
         for w in wlist:
             wid = w.get("id", "")
@@ -3657,35 +3523,23 @@ class ProControllerApp(App):
                 if mx <= mn:
                     mx = mn + 255
                 mid = str(int((mn + mx) / 2))
-                xv = str(st.get("x", mid))
-                yv = str(st.get("y", mid))
-                if style == "Pin=Value":
-                    tokens.append(f"{pin}X={xv}")
-                    tokens.append(f"{pin}Y={yv}")
-                else:
-                    tokens.append(xv)
-                    tokens.append(yv)
+                tokens.append(str(st.get("x", mid)))
+                tokens.append(str(st.get("y", mid)))
             elif wtype == "Slider":
                 mn = str(safe_int(w.get("min_val"), 0))
-                val = str(st.get("val", mn))
-                tokens.append(f"{pin}={val}" if style == "Pin=Value" else val)
+                tokens.append(str(st.get("val", mn)))
             elif wtype == "Sensor Display":
-                val = str(self.sensor_values.get(pin, w.get("val_off", "0")))
-                tokens.append(f"{pin}={val}" if style == "Pin=Value" else val)
+                tokens.append(str(self.sensor_values.get(pin, w.get("val_off", "0"))))
             else:
                 default_off = str(w.get("val_off", "0"))
-                val = str(st.get("val", default_off))
-                tokens.append(f"{pin}={val}" if style == "Pin=Value" else val)
+                tokens.append(str(st.get("val", default_off)))
 
-        return f"{start_m}{sep.join(tokens)}{end_m}"
+        return f"{START_MARKER}{SEPARATOR.join(tokens)}{END_MARKER}"
 
     def format_packet(self, cmd="D", pin="0", x=None, y=None, val=None,
                       custom1="", custom2="", custom3="", custom4="", settings=None):
-        """Build the output packet string according to the active 10-box format."""
+        """Build the universal <...> output packet string according to the active 10-box format."""
         cfg = settings if settings is not None else self.protocol_settings
-        start_m = cfg.get("start_marker", "<")
-        sep = cfg.get("separator", ":")
-        end_m = cfg.get("end_marker", ">")
         boxes = cfg.get("boxes", DEFAULT_BOXES)
 
         values = []
@@ -3718,7 +3572,7 @@ class ProControllerApp(App):
                 v = default_v
             values.append(v)
 
-        return f"{start_m}{sep.join(values)}{end_m}"
+        return f"{START_MARKER}{SEPARATOR.join(values)}{END_MARKER}"
 
     def send_protocol(self, cmd="D", pin="0", x=None, y=None, val=None,
                       custom1="", custom2="", custom3="", custom4="", mac_slot="MAC 1"):
