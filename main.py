@@ -15,6 +15,7 @@ if platform == 'android':
     Config.set('graphics', 'borderless', '1')
 
 from kivy.app import App
+from kivy.animation import Animation
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.graphics import Color, RoundedRectangle, Line, Ellipse
@@ -343,6 +344,41 @@ def normalize_bt_settings(raw_bt):
         "auto_connect": auto_connect,
         "slots": clean_slots,
     }
+
+
+def refresh_widget_tree(widget):
+    """Force canvas update on a widget and its descendants, and redraw any JoystickPad."""
+    if widget is None:
+        return
+    if isinstance(widget, JoystickPad):
+        widget._redraw()
+    try:
+        widget.canvas.ask_update()
+    except Exception:
+        pass
+    for child in reversed(list(widget.children)):
+        refresh_widget_tree(child)
+
+
+def animate_staggered_reveal(targets, total_window=0.92, fade_duration=0.22):
+    """Reveal a list of widgets smoothly over ~1s in staggered steps to avoid GPU spikes."""
+    items = [w for w in targets if w is not None]
+    if not items:
+        return
+
+    count = len(items)
+    step = (total_window / count) if count > 1 else 0.0
+
+    for idx, w in enumerate(items):
+        Animation.cancel_all(w, 'opacity')
+        w.opacity = 0.0
+        delay = min(total_window, idx * step)
+
+        def _start_item(dt, target=w):
+            refresh_widget_tree(target)
+            Animation(opacity=1.0, d=fade_duration, t='out_cubic').start(target)
+
+        Clock.schedule_once(_start_item, delay)
 
 
 # ==========================================
@@ -1223,6 +1259,7 @@ class DashboardScreen(Screen):
         super().__init__(**kwargs)
         self.edit_mode = False
         self.sensor_labels = {}  # pin -> list of (read_lbl, status_lbl, unit)
+        self.header_bars = []
 
         root = BoxLayout(
             orientation='vertical',
@@ -1363,6 +1400,8 @@ class DashboardScreen(Screen):
         self.top_strip.add_widget(mini_term)
         root.add_widget(self.top_strip)
 
+        self.header_bars = [top_bar, prof_row, self.top_strip]
+
         # --- Scrollable Dynamic Widgets Container (Tiny 2-3dp anti-clip margin only) ---
         self.scroll = ScrollView(bar_width=dp(4), do_scroll_x=False)
         self.widget_container = BoxLayout(
@@ -1383,6 +1422,19 @@ class DashboardScreen(Screen):
         app = App.get_running_app()
         if hasattr(app, "bt"):
             app.bt.notify_summary_status()
+
+    def get_stagger_targets(self):
+        """Return ordered UI elements from top bars down to individual dashboard cards."""
+        targets = list(self.header_bars)
+        for row in self.widget_container.children:
+            if isinstance(row, BoxLayout) and row.orientation == 'horizontal':
+                for child in row.children:
+                    if isinstance(child, GlassBox):
+                        targets.append(child)
+            elif isinstance(row, GlassBox):
+                targets.append(row)
+        targets.reverse()
+        return targets
 
     def refresh_profile_spinner(self):
         app = App.get_running_app()
@@ -2435,6 +2487,8 @@ class ProtocolScreen(Screen):
         boxes_card.add_widget(tip)
         body.add_widget(boxes_card)
 
+        self.format_cards = [mode_card, ack_card, prev_card, boxes_card]
+
         scroll.add_widget(body)
         root.add_widget(scroll)
         self.add_widget(root)
@@ -2520,6 +2574,9 @@ class ProtocolScreen(Screen):
         modal.open()
 
     def on_pre_enter(self):
+        self.sync_from_app_state()
+
+    def sync_from_app_state(self):
         self._loading = True
         app = App.get_running_app()
         ps = app.protocol_settings
@@ -2665,6 +2722,7 @@ class ConnectionScreen(Screen):
         super().__init__(**kwargs)
         self._loading = False
         self.slot_ui = {}  # slot_name -> dict of input, switch, status_lbl, card
+        self.slot_cards = []
 
         root = BoxLayout(
             orientation='vertical',
@@ -2756,6 +2814,7 @@ class ConnectionScreen(Screen):
             scard.add_widget(btn_r)
 
             body.add_widget(scard)
+            self.slot_cards.append(scard)
             self.slot_ui[slot_name] = {
                 "card": scard,
                 "status_lbl": s_status,
@@ -2763,11 +2822,16 @@ class ConnectionScreen(Screen):
                 "input": in_mac,
             }
 
+        self.top_ctrl_card = top_ctrl
+
         scroll.add_widget(body)
         root.add_widget(scroll)
         self.add_widget(root)
 
     def on_pre_enter(self):
+        self.sync_from_app_state()
+
+    def sync_from_app_state(self):
         self._loading = True
         app = App.get_running_app()
         bt_cfg = app.bt_settings
@@ -2936,6 +3000,7 @@ class ProfileManagerScreen(Screen):
         self.msg_lbl = Label(text="", font_size=dp(12), color=(0.35, 0.95, 0.55, 1),
                              size_hint_y=None, height=dp(20))
         new_card.add_widget(self.msg_lbl)
+        self.new_card = new_card
         root.add_widget(new_card)
 
         scroll = ScrollView(bar_width=dp(4), do_scroll_x=False)
@@ -3118,6 +3183,8 @@ class TerminalScreen(Screen):
         cmd_row.add_widget(btn_send)
         root.add_widget(cmd_row)
 
+        self.term_card = term_card
+        self.cmd_row = cmd_row
         self.add_widget(root)
 
     def on_pre_enter(self):
@@ -3309,6 +3376,8 @@ class TerminalScreen(Screen):
 class ProControllerApp(App):
     def build(self):
         self.title = "HC05 CONTROLLER"
+        self._resume_anim_ev = None
+        self._resume_status_ev = None
         apply_android_fullscreen()
 
         try:
@@ -3318,41 +3387,7 @@ class ProControllerApp(App):
             base_dir = os.path.dirname(os.path.abspath(__file__))
             self.state_file = os.path.join(base_dir, "pro_controller_state.json")
 
-        saved = self._load_json(self.state_file, {})
-        self.profiles = saved.get("profiles") or copy.deepcopy(DEFAULT_PROFILES)
-        self.active_profile = saved.get("active_profile") or next(iter(self.profiles.keys()))
-        if self.active_profile not in self.profiles:
-            self.active_profile = next(iter(self.profiles.keys()))
-
-        for wlist in self.profiles.values():
-            if isinstance(wlist, list):
-                for w in wlist:
-                    if isinstance(w, dict) and w.get("mac_slot") not in MAC_SLOTS:
-                        w["mac_slot"] = "MAC 1"
-
-        loaded_states = saved.get("widget_states")
-        self.widget_states = loaded_states if isinstance(loaded_states, dict) else {}
-        loaded_sensors = saved.get("sensor_values")
-        self.sensor_values = loaded_sensors if isinstance(loaded_sensors, dict) else {}
-        loaded_sources = saved.get("sensor_sources")
-        self.sensor_sources = loaded_sources if isinstance(loaded_sources, dict) else {}
-
-        self.bt_settings = normalize_bt_settings(saved.get("bt_settings"))
-
-        ps = saved.get("protocol_settings") or {}
-        boxes = sanitize_boxes(ps.get("boxes"))
-
-        self.protocol_settings = {
-            "send_mode": ps.get("send_mode", MODE_SINGLE_10BOX),
-            "start_marker": START_MARKER,
-            "separator": SEPARATOR,
-            "end_marker": END_MARKER,
-            "line_ending": "\\n",
-            "wait_for_reply": bool(ps.get("wait_for_reply", False)),
-            "expected_reply": str(ps.get("expected_reply", "OK")),
-            "reply_timeout": safe_float(ps.get("reply_timeout", 3.0)),
-            "boxes": boxes,
-        }
+        self.reload_from_json(apply_to_bt=False)
 
         self.sm = ScreenManager()
         self.dashboard = DashboardScreen(name='dashboard')
@@ -3382,6 +3417,58 @@ class ProControllerApp(App):
             on_rx_data=self.handle_sensor_rx,
             on_slot_status=on_slot_status
         )
+        self._sync_bt_from_settings()
+
+        Clock.schedule_once(lambda dt: self._init_dashboard_ready(), 0)
+        return self.sm
+
+    def reload_from_json(self, apply_to_bt=True):
+        """Load persisted profiles, widget states, sensor values, MACs, and protocol settings from JSON."""
+        saved = self._load_json(self.state_file, {})
+        if not isinstance(saved, dict):
+            saved = {}
+
+        profiles = saved.get("profiles")
+        self.profiles = copy.deepcopy(profiles) if isinstance(profiles, dict) and profiles else copy.deepcopy(DEFAULT_PROFILES)
+        active_prof = saved.get("active_profile")
+        self.active_profile = active_prof if active_prof in self.profiles else next(iter(self.profiles.keys()))
+
+        for wlist in self.profiles.values():
+            if isinstance(wlist, list):
+                for w in wlist:
+                    if isinstance(w, dict) and w.get("mac_slot") not in MAC_SLOTS:
+                        w["mac_slot"] = "MAC 1"
+
+        loaded_states = saved.get("widget_states")
+        self.widget_states = copy.deepcopy(loaded_states) if isinstance(loaded_states, dict) else {}
+
+        loaded_sensors = saved.get("sensor_values")
+        self.sensor_values = copy.deepcopy(loaded_sensors) if isinstance(loaded_sensors, dict) else {}
+
+        loaded_sources = saved.get("sensor_sources")
+        self.sensor_sources = copy.deepcopy(loaded_sources) if isinstance(loaded_sources, dict) else {}
+
+        self.bt_settings = normalize_bt_settings(saved.get("bt_settings"))
+
+        ps = saved.get("protocol_settings") if isinstance(saved.get("protocol_settings"), dict) else {}
+        boxes = sanitize_boxes(ps.get("boxes"))
+
+        self.protocol_settings = {
+            "send_mode": ps.get("send_mode") if ps.get("send_mode") in SEND_MODE_OPTIONS else MODE_SINGLE_10BOX,
+            "start_marker": START_MARKER,
+            "separator": SEPARATOR,
+            "end_marker": END_MARKER,
+            "line_ending": "\\n",
+            "wait_for_reply": bool(ps.get("wait_for_reply", False)),
+            "expected_reply": str(ps.get("expected_reply", "OK")),
+            "reply_timeout": safe_float(ps.get("reply_timeout", 3.0)),
+            "boxes": boxes,
+        }
+
+        if apply_to_bt and hasattr(self, "bt"):
+            self._sync_bt_from_settings()
+
+    def _sync_bt_from_settings(self):
         self.bt.apply_bt_config(self.bt_settings)
         self.bt.set_reply_config(
             self.protocol_settings.get("wait_for_reply", False),
@@ -3389,8 +3476,53 @@ class ProControllerApp(App):
             self.protocol_settings.get("reply_timeout", 3.0)
         )
 
-        Clock.schedule_once(lambda dt: self._init_dashboard_ready(), 0)
-        return self.sm
+    def _cancel_resume_timers(self):
+        if self._resume_anim_ev is not None:
+            Clock.unschedule(self._resume_anim_ev)
+            self._resume_anim_ev = None
+        if self._resume_status_ev is not None:
+            Clock.unschedule(self._resume_status_ev)
+            self._resume_status_ev = None
+
+    def redraw_ui_staggered(self, total_window=0.92, reset_scroll=False):
+        """Rebuild screen UI from JSON state and reveal over ~1s in steps."""
+        self._cancel_resume_timers()
+        if not hasattr(self, "sm"):
+            return
+
+        # Rebuild screens from JSON state immediately
+        self.dashboard.refresh_profile_spinner()
+        self.dashboard.rebuild_dashboard(reset_scroll=reset_scroll)
+        self.protocol.sync_from_app_state()
+        self.connection.sync_from_app_state()
+        self.profiles_screen.refresh_list()
+
+        # Pre-dim current screen so staggered ~1s reveal is smooth and never jumps
+        cur_screen = self.sm.current_screen
+        if cur_screen is self.dashboard:
+            targets = self.dashboard.get_stagger_targets()
+        elif cur_screen is self.protocol:
+            targets = list(self.protocol.format_cards)
+        elif cur_screen is self.connection:
+            targets = [self.connection.top_ctrl_card] + list(self.connection.slot_cards)
+        elif cur_screen is self.profiles_screen:
+            targets = [self.profiles_screen.new_card] + list(self.profiles_screen.list_box.children)
+        elif cur_screen is self.terminal:
+            targets = [self.terminal.term_card, self.terminal.cmd_row]
+        else:
+            targets = [cur_screen]
+
+        for w in targets:
+            if w is not None:
+                Animation.cancel_all(w, 'opacity')
+                w.opacity = 0.0
+
+        def _run_stagger(dt):
+            self._resume_anim_ev = None
+            animate_staggered_reveal(targets, total_window=total_window, fade_duration=0.22)
+
+        # Short 0.08s settle delay before starting the ~1s staggered reveal
+        self._resume_anim_ev = Clock.schedule_once(_run_stagger, 0.08)
 
     def on_start(self):
         if hasattr(self, "bt"):
@@ -3398,6 +3530,7 @@ class ProControllerApp(App):
         apply_android_fullscreen()
 
     def on_pause(self):
+        self._cancel_resume_timers()
         if hasattr(self, "bt"):
             self.bt.set_paused(True)
         try:
@@ -3409,12 +3542,20 @@ class ProControllerApp(App):
     def on_resume(self):
         if hasattr(self, "bt"):
             self.bt.set_paused(False)
+        apply_android_fullscreen()
         Clock.schedule_once(apply_android_fullscreen, 0.35)
-        Clock.schedule_once(lambda dt: self.bt.notify_summary_status() if hasattr(self, "bt") else None, 0.40)
+        self.reload_from_json(apply_to_bt=True)
+        self.redraw_ui_staggered(total_window=0.92, reset_scroll=False)
+
+        def _sync_status(dt):
+            self._resume_status_ev = None
+            if hasattr(self, "bt"):
+                self.bt.notify_summary_status()
+
+        self._resume_status_ev = Clock.schedule_once(_sync_status, 0.96)
 
     def _init_dashboard_ready(self):
-        self.dashboard.refresh_profile_spinner()
-        self.dashboard.rebuild_dashboard(reset_scroll=True)
+        self.redraw_ui_staggered(total_window=0.92, reset_scroll=True)
         self.bt.notify_summary_status()
 
     # --- Per-Profile Persistent Widget State Helpers ---
@@ -3634,6 +3775,7 @@ class ProControllerApp(App):
                 pass
 
     def on_stop(self):
+        self._cancel_resume_timers()
         if hasattr(self, "bt"):
             self.bt.set_paused(True)
         try:
