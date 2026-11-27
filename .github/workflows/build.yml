@@ -1,13 +1,9 @@
-name: Build HC05 CONTROLLER APK
+name: Build RC Dual Controller APK
+
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
-
-# Prevent concurrent builds and Git push conflicts
-concurrency:
-  group: apk-build-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   build:
@@ -16,64 +12,40 @@ jobs:
     permissions:
       contents: write
 
+    env:
+      APK_VERSION: "9.3"
+
     steps:
     - uses: actions/checkout@v4
       with: { fetch-depth: 0 }
 
     - uses: actions/setup-python@v5
       with: { python-version: '3.10' }
+
     - uses: actions/setup-java@v4
       with: { distribution: 'temurin', java-version: '17' }
 
-    # ============================================================
-    # AUTO VERSIONING: Read, increment, and save version
-    # ============================================================
-    - name: Read and Increment Version
-      id: versioning
+    # 🛠️ Step 1: FORCE CLEAN
+    - name: "🧹 FORCE CLEAN: Wipe All Runner Cache"
       run: |
-        if [ -f "version.txt" ]; then
-          CURRENT_VERSION=$(cat version.txt | tr -d '[:space:]')
-        else
-          CURRENT_VERSION="1.0"
-        fi
-        echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
-
-        # Increment version for next build (1.0 -> 1.1 ... 1.9 -> 2.0)
-        MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
-        MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
-        MINOR=$((10#$MINOR + 1))
-        if [ "$MINOR" -ge 10 ]; then
-          MAJOR=$((10#$MAJOR + 1))
-          MINOR=0
-        fi
-        NEXT_VERSION="$MAJOR.$MINOR"
-        echo "NEXT_VERSION=$NEXT_VERSION" >> $GITHUB_ENV
-
-        echo "Current Build Version: V$CURRENT_VERSION"
-        echo "Next Build Version will be: V$NEXT_VERSION"
-
-    # Step 1: Force clean runner cache
-    - name: "FORCE CLEAN: Wipe All Runner Cache"
-      run: |
-        echo "Starting Force Clean..."
-        rm -rf .buildozer/ .pytest_cache/ __pycache__/ build_src/
+        echo "🧼 Starting Force Clean..."
+        rm -rf .buildozer/ .pytest_cache/ __pycache__/
         rm -rf $HOME/.local/share/python-for-android/
         rm -rf $HOME/.cache/pip/
         rm -rf $HOME/.gradle/
         sudo rm -rf /usr/local/lib/android/sdk/ndk/27* /usr/local/lib/android/sdk/ndk/28* /usr/local/lib/android/sdk/ndk/29*
-        echo "Runner is 100% clean!"
+        echo "✨ Runner is 100% clean!"
 
-    # Step 2: System dependencies
-    - name: Install system dependencies
+    # 🛠️ Step 2: System Dependencies
+    - name: 📦 Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           git zip unzip autoconf automake libtool pkg-config \
-          zlib1g-dev libffi-dev libssl-dev cmake build-essential \
-          fonts-dejavu-core
+          zlib1g-dev libffi-dev libssl-dev cmake build-essential
 
-    # Step 3: Fresh setup SDK & NDK 25.1
-    - name: Fresh Setup SDK & NDK 25.1
+    # 🛠️ Step 3: Fresh Setup SDK & NDK 25.1
+    - name: 🤖 Fresh Setup SDK & NDK 25.1
       run: |
         export ANDROID_SDK_ROOT=$HOME/android/sdk
         echo "ANDROID_SDK_ROOT=$HOME/android/sdk" >> $GITHUB_ENV
@@ -84,7 +56,6 @@ jobs:
 
         rm -rf latest
         unzip -q commandlinetools-linux-11076708_latest.zip
-        rm -f commandlinetools-linux-11076708_latest.zip
         mv cmdline-tools latest
 
         if [ -d "$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/bin" ]; then
@@ -98,138 +69,113 @@ jobs:
 
         export PATH="$BIN_PATH:$ANDROID_SDK_ROOT/platform-tools:$PATH"
 
-        (yes || true) | sdkmanager --licenses
+        yes | sdkmanager --licenses
         sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393"
 
-    # Step 4: Python packages
-    - name: Fresh Install Python packages
+    # 🛠️ Step 4: Python Packages
+    - name: 📚 Fresh Install Python packages
       run: |
         python3 -m pip install --upgrade pip setuptools wheel
-        python3 -m pip install --upgrade cython==0.29.33 kivy[base] pillow python-for-android==2024.1.21
+        python3 -m pip install --upgrade cython==0.29.33 kivy[base] python-for-android==2024.1.21
 
-    # Step 4.2: Auto-generate flat solid Bluetooth logo (icon.png)
-    - name: Auto-Generate Bluetooth Logo (icon.png)
-      run: |
-        python3 - << 'EOF'
-        from PIL import Image, ImageDraw, ImageFont
-
-        # Pure black canvas (512x512) - flat solid colors, no blur or glow
-        size = 512
-        img = Image.new("RGB", (size, size), (0, 0, 0))
-        draw = ImageDraw.Draw(img)
-
-        solid_color = (100, 255, 218)  # Crisp solid cyan-mint
-
-        cx, cy = 256, 195
-        bt_points = [
-            (cx - 58, cy - 58),
-            (cx + 62, cy + 58),
-            (cx, cy + 118),
-            (cx, cy - 118),
-            (cx + 62, cy - 58),
-            (cx - 58, cy + 58),
-        ]
-
-        # Draw sharp solid Bluetooth symbol
-        draw.line(bt_points, fill=solid_color, width=16, joint="curve")
-
-        # Load bold font for "HC05 CONTROLLER" and auto-fit width
-        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        text = "HC05 CONTROLLER"
-        font_size = 42
-        try:
-            while font_size > 16:
-                font = ImageFont.truetype(font_path, font_size)
-                bbox = draw.textbbox((0, 0), text, font=font)
-                if (bbox[2] - bbox[0]) <= 460:
-                    break
-                font_size -= 1
-        except Exception:
-            font = ImageFont.load_default()
-            bbox = draw.textbbox((0, 0), text, font=font)
-
-        tw = bbox[2] - bbox[0]
-        tx = (size - tw) // 2
-        ty = 370
-
-        # Draw solid text without blur or shadow
-        draw.text((tx, ty), text, font=font, fill=solid_color)
-
-        img.save("icon.png", "PNG")
-        print("Sharp solid icon.png generated successfully!")
-        EOF
-
-    # Step 4.5: Verify & prepare clean source folder
-    - name: Verify source files
+    # 🛠️ Step 4.5: Resolve Version from version.txt & Verify Source Files
+    - name: Resolve version & verify source files
       run: |
         echo "Files in repo root:"
         ls -la
         echo ""
-        [ -f main.py ] && echo "main.py FOUND" || (echo "main.py MISSING" && exit 1)
-        [ -f icon.png ] && echo "icon.png FOUND" || (echo "icon.png MISSING" && exit 1)
 
-        rm -rf build_src
-        mkdir -p build_src
-        cp main.py icon.png build_src/
+        if [ -f "version.txt" ]; then
+          RAW_VER=$(grep -v '^[[:space:]]*$' version.txt | head -n 1 | tr -d '\r\n' | xargs)
+          CLEAN_VER="${RAW_VER#v}"
+          CLEAN_VER="${CLEAN_VER#V}"
+          if [ -n "$CLEAN_VER" ]; then
+            RESOLVED_VER="$CLEAN_VER"
+            echo "✅ version.txt FOUND -> using version: $RESOLVED_VER"
+          else
+            RESOLVED_VER="${APK_VERSION}"
+            echo "⚠️ version.txt empty -> fallback version: $RESOLVED_VER"
+          fi
+        else
+          RESOLVED_VER="${APK_VERSION}"
+          echo "⚠️ version.txt MISSING -> fallback version: $RESOLVED_VER"
+        fi
 
-    # Step 5: Build HC05 CONTROLLER APK
-    - name: Build HC05 CONTROLLER APK
+        echo "RESOLVED_VERSION=$RESOLVED_VER" >> $GITHUB_ENV
+
+        if [ -f main.py ]; then
+          echo "✅ main.py FOUND"
+        else
+          echo "❌ main.py MISSING"
+          exit 1
+        fi
+        [ -f icon.png ] && echo "✅ icon.png FOUND" || echo "⚠️ icon.png MISSING (default icon use thase)"
+
+    # 🛠️ Step 5: Build RC Dual Controller APK
+    - name: Build RC Dual Controller APK
       run: |
         export ANDROID_SDK_ROOT=$HOME/android/sdk
         export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/25.1.8937393
-        export JAVA_HOME=${JAVA_HOME_17_X64:-$JAVA_HOME}
+        export JAVA_HOME=$JAVA_HOME_17_X64
         export PATH=$JAVA_HOME/bin:$PATH
 
-        python3 -m pythonforandroid.toolchain apk --debug --private ./build_src \
-          --package=com.gai.hc05_controller \
-          --name="HC05 CONTROLLER" \
-          --version=${{ env.CURRENT_VERSION }} \
+        ICON_ARGS=""
+        if [ -f "icon.png" ]; then
+          ICON_ARGS="--icon=icon.png --presplash=icon.png"
+        fi
+
+        python3 -m pythonforandroid.toolchain apk --debug --private . \
+          --package=com.gai.btjoystick \
+          --name="RC Dual Controller" \
+          --version="${RESOLVED_VERSION}" \
           --bootstrap=sdl2 \
-          --dist_name=hc05_controller_dist \
-          --requirements=hostpython3,python3,kivy,pyjnius,android \
-          --orientation=portrait \
+          --dist_name=rc_dual_dist \
+          --requirements=hostpython3,python3,kivy,pyjnius \
           --permission=BLUETOOTH \
           --permission=BLUETOOTH_ADMIN \
           --permission=BLUETOOTH_CONNECT \
           --permission=BLUETOOTH_SCAN \
           --permission=ACCESS_FINE_LOCATION \
           --permission=ACCESS_COARSE_LOCATION \
-          --icon=icon.png \
-          --presplash=icon.png \
-          --presplash-color=#000000 \
+          $ICON_ARGS \
           --arch=arm64-v8a \
           --android-api=34 \
           --sdk-dir=$ANDROID_SDK_ROOT \
           --ndk-dir=$ANDROID_NDK_ROOT
 
-    # Step 6: Copy generated APK to temp
-    - name: Find & Prepare APK
+    # 🛠️ Step 6: APK Copy
+    - name: Copy APK
       run: |
-        NEW_APK=$(find "$GITHUB_WORKSPACE" "$HOME" -type f -name "*.apk" 2>/dev/null | grep -v "/APK/" | grep -v "/gradle/" | xargs -r ls -t 2>/dev/null | head -n 1)
+        mkdir -p APK
+        NEW_APK=$(find . -type f -name "*.apk" 2>/dev/null | grep -v "^./APK/" | grep -v "gradle" | head -n 1)
 
-        if [ -n "$NEW_APK" ] && [ -f "$NEW_APK" ]; then
-          echo "APK found: $NEW_APK"
-          cp "$NEW_APK" "/tmp/HC05_CONTROLLER_V${{ env.CURRENT_VERSION }}.apk"
-          echo "Prepared in /tmp/HC05_CONTROLLER_V${{ env.CURRENT_VERSION }}.apk"
+        if [ -n "$NEW_APK" ]; then
+          echo "🎯 APK found: $NEW_APK"
+          OUTPUT_NAME="APK/RC Dual Controller v${RESOLVED_VERSION}.apk"
+          cp "$NEW_APK" "$OUTPUT_NAME"
+          ls -lh "$OUTPUT_NAME"
+          echo "✅ Saved: $OUTPUT_NAME"
         else
-          echo "APK not generated. Logs:"
+          echo "❌ APK not generated. Logs:"
           ls -la
           exit 1
         fi
 
-    # Step 7: Conflict-free push to repo (APK + version.txt)
+    # 🛠️ Step 7: Push to Repo
     - name: Push to Repo
       run: |
         git config user.name "github-actions"
         git config user.email "actions@github.com"
+        APK_FILE="APK/RC Dual Controller v${RESOLVED_VERSION}.apk"
+        git add "$APK_FILE"
+        git stash push -m "apk-staged" -- "$APK_FILE" || true
+        git pull origin main --rebase || true
+        git stash pop || true
+        git add "$APK_FILE"
 
-        git checkout -B main
-        git pull --rebase origin main || true
-
-        mkdir -p APK
-        cp "/tmp/HC05_CONTROLLER_V${{ env.CURRENT_VERSION }}.apk" "APK/HC05_CONTROLLER_V${{ env.CURRENT_VERSION }}.apk"
-        echo "${{ env.NEXT_VERSION }}" > version.txt
-
-        git add APK/ version.txt
-        git commit -m "Add New HC05 CONTROLLER APK V${{ env.CURRENT_VERSION }} [skip ci]"
-        git push origin main || (git pull --rebase origin main && git push origin main)
+        if git diff --cached --quiet; then
+          echo "ℹ️ No changes in APK to commit."
+        else
+          git commit -m "Add RC Dual Controller v${RESOLVED_VERSION}.apk [skip ci]"
+          git push origin main
+        fi
