@@ -348,6 +348,12 @@ class HC05ProApp(App):
         self.val_horn = 0
         self.btn_state = {'brake': False, 'park': False, 'head': False}
 
+        # ACK / Flow-Control state ("done" or "ok" from controller)
+        self.tx_lock = threading.Lock()
+        self.awaiting_ack = False
+        self.last_sent_packet = ""
+        self.pending_packet = None
+
         self.last_combined = ""
         self.is_connected = False
         self.is_connecting = False
@@ -562,6 +568,8 @@ class HC05ProApp(App):
         self.current_mode = mode
         self.reset_values_for_mode(mode)
         self.sm.current = mode
+        with self.tx_lock:
+            self.last_sent_packet = ""
         self.last_combined = ""
         self.send_combined_data()
 
@@ -639,6 +647,9 @@ class HC05ProApp(App):
                 data = self.bt_reader.readLine()
                 if data is None:
                     break
+                line = str(data).strip().lower()
+                if line in ("done", "ok"):
+                    self.handle_ack_received(line)
         except Exception as e:
             print("BT Error:", e)
             self.is_connected = False
@@ -648,6 +659,10 @@ class HC05ProApp(App):
     def on_connection_success(self, sim=False):
         self.is_connected = True
         self.is_connecting = False
+        with self.tx_lock:
+            self.awaiting_ack = False
+            self.pending_packet = None
+            self.last_sent_packet = ""
         self.update_status_text("Simulated Connected Mode!" if sim else "Connected via Bluetooth!")
         self._update_all_reconnect_buttons(True)
         self.last_combined = ""
@@ -667,6 +682,9 @@ class HC05ProApp(App):
         self.bt_writer = None
         self.bt_reader = None
         self.is_connected = False
+        with self.tx_lock:
+            self.awaiting_ack = False
+            self.pending_packet = None
         self.update_status_text("Disconnected")
         self._update_all_reconnect_buttons(False)
 
@@ -690,8 +708,55 @@ class HC05ProApp(App):
         print("BT STATUS:", text_msg)
 
     # ==========================================
-    # DATA SENDING (<profile_number, ...>\n)
+    # DATA SENDING & ACK FLOW CONTROL ("done" / "ok")
     # ==========================================
+    def _write_packet_now(self, packet):
+        """Writes a single packet immediately. Caller must hold self.tx_lock."""
+        mode_tag = self.current_mode
+        if self.bt_socket and self.bt_writer:
+            try:
+                self.bt_writer.write(packet.encode('utf-8'))
+                self.awaiting_ack = True
+                self.last_sent_packet = packet
+                print(f"SENT[{mode_tag}]: {packet.strip()} (waiting for done/ok)")
+                Clock.schedule_once(lambda dt, pkt=packet, m=mode_tag: self._on_packet_dispatched(pkt, m), 0)
+            except Exception:
+                self.awaiting_ack = False
+                Clock.schedule_once(lambda dt: self.disconnect_bluetooth(), 0)
+        elif platform != 'android':
+            # Non-Android simulation mode: immediately acknowledge
+            self.awaiting_ack = False
+            self.last_sent_packet = packet
+            print(f"SIM-SENT[{mode_tag}]: {packet.strip()} (auto-ok)")
+            Clock.schedule_once(lambda dt, pkt=packet, m=mode_tag: self._on_packet_dispatched(pkt, m), 0)
+        else:
+            # Disconnected on Android: hold latest packet until connected
+            self.pending_packet = packet
+            print(f"HOLD-OFFLINE[{mode_tag}]: {packet.strip()}")
+
+    @mainthread
+    def _on_packet_dispatched(self, packet, mode_tag):
+        self.last_combined = packet
+        if self.live_preview_label is not None:
+            try:
+                p_num = self.profile_map[self.current_mode]
+                self.live_preview_label.text = f"[P{p_num} - {self.current_mode.upper()}] {packet.strip()}"
+            except Exception:
+                pass
+
+    def handle_ack_received(self, ack_token="done"):
+        """Called when receiver sends 'done' or 'ok'. Sends only the latest held packet."""
+        next_packet = None
+        with self.tx_lock:
+            self.awaiting_ack = False
+            if self.pending_packet is not None and self.pending_packet != self.last_sent_packet:
+                next_packet = self.pending_packet
+                self.pending_packet = None
+                self._write_packet_now(next_packet)
+            else:
+                self.pending_packet = None
+                print(f"ACK[{ack_token}] received; no pending packet.")
+
     def send_combined_data(self):
         profile_num = self.profile_map[self.current_mode]
         if self.current_mode == 'analog':
@@ -705,19 +770,18 @@ class HC05ProApp(App):
                 f"{self.val_brake},{self.val_park},{self.val_head},{self.val_horn},{self.val_dig_slider}>\n"
             )
 
-        if packet != self.last_combined:
-            if self.bt_socket and self.bt_writer:
-                try:
-                    self.bt_writer.write(packet.encode('utf-8'))
-                    print(f"SENT[{self.current_mode}]: {packet.strip()}")
-                except Exception:
-                    self.disconnect_bluetooth()
+        with self.tx_lock:
+            if not self.awaiting_ack:
+                if packet != self.last_sent_packet:
+                    self._write_packet_now(packet)
             else:
-                print(f"SIM-SENT[{self.current_mode}]: {packet.strip()}")
-            self.last_combined = packet
-
-            if self.live_preview_label is not None:
-                self._update_live_preview(packet.strip())
+                # Hold only the latest packet while waiting for 'done'/'ok'
+                if packet != self.last_sent_packet:
+                    self.pending_packet = packet
+                    print(f"HOLD-LATEST[{self.current_mode}]: {packet.strip()}")
+                else:
+                    # Returned to already-sent state before ACK: clear stale pending change
+                    self.pending_packet = None
 
     @mainthread
     def _update_live_preview(self, text):
@@ -975,7 +1039,7 @@ class HC05ProApp(App):
             self.profile_btn_digital.color = get_color_from_hex('#0a192f' if not is_ana else '#ccd6f6')
 
     # ==========================================
-    # DATA FORMAT POPUP (Framed <...> Format)
+    # DATA FORMAT POPUP (Framed <...> + ACK Flow Control)
     # ==========================================
     def show_format_popup(self):
         content = BoxLayout(orientation='vertical', padding='15dp', spacing='10dp')
@@ -986,6 +1050,15 @@ class HC05ProApp(App):
             "Every packet starts with '<', ends with '>', and appends '\\n':\n"
             "  Profile 1 = Analog (Joystick)\n"
             "  Profile 2 = Digital (D-Pad)\n"
+            "──────────────────────────────\n\n"
+            "ACK FLOW CONTROL ('done' / 'ok')\n"
+            "  • After sending a packet, the app waits for 'done' or 'ok'\n"
+            "    from the controller before sending the next packet.\n"
+            "  • While waiting for 'done'/'ok', any new packets generated\n"
+            "    are held and overwritten so only the LATEST packet is kept\n"
+            "    (intermediate packets are skipped).\n"
+            "  • As soon as 'done' or 'ok' arrives, the latest held packet\n"
+            "    is transmitted immediately.\n"
             "──────────────────────────────\n\n"
             "PROFILE 1: ANALOG MODE (Joystick)\n"
             "Format: <1, V, H, B, P, L, O>\\n\n\n"
@@ -1020,6 +1093,7 @@ class HC05ProApp(App):
             "──────────────────────────────\n\n"
             "NOTES:\n"
             "  • '<' and '>' prevent partial/corrupted packet reads.\n"
+            "  • Next packet waits for 'done' or 'ok'; latest packet is sent on ACK.\n"
             "  • Last selected profile is saved and loaded on restart.\n"
             "  • Switch profiles (1 / 2) inside Settings.\n"
             "  • Horizontal card & slider shifted 20dp left and centered inside the horizontal card.\n"
